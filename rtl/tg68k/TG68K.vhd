@@ -25,6 +25,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.std_logic_unsigned.all;
+use work.TG68K_FPU_Pack.all;
 
 entity TG68K is
    generic(
@@ -191,6 +192,29 @@ cpu1: entity work.TG68KdotC_Kernel
       MMU_fc_data_register_value => open,
       MMU_SFC => open,
       MMU_DFC => open,
+      FPU_enable => '0',
+      FPU_instruction_match => '0',
+      FPU_instruction_valid => '0',
+      FPU_instruction_requires_command_word => '0',
+      FPU_instruction_requires_ea => '0',
+      FPU_instruction_busy => '0',
+      FPU_instruction_done => '0',
+      FPU_unimplemented_exception => '0',
+      FPU_bus_error_exception => '0',
+      FPU_floating_point_exception => '0',
+      FPU_exception_class => FPU_EXCEPTION_NONE,
+      FPU_integer_register_select => "000",
+      FPU_integer_register_write => '0',
+      FPU_integer_register_write_data => (others => '0'),
+      FPU_integer_register_write_format => FPU_FORMAT_LONG_INTEGER,
+      FPU_instruction_start => open,
+      FPU_retry => open,
+      FPU_opcode => open,
+      FPU_command_word => open,
+      FPU_instruction_address => open,
+      FPU_effective_address => open,
+      FPU_function_code => open,
+      FPU_integer_register_data => open,
       skipFetch => skipFetch,
       regin_out => open,
       CACR_out => open,

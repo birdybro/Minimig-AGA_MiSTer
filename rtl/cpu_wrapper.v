@@ -236,6 +236,7 @@ cpu_inst_p
   .ipl(cpu_ipl),
   .ipl_autovector(1),
   .mmu_enable(cpucfg[1:0] == 2'b11),
+  .fpu_enable(cpucfg[1:0] == 2'b11),
   .regin_out(),
   .addr_out(cpu_addr_p),
   .data_write(cpu_dout_p),

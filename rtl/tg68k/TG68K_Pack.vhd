@@ -34,7 +34,8 @@ package TG68K_Pack is
 						  trap00, trap0, trap1, trap2, trap3, cas1, cas2, cas21, cas22, cas23, cas24,
 						  cas25, cas26, cas27, cas28, chk20, chk21, chk22, chk23, chk24,
 						  trap4, trap5, trap6, movec1, movep1, movep2, movep3, movep4, movep5, rota1, bf1,
-						  pmmu_issue, pmmu_wait, pmmu_retire, mmu_fault_push, mul1, mul2, mul_end1, mul_end2, div1, div2, div3,
+						  pmmu_issue, pmmu_wait, pmmu_retire, fpu_issue, fpu_wait,
+						  fpu_retire, mmu_fault_push, mul1, mul2, mul_end1, mul_end2, div1, div2, div3,
 						  div4, div_end1, div_end2);
 	
 	constant opcMOVE				: integer := 0; --

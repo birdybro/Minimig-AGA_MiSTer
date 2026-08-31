@@ -154,7 +154,8 @@ begin
 	instruction_valid <= decoded_valid;
 	instruction_implemented <= move_implemented;
 	instruction_requires_command_word <= decoded_requires_command;
-	instruction_requires_effective_address <= decoded_requires_ea;
+	instruction_requires_effective_address <= decoded_requires_ea when
+		opcode(5 downto 3) /= "000" else '0';
 	integer_register_select <= opcode(2 downto 0) when move_busy = '0' else
 		integer_select_latched;
 	instruction_busy <= move_busy;

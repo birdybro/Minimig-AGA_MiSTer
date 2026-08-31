@@ -104,6 +104,7 @@ use ieee.std_logic_1164.all;
 use ieee.std_logic_unsigned.all;
 use work.TG68K_Pack.all;
 use work.TG68K_MMU_Pack.all;
+use work.TG68K_FPU_Pack.all;
 
 entity TG68KdotC_Kernel is
 	generic(
@@ -162,6 +163,31 @@ entity TG68KdotC_Kernel is
 		MMU_fc_data_register_value : out std_logic_vector(2 downto 0);
 		MMU_SFC					: out std_logic_vector(2 downto 0);
 		MMU_DFC					: out std_logic_vector(2 downto 0);
+		FPU_enable				: in std_logic := '0';
+		FPU_instruction_match	: in std_logic := '0';
+		FPU_instruction_valid	: in std_logic := '0';
+		FPU_instruction_requires_command_word : in std_logic := '0';
+		FPU_instruction_requires_ea : in std_logic := '0';
+		FPU_instruction_busy	: in std_logic := '0';
+		FPU_instruction_done	: in std_logic := '0';
+		FPU_unimplemented_exception : in std_logic := '0';
+		FPU_bus_error_exception	: in std_logic := '0';
+		FPU_floating_point_exception : in std_logic := '0';
+		FPU_exception_class		: in fpu_exception_t := FPU_EXCEPTION_NONE;
+		FPU_integer_register_select : in std_logic_vector(2 downto 0) := "000";
+		FPU_integer_register_write : in std_logic := '0';
+		FPU_integer_register_write_data : in std_logic_vector(31 downto 0) :=
+			(others => '0');
+		FPU_integer_register_write_format : in fpu_operand_format_t :=
+			FPU_FORMAT_LONG_INTEGER;
+		FPU_instruction_start	: out std_logic;
+		FPU_retry				: out std_logic;
+		FPU_opcode				: out std_logic_vector(15 downto 0);
+		FPU_command_word		: out std_logic_vector(15 downto 0);
+		FPU_instruction_address : out std_logic_vector(31 downto 0);
+		FPU_effective_address	: out std_logic_vector(31 downto 0);
+		FPU_function_code		: out std_logic_vector(2 downto 0);
+		FPU_integer_register_data : out std_logic_vector(31 downto 0);
 -- for debug
 		skipFetch				: out std_logic;
 		regin_out				: out std_logic_vector(31 downto 0);
@@ -315,6 +341,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_1111			: bit;
 	signal trap_mmu_configuration : bit;
 	signal trap_mmu_access	: bit;
+	signal trap_fpu			: bit;
 	signal trap_format			: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
@@ -429,6 +456,13 @@ BEGIN
 		MMU_fc_data_register_select))(2 downto 0);
 	MMU_SFC <= SFC;
 	MMU_DFC <= DFC;
+	FPU_opcode <= opcode;
+	FPU_command_word <= data_read(15 downto 0) when decodeOPC = '1' else sndOPC;
+	FPU_instruction_address <= exe_pc;
+	FPU_effective_address <= addr;
+	FPU_function_code <= SVmode & "01";
+	FPU_integer_register_data <= regfile(conv_integer(
+		FPU_integer_register_select));
 
 ALU: TG68K_ALU   
 	generic map(
@@ -760,7 +794,9 @@ PROCESS (long_start, reg_QB, data_write_tmp, exec, data_read, data_write_mux, me
 -- Registerfile
 -----------------------------------------------------------------------------
 PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
-	MMU_address_register_select, MMU_address_register_data)
+	MMU_address_register_select, MMU_address_register_data,
+	FPU_integer_register_write, FPU_integer_register_select,
+	FPU_integer_register_write_data, FPU_integer_register_write_format)
 	BEGIN
 		reg_QA <= regfile(RDindex_A);
 		reg_QB <= regfile(RDindex_B);
@@ -770,6 +806,18 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
 			ELSIF MMU_address_register_write = '1' THEN
 				regfile(8 + conv_integer(MMU_address_register_select)) <=
 					MMU_address_register_data;
+			ELSIF FPU_integer_register_write = '1' THEN
+				case FPU_integer_register_write_format is
+					when FPU_FORMAT_BYTE_INTEGER =>
+						regfile(conv_integer(FPU_integer_register_select))(
+							7 downto 0) <= FPU_integer_register_write_data(7 downto 0);
+					when FPU_FORMAT_WORD_INTEGER =>
+						regfile(conv_integer(FPU_integer_register_select))(
+							15 downto 0) <= FPU_integer_register_write_data(15 downto 0);
+					when others =>
+						regfile(conv_integer(FPU_integer_register_select)) <=
+							FPU_integer_register_write_data;
+				end case;
 		    ELSIF clkena_lw='1' THEN
 				rf_source_addrd <= rf_source_addr;
 				WR_AReg <= rf_dest_addr(3);
@@ -1117,6 +1165,26 @@ PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatyp
 				END IF;
 				IF trap_mmu_configuration='1' THEN
 					trap_vector(9 downto 0) <= "00" & X"E0";
+				END IF;
+				IF trap_fpu='1' THEN
+					CASE FPU_exception_class IS
+						WHEN FPU_EXCEPTION_BSUN =>
+							trap_vector(9 downto 0) <= "00" & X"C0";
+						WHEN FPU_EXCEPTION_SNAN =>
+							trap_vector(9 downto 0) <= "00" & X"D8";
+						WHEN FPU_EXCEPTION_OPERR =>
+							trap_vector(9 downto 0) <= "00" & X"D0";
+						WHEN FPU_EXCEPTION_OVFL =>
+							trap_vector(9 downto 0) <= "00" & X"D4";
+						WHEN FPU_EXCEPTION_UNFL =>
+							trap_vector(9 downto 0) <= "00" & X"CC";
+						WHEN FPU_EXCEPTION_DZ =>
+							trap_vector(9 downto 0) <= "00" & X"C8";
+						WHEN FPU_EXCEPTION_INEX2 | FPU_EXCEPTION_INEX1 =>
+							trap_vector(9 downto 0) <= "00" & X"C4";
+						WHEN OTHERS =>
+							trap_vector(9 downto 0) <= "00" & X"2C";
+					END CASE;
 				END IF;
 				IF trap_format='1' THEN
 					trap_vector(9 downto 0) <= "00" & X"38";
@@ -1598,7 +1666,8 @@ PROCESS (clk, Reset, FlagsSR, last_data_read, OP2out, exec)
 						SVmode <= preSVmode;
 					END IF;	
 				END IF;
-				IF trap_berr='1' OR trap_mmu_access='1' OR trap_illegal='1' OR trap_addr_error='1' OR
+				IF trap_berr='1' OR trap_mmu_access='1' OR trap_fpu='1' OR
+						trap_illegal='1' OR trap_addr_error='1' OR
 						trap_priv='1' OR trap_1010='1' OR trap_1111='1' OR
 						trap_mmu_configuration='1' THEN
 					make_trace <= '0';
@@ -1652,7 +1721,11 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 MMU_unimplemented_exception, MMU_privilege_exception,
 		 MMU_configuration_exception, MMU_access_fault, MMU_fault_address,
 		 MMU_fault_function_code, MMU_fault_write, MMU_fault_instruction,
-		 mmu_fault_word_index, rte_fault_longwords_remaining)
+		 mmu_fault_word_index, rte_fault_longwords_remaining,
+		 FPU_enable, FPU_instruction_match, FPU_instruction_valid,
+		 FPU_instruction_requires_command_word, FPU_instruction_requires_ea,
+		 FPU_instruction_done, FPU_unimplemented_exception,
+		 FPU_floating_point_exception)
 	BEGIN
 		TG68_PC_brw <= '0';	
 		setstate <= "00";
@@ -1695,6 +1768,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		trap_1010 <='0';
 		trap_1111 <='0';
 		trap_mmu_configuration <= '0';
+		trap_fpu <= '0';
 		trap_format <= '0';
 		trap_trap <='0';
 		trap_trapv <= '0';
@@ -1707,6 +1781,8 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 --		illegal_byteaddr <= '0';
 		set_Z_error <= '0';
 		MMU_instruction_start <= '0';
+		FPU_instruction_start <= '0';
+		FPU_retry <= '0';
 		check_aligned <='0';
 
 		next_micro_state <= idle;
@@ -3333,7 +3409,30 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 --				
 ---- 1111 ----------------------------------------------------------------------------		
 			WHEN "1111" =>
-				IF MMU_enable = '1' AND cpu(1) = '1' AND
+				IF FPU_enable = '1' AND cpu(1) = '1' AND
+						FPU_instruction_match = '1' THEN
+					ea_only <= to_bit(FPU_instruction_requires_ea);
+					IF decodeOPC = '1' THEN
+						IF FPU_instruction_requires_command_word = '1' THEN
+							set(get_2ndOPC) <= '1';
+						END IF;
+						IF FPU_instruction_valid = '0' THEN
+							trap_1111 <= '1';
+							trapmake <= '1';
+						ELSIF FPU_instruction_requires_ea = '1' THEN
+							set(ea_build) <= '1';
+							next_micro_state <= nop;
+						ELSE
+							next_micro_state <= fpu_issue;
+						END IF;
+					ELSIF micro_state = idle AND nextpass = '1' THEN
+						setstate <= "01";
+						next_micro_state <= fpu_issue;
+					END IF;
+					IF set(get_ea_now) = '1' THEN
+						setstate <= "01";
+					END IF;
+				ELSIF MMU_enable = '1' AND cpu(1) = '1' AND
 						MMU_instruction_match = '1' THEN
 					ea_only <= to_bit(MMU_instruction_requires_ea);
 					IF decodeOPC = '1' THEN
@@ -4311,6 +4410,28 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					END IF;
 
 				WHEN pmmu_retire =>
+					NULL;
+
+				WHEN fpu_issue =>
+					FPU_instruction_start <= '1';
+					setstate <= "01";
+					next_micro_state <= fpu_wait;
+
+				WHEN fpu_wait =>
+					setstate <= "01";
+					IF FPU_instruction_done = '0' THEN
+						next_micro_state <= fpu_wait;
+					ELSIF FPU_unimplemented_exception = '1' THEN
+						trap_1111 <= '1';
+						trapmake <= '1';
+					ELSIF FPU_floating_point_exception = '1' THEN
+						trap_fpu <= '1';
+						trapmake <= '1';
+					ELSE
+						next_micro_state <= fpu_retire;
+					END IF;
+
+				WHEN fpu_retire =>
 					NULL;
 
 				WHEN mmu_fault_push =>

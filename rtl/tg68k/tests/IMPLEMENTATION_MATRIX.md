@@ -19,6 +19,7 @@
 | FPU outbound binary and integer formats | MC68881UM 3.1-3.6, 4.5.4, 6.1.2-6.1.5, 6.1.7 | `TG68K_FPU_Store_Convert.vhd` | fixed destination precision, directed rounding, saturation, NaNs, infinities, and exact exception bytes in `tb_tg68k_fpu_store_convert.vhd` |
 | FMOVE transfer sequencing | MC68881UM 2.3.1, 3.5, 4.5 FMOVE | `TG68K_FPU_Move_Controller.vhd` | register/memory transfers, byte lanes, 1/2/4/6-word ordering, rounding, status, FPCC, wait/error behavior in `tb_tg68k_fpu_move_controller.vhd` |
 | FMOVE subsystem dispatch | MC68881UM 2.1-2.4, 4.5 FMOVE | `TG68K_FPU_System.vhd` | F-line decode, stable register selection, state writeback, Dn/memory transfers, explicit unsupported forms, and null restore in `tb_tg68k_fpu_system.vhd` |
+| TG68K FPU instruction integration | MC68881UM 4.5 FMOVE, 5.2 protocol, 6.2 exceptions; MC68030UM 10 | `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | real F-line command fetch/retire, FP register transfers, Dn read/write, and continued integer execution in `tb_tg68k_fpu_wrapper.vhd` |
 | FPU formats and exceptions | MC68881UM 3, 4, 6 | planned in FPU RTL | FPU module tests |
 | FPU arithmetic and constants | MC68881UM 3, 4, 5; M68000PM FPU instructions | planned in FPU RTL | MPFR-generated vectors |
 | FPU conditional and transfer instructions | MC68881UM 3, 4, 5 | planned in FPU and kernel RTL | instruction and bus tests |

@@ -12,6 +12,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use work.TG68K_MMU_Pack.all;
+use work.TG68K_FPU_Pack.all;
 
 entity TG68KdotC_MMU is
 	generic(
@@ -34,6 +35,7 @@ entity TG68KdotC_MMU is
 		berr : in std_logic := '0';
 		CPU : in std_logic_vector(1 downto 0) := "00";
 		MMU_enable : in std_logic := '1';
+		FPU_enable : in std_logic := '0';
 		addr_out : out std_logic_vector(31 downto 0);
 		data_write : out std_logic_vector(15 downto 0);
 		nWr : out std_logic;
@@ -60,6 +62,7 @@ architecture rtl of TG68KdotC_MMU is
 		BRIDGE_PHYSICAL_WAIT, BRIDGE_FAULT);
 	signal bridge_state : bridge_state_t := BRIDGE_IDLE;
 	signal bridge_owner_operand : std_logic := '0';
+	signal bridge_owner_fpu : std_logic := '0';
 	signal bridge_busstate : std_logic_vector(1 downto 0) := "01";
 	signal bridge_address : std_logic_vector(31 downto 0) := (others => '0');
 	signal bridge_logical_address : std_logic_vector(31 downto 0) := (others => '0');
@@ -105,6 +108,37 @@ architecture rtl of TG68KdotC_MMU is
 	signal mmu_fc_data_register_value : std_logic_vector(2 downto 0);
 	signal mmu_sfc : std_logic_vector(2 downto 0);
 	signal mmu_dfc : std_logic_vector(2 downto 0);
+	signal fpu_instruction_match : std_logic;
+	signal fpu_instruction_valid : std_logic;
+	signal fpu_instruction_requires_command : std_logic;
+	signal fpu_instruction_requires_ea : std_logic;
+	signal fpu_integer_register_select : std_logic_vector(2 downto 0);
+	signal fpu_instruction_busy : std_logic;
+	signal fpu_instruction_done : std_logic;
+	signal fpu_unimplemented_exception : std_logic;
+	signal fpu_bus_error_exception : std_logic;
+	signal fpu_floating_point_exception : std_logic;
+	signal fpu_exception_class : fpu_exception_t;
+	signal fpu_integer_register_write : std_logic;
+	signal fpu_integer_register_write_data : std_logic_vector(31 downto 0);
+	signal fpu_integer_register_write_format : fpu_operand_format_t;
+	signal fpu_instruction_start : std_logic;
+	signal fpu_retry : std_logic;
+	signal fpu_opcode : std_logic_vector(15 downto 0);
+	signal fpu_command_word : std_logic_vector(15 downto 0);
+	signal fpu_instruction_address : std_logic_vector(31 downto 0);
+	signal fpu_effective_address : std_logic_vector(31 downto 0);
+	signal fpu_function_code : std_logic_vector(2 downto 0);
+	signal fpu_integer_register_data : std_logic_vector(31 downto 0);
+	signal fpu_memory_ready : std_logic;
+	signal fpu_memory_error : std_logic;
+	signal fpu_memory_request : std_logic;
+	signal fpu_memory_write : std_logic;
+	signal fpu_memory_address : std_logic_vector(31 downto 0);
+	signal fpu_memory_write_data : std_logic_vector(15 downto 0);
+	signal fpu_memory_nuds : std_logic;
+	signal fpu_memory_nlds : std_logic;
+	signal fpu_memory_fc : std_logic_vector(2 downto 0);
 
 	signal operand_ready : std_logic;
 	signal operand_error : std_logic;
@@ -138,12 +172,16 @@ begin
 	direct_translation_bypass <= not MMU_enable or not tc(MMU_TC_ENABLE_BIT);
 	bridge_fault_write <= '1' when bridge_busstate = "11" else '0';
 	bridge_fault_instruction <= '1' when bridge_busstate = "00" else '0';
-	translation_logical_request <= operand_request when operand_request = '1' else
+	translation_logical_request <= fpu_memory_request when
+		fpu_memory_request = '1' else operand_request when operand_request = '1' else
 		'1' when kernel_busstate /= "01" and mmu_instruction_start = '0' else '0';
-	translation_logical_address <= operand_address when operand_request = '1' else
+	translation_logical_address <= fpu_memory_address when
+		fpu_memory_request = '1' else operand_address when operand_request = '1' else
 		kernel_address;
-	translation_logical_fc <= operand_fc when operand_request = '1' else kernel_fc;
-	translation_logical_write <= operand_write when operand_request = '1' else
+	translation_logical_fc <= fpu_memory_fc when fpu_memory_request = '1' else
+		operand_fc when operand_request = '1' else kernel_fc;
+	translation_logical_write <= fpu_memory_write when fpu_memory_request = '1' else
+		operand_write when operand_request = '1' else
 		not kernel_nwr;
 	translation_start <= '1' when bridge_state = BRIDGE_IDLE and
 		direct_translation_bypass = '0' and table_request = '0' and
@@ -155,6 +193,7 @@ begin
 			if nReset = '0' or MMU_enable = '0' then
 				bridge_state <= BRIDGE_IDLE;
 				bridge_owner_operand <= '0';
+				bridge_owner_fpu <= '0';
 				bridge_busstate <= "01";
 				bridge_address <= (others => '0');
 				bridge_logical_address <= (others => '0');
@@ -168,11 +207,23 @@ begin
 				case bridge_state is
 					when BRIDGE_IDLE =>
 						if translation_start = '1' then
-							bridge_owner_operand <= operand_request;
+							bridge_owner_fpu <= fpu_memory_request;
+							bridge_owner_operand <= operand_request and
+								not fpu_memory_request;
 							bridge_address <= translation_logical_address;
 							bridge_logical_address <= translation_logical_address;
 							bridge_fc <= translation_logical_fc;
-							if operand_request = '1' then
+							if fpu_memory_request = '1' then
+								bridge_data <= fpu_memory_write_data;
+								bridge_longword <= '0';
+								if fpu_memory_write = '1' then
+									bridge_busstate <= "11";
+								else
+									bridge_busstate <= "10";
+								end if;
+								bridge_nuds <= fpu_memory_nuds;
+								bridge_nlds <= fpu_memory_nlds;
+							elsif operand_request = '1' then
 								bridge_data <= operand_write_data;
 								bridge_longword <= '0';
 								if operand_write = '1' then
@@ -221,6 +272,9 @@ begin
 		bridge_nuds, bridge_nlds, bridge_longword, bridge_cache_inhibit,
 		bridge_fc, bridge_owner_operand, operand_request, operand_address,
 		operand_write_data, operand_write, operand_fc,
+		bridge_owner_fpu, fpu_memory_request, fpu_memory_address,
+		fpu_memory_write_data, fpu_memory_write, fpu_memory_nuds,
+		fpu_memory_nlds, fpu_memory_fc,
 		translation_logical_request, kernel_address, kernel_data_write,
 		kernel_nwr, kernel_nuds, kernel_nlds, kernel_busstate,
 		kernel_longword, kernel_fc, clkena_in, berr)
@@ -241,17 +295,37 @@ begin
 		kernel_mmu_fault <= '0';
 		operand_ready <= '0';
 		operand_error <= '0';
+		fpu_memory_ready <= '0';
+		fpu_memory_error <= '0';
 		table_ready <= '0';
 		table_error <= '0';
 
 		if MMU_enable = '0' then
-			busstate <= kernel_busstate;
-			longword <= kernel_longword;
-			if kernel_busstate /= "01" then
-				logical_bus_access <= '1';
-			end if;
 			kernel_clkena <= clkena_in;
-			kernel_berr <= berr;
+			if fpu_memory_request = '1' then
+				addr_out <= fpu_memory_address;
+				logical_bus_address <= fpu_memory_address;
+				logical_bus_access <= '1';
+				data_write <= fpu_memory_write_data;
+				nWr <= not fpu_memory_write;
+				nUDS <= fpu_memory_nuds;
+				nLDS <= fpu_memory_nlds;
+				if fpu_memory_write = '1' then
+					busstate <= "11";
+				else
+					busstate <= "10";
+				end if;
+				FC <= fpu_memory_fc;
+				fpu_memory_ready <= clkena_in;
+				fpu_memory_error <= berr;
+			else
+				busstate <= kernel_busstate;
+				longword <= kernel_longword;
+				if kernel_busstate /= "01" then
+					logical_bus_access <= '1';
+				end if;
+				kernel_berr <= berr;
+			end if;
 		elsif table_request = '1' then
 			addr_out <= table_address;
 			data_write <= table_write_data;
@@ -270,7 +344,23 @@ begin
 		elsif direct_translation_bypass = '1' and
 				bridge_state = BRIDGE_IDLE then
 			kernel_clkena <= clkena_in;
-			if operand_request = '1' then
+			if fpu_memory_request = '1' then
+				addr_out <= fpu_memory_address;
+				logical_bus_address <= fpu_memory_address;
+				logical_bus_access <= '1';
+				data_write <= fpu_memory_write_data;
+				nWr <= not fpu_memory_write;
+				nUDS <= fpu_memory_nuds;
+				nLDS <= fpu_memory_nlds;
+				if fpu_memory_write = '1' then
+					busstate <= "11";
+				else
+					busstate <= "10";
+				end if;
+				FC <= fpu_memory_fc;
+				fpu_memory_ready <= clkena_in;
+				fpu_memory_error <= berr;
+			elsif operand_request = '1' then
 				addr_out <= operand_address;
 				data_write <= operand_write_data;
 				nWr <= not operand_write;
@@ -311,7 +401,12 @@ begin
 			cache_inhibit <= bridge_cache_inhibit;
 			FC <= bridge_fc;
 			kernel_clkena <= clkena_in;
-			if bridge_owner_operand = '1' then
+			if bridge_owner_fpu = '1' then
+				logical_bus_address <= bridge_logical_address;
+				logical_bus_access <= '1';
+				fpu_memory_ready <= clkena_in;
+				fpu_memory_error <= berr;
+			elsif bridge_owner_operand = '1' then
 				operand_ready <= clkena_in;
 				operand_error <= berr;
 			else
@@ -320,7 +415,9 @@ begin
 			end if;
 		elsif bridge_state = BRIDGE_FAULT then
 			kernel_clkena <= '1';
-			if bridge_owner_operand = '1' then
+			if bridge_owner_fpu = '1' then
+				fpu_memory_error <= '1';
+			elsif bridge_owner_operand = '1' then
 				operand_error <= '1';
 			else
 				kernel_mmu_fault <= '1';
@@ -385,6 +482,31 @@ begin
 			MMU_fc_data_register_value => mmu_fc_data_register_value,
 			MMU_SFC => mmu_sfc,
 			MMU_DFC => mmu_dfc,
+			FPU_enable => FPU_enable,
+			FPU_instruction_match => fpu_instruction_match,
+			FPU_instruction_valid => fpu_instruction_valid,
+			FPU_instruction_requires_command_word =>
+				fpu_instruction_requires_command,
+			FPU_instruction_requires_ea => fpu_instruction_requires_ea,
+			FPU_instruction_busy => fpu_instruction_busy,
+			FPU_instruction_done => fpu_instruction_done,
+			FPU_unimplemented_exception => fpu_unimplemented_exception,
+			FPU_bus_error_exception => fpu_bus_error_exception,
+			FPU_floating_point_exception => fpu_floating_point_exception,
+			FPU_exception_class => fpu_exception_class,
+			FPU_integer_register_select => fpu_integer_register_select,
+			FPU_integer_register_write => fpu_integer_register_write,
+			FPU_integer_register_write_data => fpu_integer_register_write_data,
+			FPU_integer_register_write_format =>
+				fpu_integer_register_write_format,
+			FPU_instruction_start => fpu_instruction_start,
+			FPU_retry => fpu_retry,
+			FPU_opcode => fpu_opcode,
+			FPU_command_word => fpu_command_word,
+			FPU_instruction_address => fpu_instruction_address,
+			FPU_effective_address => fpu_effective_address,
+			FPU_function_code => fpu_function_code,
+			FPU_integer_register_data => fpu_integer_register_data,
 			skipFetch => skipFetch,
 			regin_out => regin_out,
 			CACR_out => CACR_out,
@@ -462,5 +584,52 @@ begin
 			tt0_out => open,
 			tt1_out => open,
 			mmusr_out => open
+		);
+
+	fpu : entity work.TG68K_FPU_System
+		port map(
+			clk => clk,
+			nReset => nReset,
+			null_restore => '0',
+			opcode => fpu_opcode,
+			command_word => fpu_command_word,
+			instruction_address => fpu_instruction_address,
+			effective_address => fpu_effective_address,
+			function_code => fpu_function_code,
+			integer_register_data => fpu_integer_register_data,
+			instruction_start => fpu_instruction_start,
+			retry => fpu_retry,
+			instruction_match => fpu_instruction_match,
+			instruction_valid => fpu_instruction_valid,
+			instruction_implemented => open,
+			instruction_requires_command_word =>
+				fpu_instruction_requires_command,
+			instruction_requires_effective_address =>
+				fpu_instruction_requires_ea,
+			integer_register_select => fpu_integer_register_select,
+			instruction_busy => fpu_instruction_busy,
+			instruction_done => fpu_instruction_done,
+			fline_exception => open,
+			unimplemented_exception => fpu_unimplemented_exception,
+			bus_error_exception => fpu_bus_error_exception,
+			floating_point_exception => fpu_floating_point_exception,
+			floating_point_exception_class => fpu_exception_class,
+			memory_ready => fpu_memory_ready,
+			memory_error => fpu_memory_error,
+			memory_read_data => data_in,
+			memory_request => fpu_memory_request,
+			memory_write => fpu_memory_write,
+			memory_address => fpu_memory_address,
+			memory_write_data => fpu_memory_write_data,
+			memory_nuds => fpu_memory_nuds,
+			memory_nlds => fpu_memory_nlds,
+			memory_function_code => fpu_memory_fc,
+			integer_register_write => fpu_integer_register_write,
+			integer_register_write_data => fpu_integer_register_write_data,
+			integer_register_write_format => fpu_integer_register_write_format,
+			fp_registers_out => open,
+			fpcr_out => open,
+			fpsr_out => open,
+			fpiar_out => open
 		);
 end architecture;
