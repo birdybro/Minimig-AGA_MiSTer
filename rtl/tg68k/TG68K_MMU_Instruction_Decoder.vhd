@@ -200,10 +200,10 @@ begin
 			instruction_match <= '1';
 			if valid then
 				instruction_valid <= '1';
-				if supervisor = '0' then
-					privilege_violation <= '1';
-				end if;
-			else
+			end if;
+			if supervisor = '0' then
+				privilege_violation <= '1';
+			elsif not valid then
 				unimplemented_instruction <= '1';
 			end if;
 		end if;

@@ -222,6 +222,12 @@ begin
 		assert privilege_violation = '1' and instruction_valid = '1'
 			report "user-mode PMMU command did not request privilege exception"
 			severity failure;
+		extension_word <= x"0000";
+		wait for 1 ns;
+		assert privilege_violation = '1' and instruction_valid = '0' and
+			unimplemented_instruction = '0'
+			report "privilege exception did not precede F-line unimplemented"
+			severity failure;
 		opcode <= x"F210";
 		wait for 1 ns;
 		assert instruction_match = '0' and instruction_valid = '0' and
