@@ -11,12 +11,12 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_MMU_Translation.vhd \
 	../TG68K_MMU_System.vhd \
 	../TG68K_FPU_Pack.vhd ../TG68K_FPU_Decoder.vhd \
-	../TG68K_FPU_Convert.vhd ../TG68K_FPU.vhd \
+	../TG68K_FPU_Convert.vhd ../TG68K_FPU_Round.vhd ../TG68K_FPU.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert synth clean
+.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round synth clean
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -34,7 +34,7 @@ analyze:
 		tb_tg68k_mmu_descriptor.vhd tb_tg68k_mmu_atc.vhd \
 		tb_tg68k_mmu_transparent.vhd tb_tg68k_mmu_walker.vhd \
 		tb_tg68k_fpu_state.vhd tb_tg68k_fpu_decoder.vhd \
-		tb_tg68k_fpu_convert.vhd
+		tb_tg68k_fpu_convert.vhd tb_tg68k_fpu_round.vhd
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_smoke
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_state
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_instruction_decoder
@@ -55,6 +55,7 @@ analyze:
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_state
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_decoder
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_convert
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_round
 
 smoke: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_smoke -gCPU_MODE=0 $(GHDL_RUN_FLAGS)
@@ -130,6 +131,9 @@ fpu_decoder: analyze
 fpu_convert: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_convert $(GHDL_RUN_FLAGS)
 
+fpu_round: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_round $(GHDL_RUN_FLAGS)
+
 synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU > $(BUILD_DIR)/TG68K_MMU_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_Fault_Frame > $(BUILD_DIR)/TG68K_MMU_Fault_Frame_synth.vhd
@@ -143,6 +147,7 @@ synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_System > $(BUILD_DIR)/TG68K_MMU_System_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Decoder > $(BUILD_DIR)/TG68K_FPU_Decoder_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Convert > $(BUILD_DIR)/TG68K_FPU_Convert_synth.vhd
+	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Round > $(BUILD_DIR)/TG68K_FPU_Round_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU > $(BUILD_DIR)/TG68K_FPU_synth.vhd
 	$(GHDL) synth --latches $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68KdotC_MMU > $(BUILD_DIR)/TG68KdotC_MMU_synth.vhd
 

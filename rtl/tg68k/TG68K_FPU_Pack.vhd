@@ -11,11 +11,13 @@
 
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 package TG68K_FPU_Pack is
 	constant FPU_COPROCESSOR_ID : std_logic_vector(2 downto 0) := "001";
 
 	subtype fpu_extended_t is std_logic_vector(79 downto 0);
+	subtype fpu_significand_grs_t is unsigned(66 downto 0);
 	type fpu_register_array_t is array (0 to 7) of fpu_extended_t;
 	type fpu_control_register_t is (FPU_REG_FPCR, FPU_REG_FPSR,
 		FPU_REG_FPIAR);
@@ -25,6 +27,12 @@ package TG68K_FPU_Pack is
 	type fpu_rounding_mode_t is (FPU_ROUND_NEAREST,
 		FPU_ROUND_ZERO, FPU_ROUND_MINUS_INFINITY,
 		FPU_ROUND_PLUS_INFINITY);
+	type fpu_data_class_t is (FPU_CLASS_ZERO, FPU_CLASS_NORMAL,
+		FPU_CLASS_INFINITY, FPU_CLASS_QUIET_NAN, FPU_CLASS_SIGNALING_NAN);
+	type fpu_exception_t is (FPU_EXCEPTION_NONE, FPU_EXCEPTION_BSUN,
+		FPU_EXCEPTION_SNAN, FPU_EXCEPTION_OPERR, FPU_EXCEPTION_OVFL,
+		FPU_EXCEPTION_UNFL, FPU_EXCEPTION_DZ, FPU_EXCEPTION_INEX2,
+		FPU_EXCEPTION_INEX1);
 	type fpu_operand_format_t is (FPU_FORMAT_LONG_INTEGER,
 		FPU_FORMAT_SINGLE, FPU_FORMAT_EXTENDED, FPU_FORMAT_PACKED,
 		FPU_FORMAT_WORD_INTEGER, FPU_FORMAT_DOUBLE,
@@ -84,6 +92,7 @@ package TG68K_FPU_Pack is
 		value : std_logic_vector(6 downto 0)) return fpu_operation_t;
 	function fpu_operation_encoding_valid(
 		value : std_logic_vector(6 downto 0)) return boolean;
+	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t;
 end package;
 
 package body TG68K_FPU_Pack is
@@ -160,5 +169,23 @@ package body TG68K_FPU_Pack is
 		value : std_logic_vector(6 downto 0)) return boolean is
 	begin
 		return value(6) = '0';
+	end function;
+
+	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t is
+	begin
+		if value(78 downto 64) = "111111111111111" then
+			if value(62 downto 0) = x"000000000000000" & "000" then
+				return FPU_CLASS_INFINITY;
+			elsif value(62) = '1' then
+				return FPU_CLASS_QUIET_NAN;
+			else
+				return FPU_CLASS_SIGNALING_NAN;
+			end if;
+		elsif value(78 downto 64) = "000000000000000" and
+				value(63 downto 0) = x"0000000000000000" then
+			return FPU_CLASS_ZERO;
+		else
+			return FPU_CLASS_NORMAL;
+		end if;
 	end function;
 end package body;

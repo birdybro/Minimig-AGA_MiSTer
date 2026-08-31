@@ -22,10 +22,22 @@ architecture test of tb_tg68k_fpu_state is
 	signal control_register_write_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
 	signal control_register_read_data : std_logic_vector(31 downto 0);
+	signal operation_status_write : std_logic := '0';
+	signal condition_codes_write : std_logic := '0';
+	signal operation_condition_codes : std_logic_vector(3 downto 0) :=
+		(others => '0');
+	signal quotient_write : std_logic := '0';
+	signal operation_quotient : std_logic_vector(7 downto 0) := (others => '0');
+	signal operation_exception_status : std_logic_vector(7 downto 0) :=
+		(others => '0');
 	signal fp_registers : fpu_register_array_t;
 	signal fpcr : std_logic_vector(31 downto 0);
 	signal fpsr : std_logic_vector(31 downto 0);
 	signal fpiar : std_logic_vector(31 downto 0);
+	signal rounding_precision : fpu_rounding_precision_t;
+	signal rounding_mode : fpu_rounding_mode_t;
+	signal exception_trap : std_logic;
+	signal exception_class : fpu_exception_t;
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 
@@ -42,10 +54,20 @@ begin
 			control_register_write => control_register_write,
 			control_register_write_data => control_register_write_data,
 			control_register_read_data => control_register_read_data,
+			operation_status_write => operation_status_write,
+			condition_codes_write => condition_codes_write,
+			operation_condition_codes => operation_condition_codes,
+			quotient_write => quotient_write,
+			operation_quotient => operation_quotient,
+			operation_exception_status => operation_exception_status,
 			fp_registers_out => fp_registers,
 			fpcr_out => fpcr,
 			fpsr_out => fpsr,
-			fpiar_out => fpiar
+			fpiar_out => fpiar,
+			rounding_precision_out => rounding_precision,
+			rounding_mode_out => rounding_mode,
+			exception_trap => exception_trap,
+			exception_class => exception_class
 		);
 
 	stimulus : process
@@ -83,6 +105,25 @@ begin
 			wait for 1 ns;
 			assert control_register_read_data = value
 				report "FPU control register readback mismatch" severity failure;
+		end procedure;
+
+		procedure write_operation_status(
+			constant write_condition_codes : std_logic;
+			constant condition_codes : std_logic_vector(3 downto 0);
+			constant write_quotient : std_logic;
+			constant quotient : std_logic_vector(7 downto 0);
+			constant exception_status : std_logic_vector(7 downto 0)) is
+		begin
+			wait until falling_edge(clk);
+			condition_codes_write <= write_condition_codes;
+			operation_condition_codes <= condition_codes;
+			quotient_write <= write_quotient;
+			operation_quotient <= quotient;
+			operation_exception_status <= exception_status;
+			operation_status_write <= '1';
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			operation_status_write <= '0';
 		end procedure;
 	begin
 		wait for 3 * CLK_PERIOD;
@@ -123,6 +164,32 @@ begin
 		check_control_register(FPU_REG_FPCR, FPU_FPCR_IMPLEMENTED_MASK);
 		check_control_register(FPU_REG_FPSR, x"A55AA55A");
 		check_control_register(FPU_REG_FPIAR, x"12345678");
+		assert rounding_precision = FPU_PRECISION_RESERVED and
+			rounding_mode = FPU_ROUND_PLUS_INFINITY
+			report "FPCR mode fields were not decoded" severity failure;
+
+		write_control_register(FPU_REG_FPCR, x"00005000");
+		write_control_register(FPU_REG_FPSR, x"00000000");
+		write_operation_status('1', "1010", '1', x"85", x"52");
+		assert fpsr = x"A08552C8"
+			report "FPSR operation status or accrued exceptions mismatch"
+			severity failure;
+		assert exception_trap = '1' and
+			exception_class = FPU_EXCEPTION_SNAN
+			report "enabled FPU exception priority mismatch" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		assert exception_trap = '0' and
+			exception_class = FPU_EXCEPTION_NONE
+			report "FPU exception request was not a pulse" severity failure;
+
+		write_operation_status('0', "0000", '0', x"00", x"08");
+		assert fpsr = x"A08508C8"
+			report "exact underflow incorrectly changed accrued underflow"
+			severity failure;
+		write_operation_status('0', "0000", '0', x"00", x"0A");
+		assert fpsr = x"A0850AE8"
+			report "inexact underflow did not accrue" severity failure;
 
 		wait until falling_edge(clk);
 		null_restore <= '1';
