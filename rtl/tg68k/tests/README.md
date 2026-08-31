@@ -22,3 +22,9 @@ effects independently of the CPU kernel.
 The descriptor test covers root, short, and long formats, including invalid,
 table, page, early-termination, and indirect descriptors and every protection
 and history field used by the MC68030.
+
+The table-walker test uses a 16-bit physical-memory model and checks exact
+descriptor read and history-write sequences for short, long, mixed-format,
+indirect, and early-termination searches. It also covers root direct mapping,
+limits, supervisor and write protection, CPU-space bypass, and read/update bus
+fault classification.

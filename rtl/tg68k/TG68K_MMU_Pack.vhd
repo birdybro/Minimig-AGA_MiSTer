@@ -51,6 +51,11 @@ package TG68K_MMU_Pack is
 	constant MMU_DESCRIPTOR_TYPE_PAGE : std_logic_vector(1 downto 0) := "01";
 	constant MMU_DESCRIPTOR_TYPE_SHORT : std_logic_vector(1 downto 0) := "10";
 	constant MMU_DESCRIPTOR_TYPE_LONG : std_logic_vector(1 downto 0) := "11";
+	constant MMU_DESCRIPTOR_WRITE_PROTECT_BIT : natural := 2;
+	constant MMU_DESCRIPTOR_USED_BIT : natural := 3;
+	constant MMU_DESCRIPTOR_MODIFIED_BIT : natural := 4;
+	constant MMU_DESCRIPTOR_CACHE_INHIBIT_BIT : natural := 6;
+	constant MMU_LONG_DESCRIPTOR_SUPERVISOR_BIT : natural := 40;
 
 	type mmu_descriptor_info_t is record
 		kind : mmu_descriptor_kind_t;
@@ -173,10 +178,10 @@ package body TG68K_MMU_Pack is
 					result.kind := MMU_DESCRIPTOR_PAGE;
 					result.early_termination := not leaf_level;
 					result.address_field := value(31 downto 8) & x"00";
-					result.cache_inhibit := value(6);
-					result.modified := value(4);
-					result.used := value(3);
-					result.write_protect := value(2);
+					result.cache_inhibit := value(MMU_DESCRIPTOR_CACHE_INHIBIT_BIT);
+					result.modified := value(MMU_DESCRIPTOR_MODIFIED_BIT);
+					result.used := value(MMU_DESCRIPTOR_USED_BIT);
+					result.write_protect := value(MMU_DESCRIPTOR_WRITE_PROTECT_BIT);
 				elsif descriptor_type = MMU_DESCRIPTOR_TYPE_SHORT or
 						descriptor_type = MMU_DESCRIPTOR_TYPE_LONG then
 					if leaf_level = '1' then
@@ -185,8 +190,8 @@ package body TG68K_MMU_Pack is
 					else
 						result.kind := MMU_DESCRIPTOR_TABLE;
 						result.address_field := value(31 downto 4) & "0000";
-						result.used := value(3);
-						result.write_protect := value(2);
+						result.used := value(MMU_DESCRIPTOR_USED_BIT);
+						result.write_protect := value(MMU_DESCRIPTOR_WRITE_PROTECT_BIT);
 					end if;
 				end if;
 
@@ -195,11 +200,11 @@ package body TG68K_MMU_Pack is
 					result.kind := MMU_DESCRIPTOR_PAGE;
 					result.early_termination := not leaf_level;
 					result.address_field := value(31 downto 8) & x"00";
-					result.supervisor_only := value(40);
-					result.cache_inhibit := value(38);
-					result.modified := value(36);
-					result.used := value(35);
-					result.write_protect := value(34);
+					result.supervisor_only := value(MMU_LONG_DESCRIPTOR_SUPERVISOR_BIT);
+					result.cache_inhibit := value(32 + MMU_DESCRIPTOR_CACHE_INHIBIT_BIT);
+					result.modified := value(32 + MMU_DESCRIPTOR_MODIFIED_BIT);
+					result.used := value(32 + MMU_DESCRIPTOR_USED_BIT);
+					result.write_protect := value(32 + MMU_DESCRIPTOR_WRITE_PROTECT_BIT);
 					if leaf_level = '0' then
 						result.limit_present := '1';
 						result.limit_lower := value(63);
@@ -216,9 +221,9 @@ package body TG68K_MMU_Pack is
 						result.limit_present := '1';
 						result.limit_lower := value(63);
 						result.limit := value(62 downto 48);
-						result.supervisor_only := value(40);
-						result.used := value(35);
-						result.write_protect := value(34);
+						result.supervisor_only := value(MMU_LONG_DESCRIPTOR_SUPERVISOR_BIT);
+						result.used := value(32 + MMU_DESCRIPTOR_USED_BIT);
+						result.write_protect := value(32 + MMU_DESCRIPTOR_WRITE_PROTECT_BIT);
 					end if;
 				end if;
 		end case;
