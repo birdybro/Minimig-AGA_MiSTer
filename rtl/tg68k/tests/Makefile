@@ -12,9 +12,9 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_MMU_System.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth clean
+.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth clean
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -25,6 +25,7 @@ analyze:
 		tb_tg68k_mmu_dispatch.vhd tb_tg68k_mmu_wrapper_smoke.vhd \
 		tb_tg68k_mmu_wrapper.vhd \
 		tb_tg68k_mmu_fault_frame.vhd \
+		tb_tg68k_mmu_fault_integration.vhd \
 		tb_tg68k_mmu_system.vhd \
 		tb_tg68k_mmu_translation.vhd \
 		tb_tg68k_mmu_descriptor.vhd tb_tg68k_mmu_atc.vhd \
@@ -37,6 +38,7 @@ analyze:
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_wrapper_smoke
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_wrapper
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_frame
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_system
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_translation
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_descriptor
@@ -61,6 +63,12 @@ mmu_wrapper: analyze
 
 mmu_fault_frame: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_frame $(GHDL_RUN_FLAGS)
+
+mmu_fault_integration: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=0 $(GHDL_RUN_FLAGS)
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=1 $(GHDL_RUN_FLAGS)
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=2 $(GHDL_RUN_FLAGS)
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=3 $(GHDL_RUN_FLAGS)
 
 mmu_state: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_state $(GHDL_RUN_FLAGS)

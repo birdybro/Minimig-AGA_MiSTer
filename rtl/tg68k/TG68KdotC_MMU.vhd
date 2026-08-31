@@ -62,15 +62,19 @@ architecture rtl of TG68KdotC_MMU is
 	signal bridge_owner_operand : std_logic := '0';
 	signal bridge_busstate : std_logic_vector(1 downto 0) := "01";
 	signal bridge_address : std_logic_vector(31 downto 0) := (others => '0');
+	signal bridge_logical_address : std_logic_vector(31 downto 0) := (others => '0');
 	signal bridge_data : std_logic_vector(15 downto 0) := (others => '0');
 	signal bridge_nuds : std_logic := '1';
 	signal bridge_nlds : std_logic := '1';
 	signal bridge_fc : std_logic_vector(2 downto 0) := (others => '0');
 	signal bridge_longword : std_logic := '0';
 	signal bridge_cache_inhibit : std_logic := '0';
+	signal bridge_fault_write : std_logic;
+	signal bridge_fault_instruction : std_logic;
 
 	signal kernel_clkena : std_logic;
 	signal kernel_berr : std_logic;
+	signal kernel_mmu_fault : std_logic;
 	signal kernel_address : std_logic_vector(31 downto 0);
 	signal kernel_data_write : std_logic_vector(15 downto 0);
 	signal kernel_nwr : std_logic;
@@ -132,6 +136,8 @@ architecture rtl of TG68KdotC_MMU is
 	signal tc : mmu_tc_t;
 begin
 	direct_translation_bypass <= not MMU_enable or not tc(MMU_TC_ENABLE_BIT);
+	bridge_fault_write <= '1' when bridge_busstate = "11" else '0';
+	bridge_fault_instruction <= '1' when bridge_busstate = "00" else '0';
 	translation_logical_request <= operand_request when operand_request = '1' else
 		'1' when kernel_busstate /= "01" else '0';
 	translation_logical_address <= operand_address when operand_request = '1' else
@@ -151,6 +157,7 @@ begin
 				bridge_owner_operand <= '0';
 				bridge_busstate <= "01";
 				bridge_address <= (others => '0');
+				bridge_logical_address <= (others => '0');
 				bridge_data <= (others => '0');
 				bridge_nuds <= '1';
 				bridge_nlds <= '1';
@@ -163,6 +170,7 @@ begin
 						if translation_start = '1' then
 							bridge_owner_operand <= operand_request;
 							bridge_address <= translation_logical_address;
+							bridge_logical_address <= translation_logical_address;
 							bridge_fc <= translation_logical_fc;
 							if operand_request = '1' then
 								bridge_data <= operand_write_data;
@@ -209,7 +217,7 @@ begin
 
 	bus_mux : process(MMU_enable, table_request, table_address,
 		table_write_data, table_write, table_fc, direct_translation_bypass,
-		bridge_state, bridge_address, bridge_data, bridge_busstate,
+		bridge_state, bridge_address, bridge_logical_address, bridge_data, bridge_busstate,
 		bridge_nuds, bridge_nlds, bridge_longword, bridge_cache_inhibit,
 		bridge_fc, bridge_owner_operand, operand_request, operand_address,
 		operand_write_data, operand_write, operand_fc,
@@ -230,6 +238,7 @@ begin
 		FC <= kernel_fc;
 		kernel_clkena <= '0';
 		kernel_berr <= '0';
+		kernel_mmu_fault <= '0';
 		operand_ready <= '0';
 		operand_error <= '0';
 		table_ready <= '0';
@@ -314,7 +323,7 @@ begin
 			if bridge_owner_operand = '1' then
 				operand_error <= '1';
 			else
-				kernel_berr <= '1';
+				kernel_mmu_fault <= '1';
 			end if;
 		end if;
 	end process;
@@ -359,6 +368,11 @@ begin
 			MMU_privilege_exception => mmu_privilege_exception,
 			MMU_bus_error_exception => mmu_bus_error_exception,
 			MMU_configuration_exception => mmu_configuration_exception,
+			MMU_access_fault => kernel_mmu_fault,
+			MMU_fault_address => bridge_logical_address,
+			MMU_fault_function_code => bridge_fc,
+			MMU_fault_write => bridge_fault_write,
+			MMU_fault_instruction => bridge_fault_instruction,
 			MMU_address_register_write => mmu_address_register_write,
 			MMU_address_register_select => mmu_address_register_select,
 			MMU_address_register_data => mmu_address_register_data,

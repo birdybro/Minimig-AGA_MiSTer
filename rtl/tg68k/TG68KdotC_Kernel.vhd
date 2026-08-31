@@ -103,6 +103,7 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.std_logic_unsigned.all;
 use work.TG68K_Pack.all;
+use work.TG68K_MMU_Pack.all;
 
 entity TG68KdotC_Kernel is
 	generic(
@@ -144,6 +145,11 @@ entity TG68KdotC_Kernel is
 		MMU_privilege_exception	: in std_logic := '0';
 		MMU_bus_error_exception	: in std_logic := '0';
 		MMU_configuration_exception : in std_logic := '0';
+		MMU_access_fault		: in std_logic := '0';
+		MMU_fault_address		: in std_logic_vector(31 downto 0) := (others => '0');
+		MMU_fault_function_code : in std_logic_vector(2 downto 0) := (others => '0');
+		MMU_fault_write		: in std_logic := '0';
+		MMU_fault_instruction	: in std_logic := '0';
 		MMU_address_register_write : in std_logic := '0';
 		MMU_address_register_select : in std_logic_vector(2 downto 0) := "000";
 		MMU_address_register_data : in std_logic_vector(31 downto 0) := (others => '0');
@@ -308,6 +314,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_1010			: bit;
 	signal trap_1111			: bit;
 	signal trap_mmu_configuration : bit;
+	signal trap_mmu_access	: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
 	signal trap_interrupt	: bit;
@@ -317,6 +324,19 @@ architecture logic of TG68KdotC_Kernel is
 	signal make_trace			: std_logic;
 	signal make_berr			: std_logic;
 	signal useStackframe2	: std_logic;
+	signal mmu_fault_long_format : std_logic;
+	signal mmu_fault_word_index : std_logic_vector(5 downto 0);
+	signal mmu_fault_status_register : std_logic_vector(15 downto 0);
+	signal mmu_fault_program_counter : std_logic_vector(31 downto 0);
+	signal mmu_fault_special_status_word : std_logic_vector(15 downto 0);
+	signal mmu_fault_pipe_stage_c : std_logic_vector(15 downto 0);
+	signal mmu_fault_pipe_stage_b : std_logic_vector(15 downto 0);
+	signal mmu_fault_logical_address : std_logic_vector(31 downto 0);
+	signal mmu_fault_data_output_buffer : std_logic_vector(31 downto 0);
+	signal mmu_fault_stage_b_address : std_logic_vector(31 downto 0);
+	signal mmu_fault_data_input_buffer : std_logic_vector(31 downto 0);
+	signal mmu_fault_frame_word : std_logic_vector(15 downto 0);
+	signal data_write_normal : std_logic_vector(15 downto 0);
 	
 	signal set_stop			: bit;
 	signal stop					: bit;
@@ -456,6 +476,29 @@ ALU: TG68K_ALU
 
 	-- AMR - let the parent module know this is a longword access.  (Easy way to enable burst writes.)
 	longword <= not memmaskmux(3);
+	data_write <= mmu_fault_frame_word when micro_state = mmu_fault_push else
+		data_write_normal;
+
+	mmu_fault_frame : entity work.TG68K_MMU_Fault_Frame
+		port map(
+			long_format => mmu_fault_long_format,
+			word_index => mmu_fault_word_index,
+			status_register => mmu_fault_status_register,
+			program_counter => mmu_fault_program_counter,
+			special_status_word => mmu_fault_special_status_word,
+			pipe_stage_c => mmu_fault_pipe_stage_c,
+			pipe_stage_b => mmu_fault_pipe_stage_b,
+			fault_address => mmu_fault_logical_address,
+			data_output_buffer => mmu_fault_data_output_buffer,
+			stage_b_address => mmu_fault_stage_b_address,
+			data_input_buffer => mmu_fault_data_input_buffer,
+			version => x"0",
+			internal_word => (others => '0'),
+			frame_word_count => open,
+			internal_word_select => open,
+			internal_word_index => open,
+			frame_word => mmu_fault_frame_word
+		);
 	
 	long_start_alu <= to_bit(NOT memmaskmux(3));
 	execOPC_ALU <= execOPC OR exec(alu_exec);
@@ -481,7 +524,8 @@ ALU: TG68K_ALU
 	memmaskmux <= memmask when addr(0) = '1' else memmask(4 downto 0) & '1';
 	nUDS <= memmaskmux(5);
 	nLDS <= memmaskmux(4);
-	clkena_lw <= '1' WHEN clkena_in='1' AND memmaskmux(3)='1' ELSE '0';
+	clkena_lw <= '1' WHEN MMU_access_fault='1' OR
+		(clkena_in='1' AND memmaskmux(3)='1') ELSE '0';
 	clr_berr <= '1' WHEN setopcode='1' AND trap_berr='1' ELSE '0';
 	
 	PROCESS (clk, nReset)
@@ -503,8 +547,71 @@ ALU: TG68K_ALU
 			END IF;
 		END IF;
 	END PROCESS;
-			
-PROCESS (clk, long_done, last_data_in, data_in, addr, long_start, memmaskmux, memread, memmask, data_read)
+
+	mmu_fault_context : process(clk)
+		variable size_code : std_logic_vector(1 downto 0);
+	begin
+		if rising_edge(clk) then
+			if Reset = '1' then
+				trap_mmu_access <= '0';
+				mmu_fault_long_format <= '1';
+				mmu_fault_word_index <= (others => '0');
+				mmu_fault_status_register <= (others => '0');
+				mmu_fault_program_counter <= (others => '0');
+				mmu_fault_special_status_word <= (others => '0');
+				mmu_fault_pipe_stage_c <= (others => '0');
+				mmu_fault_pipe_stage_b <= (others => '0');
+				mmu_fault_logical_address <= (others => '0');
+				mmu_fault_data_output_buffer <= (others => '0');
+				mmu_fault_stage_b_address <= (others => '0');
+				mmu_fault_data_input_buffer <= (others => '0');
+			elsif MMU_access_fault = '1' then
+				trap_mmu_access <= '1';
+				mmu_fault_status_register <= FlagsSR & Flags;
+				mmu_fault_logical_address <= MMU_fault_address;
+				mmu_fault_pipe_stage_c <= opcode;
+				mmu_fault_pipe_stage_b <= last_opc_read;
+				mmu_fault_data_output_buffer <= data_write_tmp;
+				mmu_fault_data_input_buffer <= data_read;
+				mmu_fault_stage_b_address <= TG68_PC;
+				if MMU_fault_instruction = '1' and micro_state = idle then
+					mmu_fault_long_format <= '0';
+					mmu_fault_word_index <= "001111";
+					mmu_fault_program_counter <= MMU_fault_address;
+					mmu_fault_special_status_word <=
+						mmu_instruction_fault_ssw('0', '1');
+				else
+					mmu_fault_long_format <= '1';
+					mmu_fault_word_index <= "101101";
+					mmu_fault_program_counter <= exe_pc;
+					if MMU_fault_instruction = '1' then
+						mmu_fault_special_status_word <=
+							mmu_instruction_fault_ssw('1', '0');
+					else
+						case exe_datatype is
+							when "00" => size_code := "01";
+							when "01" => size_code := "10";
+							when "10" => size_code := "00";
+							when others => size_code := "11";
+						end case;
+						mmu_fault_special_status_word <= mmu_data_fault_ssw(
+							MMU_fault_function_code, MMU_fault_write,
+							'0', size_code);
+					end if;
+				end if;
+			elsif clkena_lw = '1' then
+				if micro_state = mmu_fault_push and state = "11" and
+						mmu_fault_word_index /= "000000" then
+					mmu_fault_word_index <= mmu_fault_word_index - 1;
+				end if;
+				if micro_state = trap3 and trap_mmu_access = '1' then
+					trap_mmu_access <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
+	PROCESS (clk, long_done, last_data_in, data_in, addr, long_start, memmaskmux, memread, memmask, data_read)
 	BEGIN
 		IF memmaskmux(4)='0' THEN
 			data_read <= last_data_in(15 downto 0)&data_in;
@@ -514,7 +621,7 @@ PROCESS (clk, long_done, last_data_in, data_in, addr, long_start, memmaskmux, me
 		IF memread(0)='1' OR (memread(1 downto 0)="10" AND memmaskmux(4)='1')THEN
 			data_read(31 downto 16) <= (OTHERS=>data_read(15));
 		END IF;	
-		
+
 		IF rising_edge(clk) THEN	
 			IF clkena_lw='1' AND state="10" THEN
 				IF memmaskmux(4)='0' THEN
@@ -566,21 +673,21 @@ PROCESS (long_start, reg_QB, data_write_tmp, exec, data_read, data_write_mux, me
 		END IF;
 		
 		IF memmaskmux(1)='0' THEN
-			data_write <= data_write_mux(47 downto 32);
-		ELSIF memmaskmux(3)='0' THEN	
-			data_write <= data_write_mux(31 downto 16);
+			data_write_normal <= data_write_mux(47 downto 32);
+		ELSIF memmaskmux(3)='0' THEN
+			data_write_normal <= data_write_mux(31 downto 16);
 		ELSE
 -- a single byte shows up on both bus halfs
 			IF memmaskmux(5 downto 4) = "10" THEN
-				data_write <= data_write_mux(7 downto 0) & data_write_mux(7 downto 0);
+				data_write_normal <= data_write_mux(7 downto 0) & data_write_mux(7 downto 0);
 			ELSIF memmaskmux(5 downto 4) = "01" THEN
-				data_write <= data_write_mux(15 downto 8) & data_write_mux(15 downto 8);
+				data_write_normal <= data_write_mux(15 downto 8) & data_write_mux(15 downto 8);
 			ELSE
-				data_write <= data_write_mux(15 downto 0);
+				data_write_normal <= data_write_mux(15 downto 0);
 			END IF;
 		END IF;
 		IF exec(mem_byte)='1' THEN	--movep
-			data_write <= data_write_tmp(15 downto 8) & data_write_tmp(15 downto 8);
+			data_write_normal <= data_write_tmp(15 downto 8) & data_write_tmp(15 downto 8);
 		END IF;
 	END PROCESS;
 	
@@ -904,11 +1011,11 @@ PROCESS (brief, OP1out, OP1outbrief, cpu)
 PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatype, interrupt, rIPL_nr, IPL_vec,
          memaddr_reg, memaddr_delta_rega, memaddr_delta_regb, reg_QA, use_base, VBR, last_data_read, trap_vector, exec, set, cpu, use_VBR_Stackframe)
 	BEGIN
-		
+
 		IF rising_edge(clk) THEN
 			IF clkena_lw='1' THEN
 				trap_vector(31 downto 10) <= (others => '0');
-				IF trap_berr='1' THEN
+				IF trap_berr='1' OR trap_mmu_access='1' THEN
 					trap_vector(9 downto 0) <= "00" & X"08";
 				END IF;	
 				IF trap_addr_error='1' THEN
@@ -954,7 +1061,7 @@ PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatyp
 		ELSE		
 			trap_vector_vbr <= trap_vector;
 		END IF;		
-		
+
 		memaddr_a(4 downto 0) <= "00000";
 		memaddr_a(7 downto 5) <= (OTHERS=>memaddr_a(4));
 		memaddr_a(15 downto 8) <= (OTHERS=>memaddr_a(7));
@@ -1418,7 +1525,7 @@ PROCESS (clk, Reset, FlagsSR, last_data_read, OP2out, exec)
 						SVmode <= preSVmode;
 					END IF;	
 				END IF;
-				IF trap_berr='1' OR trap_illegal='1' OR trap_addr_error='1' OR
+				IF trap_berr='1' OR trap_mmu_access='1' OR trap_illegal='1' OR trap_addr_error='1' OR
 						trap_priv='1' OR trap_1010='1' OR trap_1111='1' OR
 						trap_mmu_configuration='1' THEN
 					make_trace <= '0';
@@ -1470,7 +1577,9 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 trap_berr, MMU_enable, MMU_instruction_match, MMU_instruction_valid,
 		 MMU_instruction_requires_ea, MMU_instruction_done,
 		 MMU_unimplemented_exception, MMU_privilege_exception,
-		 MMU_configuration_exception)
+		 MMU_configuration_exception, MMU_access_fault, MMU_fault_address,
+		 MMU_fault_function_code, MMU_fault_write, MMU_fault_instruction,
+		 mmu_fault_word_index)
 	BEGIN
 		TG68_PC_brw <= '0';	
 		setstate <= "00";
@@ -4084,9 +4193,28 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						trap_1111 <= '1';
 						trapmake <= '1';
 					END IF;
-	
-				WHEN OTHERS => NULL;
+
+				WHEN mmu_fault_push =>
+					set(presub) <= '1';
+					setstackaddr <= '1';
+					setstate <= "11";
+					datatype <= "01";
+					if mmu_fault_word_index = "000000" then
+						next_micro_state <= trap3;
+					else
+						next_micro_state <= mmu_fault_push;
+					end if;
+
+			WHEN OTHERS => NULL;
 			END CASE;
+
+			if MMU_access_fault = '1' then
+				setstate <= "01";
+				next_micro_state <= mmu_fault_push;
+				if preSVmode = '0' then
+					set(changeMode) <= '1';
+				end if;
+			end if;
 	END PROCESS;
 
 -----------------------------------------------------------------------------
