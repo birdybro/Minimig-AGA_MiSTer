@@ -33,6 +33,8 @@ package TG68K_FPU_Pack is
 		FPU_EXCEPTION_SNAN, FPU_EXCEPTION_OPERR, FPU_EXCEPTION_OVFL,
 		FPU_EXCEPTION_UNFL, FPU_EXCEPTION_DZ, FPU_EXCEPTION_INEX2,
 		FPU_EXCEPTION_INEX1);
+	type fpu_move_direction_t is (FPU_MOVE_REGISTER_TO_REGISTER,
+		FPU_MOVE_EXTERNAL_TO_REGISTER, FPU_MOVE_REGISTER_TO_EXTERNAL);
 	type fpu_operand_format_t is (FPU_FORMAT_LONG_INTEGER,
 		FPU_FORMAT_SINGLE, FPU_FORMAT_EXTENDED, FPU_FORMAT_PACKED,
 		FPU_FORMAT_WORD_INTEGER, FPU_FORMAT_DOUBLE,
@@ -93,6 +95,8 @@ package TG68K_FPU_Pack is
 	function fpu_operation_encoding_valid(
 		value : std_logic_vector(6 downto 0)) return boolean;
 	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t;
+	function fpu_condition_codes(
+		value : fpu_extended_t) return std_logic_vector;
 end package;
 
 package body TG68K_FPU_Pack is
@@ -187,5 +191,23 @@ package body TG68K_FPU_Pack is
 		else
 			return FPU_CLASS_NORMAL;
 		end if;
+	end function;
+
+	function fpu_condition_codes(
+		value : fpu_extended_t) return std_logic_vector is
+		variable condition_codes : std_logic_vector(3 downto 0) :=
+			(others => '0');
+		variable data_class : fpu_data_class_t;
+	begin
+		data_class := fpu_classify(value);
+		condition_codes(3) := value(79);
+		case data_class is
+			when FPU_CLASS_ZERO => condition_codes(2) := '1';
+			when FPU_CLASS_INFINITY => condition_codes(1) := '1';
+			when FPU_CLASS_QUIET_NAN | FPU_CLASS_SIGNALING_NAN =>
+				condition_codes(0) := '1';
+			when others => null;
+		end case;
+		return condition_codes;
 	end function;
 end package body;
