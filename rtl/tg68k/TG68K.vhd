@@ -138,7 +138,7 @@ BEGIN
    HALT <=  '0' WHEN nResetOut='0' ELSE 'Z';
    cpu1reset <= RESET OR HALT;
 
-cpu1: TG68KdotC_Kernel 
+cpu1: entity work.TG68KdotC_Kernel
    generic map(
       SR_Read => 2,              --0=>user,     1=>privileged,    2=>switchable with CPU(0)
       VBR_Stackframe => 2,       --0=>no,       1=>yes/extended,  2=>switchable with CPU(0)
@@ -167,7 +167,35 @@ cpu1: TG68KdotC_Kernel
       nUDS => uds_in,            -- : out std_logic;
       nLDS => lds_in,            -- : out std_logic;
       nResetOut => nResetOut,    -- : out std_logic;
-      skipFetch => skipFetch     -- : out std_logic
+      longword => open,
+      clr_berr => open,
+      MMU_enable => '0',
+      MMU_instruction_match => '0',
+      MMU_instruction_valid => '0',
+      MMU_instruction_requires_ea => '0',
+      MMU_instruction_busy => '0',
+      MMU_instruction_done => '0',
+      MMU_unimplemented_exception => '0',
+      MMU_privilege_exception => '0',
+      MMU_bus_error_exception => '0',
+      MMU_configuration_exception => '0',
+      MMU_address_register_write => '0',
+      MMU_address_register_select => "000",
+      MMU_address_register_data => (others => '0'),
+      MMU_fc_data_register_select => "000",
+      MMU_instruction_start => open,
+      MMU_opcode => open,
+      MMU_extension_word => open,
+      MMU_supervisor => open,
+      MMU_effective_address => open,
+      MMU_fc_data_register_value => open,
+      MMU_SFC => open,
+      MMU_DFC => open,
+      skipFetch => skipFetch,
+      regin_out => open,
+      CACR_out => open,
+      D_CACHE_out => open,
+      VBR_out => open
    );
  
    PROCESS (CLK)

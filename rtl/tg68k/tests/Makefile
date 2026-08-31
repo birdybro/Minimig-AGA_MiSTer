@@ -9,11 +9,11 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Instruction_Decoder.vhd \
 	../TG68K_MMU_Walker.vhd ../TG68K_MMU.vhd ../TG68K_Pack.vhd \
 	../TG68K_MMU_Translation.vhd \
 	../TG68K_MMU_System.vhd \
-	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd
+	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth clean
+.PHONY: all analyze smoke mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth clean
 
-all: smoke mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth
+all: smoke mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -21,6 +21,7 @@ analyze:
 		tb_tg68k_smoke.vhd tb_tg68k_mmu_state.vhd \
 		tb_tg68k_mmu_instruction_decoder.vhd \
 		tb_tg68k_mmu_instruction_controller.vhd \
+		tb_tg68k_mmu_dispatch.vhd \
 		tb_tg68k_mmu_system.vhd \
 		tb_tg68k_mmu_translation.vhd \
 		tb_tg68k_mmu_descriptor.vhd tb_tg68k_mmu_atc.vhd \
@@ -29,6 +30,7 @@ analyze:
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_state
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_instruction_decoder
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_instruction_controller
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_dispatch
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_system
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_translation
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_descriptor
@@ -52,6 +54,9 @@ mmu_instruction_decoder: analyze
 
 mmu_instruction_controller: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_instruction_controller $(GHDL_RUN_FLAGS)
+
+mmu_dispatch: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_dispatch $(GHDL_RUN_FLAGS)
 
 mmu_system: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_system $(GHDL_RUN_FLAGS)

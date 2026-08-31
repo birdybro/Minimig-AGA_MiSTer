@@ -134,6 +134,28 @@ entity TG68KdotC_Kernel is
 		nResetOut				: out std_logic;
 		FC							: out std_logic_vector(2 downto 0);
 		clr_berr					: out std_logic;
+		MMU_enable				: in std_logic := '0';
+		MMU_instruction_match	: in std_logic := '0';
+		MMU_instruction_valid	: in std_logic := '0';
+		MMU_instruction_requires_ea : in std_logic := '0';
+		MMU_instruction_busy	: in std_logic := '0';
+		MMU_instruction_done	: in std_logic := '0';
+		MMU_unimplemented_exception : in std_logic := '0';
+		MMU_privilege_exception	: in std_logic := '0';
+		MMU_bus_error_exception	: in std_logic := '0';
+		MMU_configuration_exception : in std_logic := '0';
+		MMU_address_register_write : in std_logic := '0';
+		MMU_address_register_select : in std_logic_vector(2 downto 0) := "000";
+		MMU_address_register_data : in std_logic_vector(31 downto 0) := (others => '0');
+		MMU_fc_data_register_select : in std_logic_vector(2 downto 0) := "000";
+		MMU_instruction_start	: out std_logic;
+		MMU_opcode				: out std_logic_vector(15 downto 0);
+		MMU_extension_word		: out std_logic_vector(15 downto 0);
+		MMU_supervisor			: out std_logic;
+		MMU_effective_address	: out std_logic_vector(31 downto 0);
+		MMU_fc_data_register_value : out std_logic_vector(2 downto 0);
+		MMU_SFC					: out std_logic_vector(2 downto 0);
+		MMU_DFC					: out std_logic_vector(2 downto 0);
 -- for debug
 		skipFetch				: out std_logic;
 		regin_out				: out std_logic_vector(31 downto 0);
@@ -285,6 +307,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_trace			: bit;
 	signal trap_1010			: bit;
 	signal trap_1111			: bit;
+	signal trap_mmu_configuration : bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
 	signal trap_interrupt	: bit;
@@ -371,6 +394,14 @@ architecture logic of TG68KdotC_Kernel is
 
 
 BEGIN  
+	MMU_opcode <= opcode;
+	MMU_extension_word <= data_read(15 downto 0) when decodeOPC = '1' else sndOPC;
+	MMU_supervisor <= SVmode;
+	MMU_effective_address <= addr;
+	MMU_fc_data_register_value <= regfile(conv_integer(
+		MMU_fc_data_register_select))(2 downto 0);
+	MMU_SFC <= SFC;
+	MMU_DFC <= DFC;
 
 ALU: TG68K_ALU   
 	generic map(
@@ -556,12 +587,16 @@ PROCESS (long_start, reg_QB, data_write_tmp, exec, data_read, data_write_mux, me
 -----------------------------------------------------------------------------
 -- Registerfile
 -----------------------------------------------------------------------------
-PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
+PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
+	MMU_address_register_select, MMU_address_register_data)
 	BEGIN
 		reg_QA <= regfile(RDindex_A);
 		reg_QB <= regfile(RDindex_B);
 		IF rising_edge(clk) THEN
-		    IF clkena_lw='1' THEN
+			IF MMU_address_register_write = '1' THEN
+				regfile(8 + conv_integer(MMU_address_register_select)) <=
+					MMU_address_register_data;
+		    ELSIF clkena_lw='1' THEN
 				rf_source_addrd <= rf_source_addr;
 				WR_AReg <= rf_dest_addr(3);
 				RDindex_A <= conv_integer(rf_dest_addr(3 downto 0));
@@ -902,7 +937,10 @@ PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatyp
 				END IF;	
 				IF trap_1111='1' THEN
 					trap_vector(9 downto 0) <= "00" & X"2C";
-				END IF;	
+				END IF;
+				IF trap_mmu_configuration='1' THEN
+					trap_vector(9 downto 0) <= "00" & X"E0";
+				END IF;
 				IF trap_trap='1' THEN
 					trap_vector(9 downto 0) <= "0010" & opcode(3 downto 0) & "00";
 				END IF;	
@@ -1110,7 +1148,7 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 					exe_opcode <= opcode;
 
 					if(trap_berr='0') then
-						make_berr <= (berr OR make_berr);
+						make_berr <= (berr OR MMU_bus_error_exception OR make_berr);
 					else
 						make_berr <= '0';
 					end if;
@@ -1380,7 +1418,9 @@ PROCESS (clk, Reset, FlagsSR, last_data_read, OP2out, exec)
 						SVmode <= preSVmode;
 					END IF;	
 				END IF;
-				IF trap_berr='1' OR trap_illegal='1' OR trap_addr_error='1' OR trap_priv='1' OR trap_1010='1' OR trap_1111='1' THEN
+				IF trap_berr='1' OR trap_illegal='1' OR trap_addr_error='1' OR
+						trap_priv='1' OR trap_1010='1' OR trap_1111='1' OR
+						trap_mmu_configuration='1' THEN
 					make_trace <= '0';
 					FlagsSR(7) <= '0';
 				END IF;
@@ -1426,7 +1466,11 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 build_bcd, set_Z_error, trapd, movem_run, last_data_read, set, set_V_Flag, z_error, trap_trace, trap_interrupt,
 		 SVmode, preSVmode, stop, long_done, ea_only, setstate, addrvalue, execOPC, exec_write_back, exe_datatype,
 		 datatype, interrupt, c_out, trapmake, rot_cnt, brief, addr, trap_trapv, last_data_in, use_VBR_Stackframe,
-		 long_start, set_datatype, sndOPC, set_exec, exec, ea_build_now, reg_QA, reg_QB, make_berr, trap_berr)
+		 long_start, set_datatype, sndOPC, set_exec, exec, ea_build_now, reg_QA, reg_QB, make_berr,
+		 trap_berr, MMU_enable, MMU_instruction_match, MMU_instruction_valid,
+		 MMU_instruction_requires_ea, MMU_instruction_done,
+		 MMU_unimplemented_exception, MMU_privilege_exception,
+		 MMU_configuration_exception)
 	BEGIN
 		TG68_PC_brw <= '0';	
 		setstate <= "00";
@@ -1468,6 +1512,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		trap_priv <='0';
 		trap_1010 <='0';
 		trap_1111 <='0';
+		trap_mmu_configuration <= '0';
 		trap_trap <='0';
 		trap_trapv <= '0';
 		trapmake <='0';
@@ -1478,6 +1523,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 --		illegal_read_mode <= '0';
 --		illegal_byteaddr <= '0';
 		set_Z_error <= '0';
+		MMU_instruction_start <= '0';
 		check_aligned <='0';
 
 		next_micro_state <= idle;
@@ -3104,7 +3150,26 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 --				
 ---- 1111 ----------------------------------------------------------------------------		
 			WHEN "1111" =>
-				IF cpu(1)='1' AND opcode(8 downto 6)="100" THEN --cpSAVE
+				IF MMU_enable = '1' AND cpu(1) = '1' AND
+						MMU_instruction_match = '1' THEN
+					ea_only <= to_bit(MMU_instruction_requires_ea);
+					IF decodeOPC = '1' THEN
+						set(get_2ndOPC) <= '1';
+						IF MMU_instruction_valid = '1' AND SVmode = '1' AND
+								MMU_instruction_requires_ea = '1' THEN
+							set(ea_build) <= '1';
+							next_micro_state <= nop;
+						ELSE
+							next_micro_state <= pmmu_issue;
+						END IF;
+					ELSIF micro_state = idle AND nextpass = '1' THEN
+						setstate <= "01";
+						next_micro_state <= pmmu_issue;
+					END IF;
+					IF set(get_ea_now) = '1' THEN
+						setstate <= "01";
+					END IF;
+				ELSIF cpu(1)='1' AND opcode(8 downto 6)="100" THEN --cpSAVE
 					IF opcode(5 downto 4)/="00" AND opcode(5 downto 3)/="011" AND
 					   (opcode(5 downto 3)/="111" OR opcode(2 downto 1)="00") THEN --ea illegal modes
 						IF opcode(11 downto 9)/="000" THEN
@@ -3999,6 +4064,26 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					
 				WHEN bf1 =>
 					setstate <="10";
+
+				WHEN pmmu_issue =>
+					MMU_instruction_start <= '1';
+					setstate <= "01";
+					next_micro_state <= pmmu_wait;
+
+				WHEN pmmu_wait =>
+					IF MMU_instruction_done = '0' THEN
+						setstate <= "01";
+						next_micro_state <= pmmu_wait;
+					ELSIF MMU_privilege_exception = '1' THEN
+						trap_priv <= '1';
+						trapmake <= '1';
+					ELSIF MMU_configuration_exception = '1' THEN
+						trap_mmu_configuration <= '1';
+						trapmake <= '1';
+					ELSIF MMU_unimplemented_exception = '1' THEN
+						trap_1111 <= '1';
+						trapmake <= '1';
+					END IF;
 	
 				WHEN OTHERS => NULL;
 			END CASE;
@@ -4012,10 +4097,12 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 	-- all other hexa codes should give illegal isntruction exception
 	if rising_edge(clk) then
 	  if Reset = '1' then
-		VBR <= (others => '0');
-		CACR <= (others => '0');
-		CACR_DC <= '1';
-		CACR_DC_owned <= '0';
+			VBR <= (others => '0');
+			CACR <= (others => '0');
+			CACR_DC <= '1';
+			CACR_DC_owned <= '0';
+			SFC <= (others => '0');
+			DFC <= (others => '0');
 	  elsif clkena_lw = '1' and exec(movec_wr) = '1' then
 		case brief(11 downto 0) is
 		  when X"000" => SFC <= reg_QA(2 downto 0); -- SFC -- 68010+
