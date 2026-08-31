@@ -28,3 +28,8 @@ descriptor read and history-write sequences for short, long, mixed-format,
 indirect, and early-termination searches. It also covers root direct mapping,
 limits, supervisor and write protection, CPU-space bypass, and read/update bus
 fault classification.
+
+The ATC test covers all 22 fully associative entries, variable page-size tag
+matching, function-code tags, physical page-index insertion, status fields,
+write misses for clear M bits, reset retention, selective and full flushes,
+invalid-entry preference, and deterministic history-bit replacement.

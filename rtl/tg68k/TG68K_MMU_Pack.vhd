@@ -14,6 +14,8 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 package TG68K_MMU_Pack is
+	constant MMU_ATC_ENTRY_COUNT : natural := 22;
+
 	type mmu_register_t is (MMU_REG_CRP, MMU_REG_SRP, MMU_REG_TC,
 		MMU_REG_TT0, MMU_REG_TT1, MMU_REG_MMUSR);
 	type mmu_descriptor_format_t is (MMU_DESCRIPTOR_ROOT,

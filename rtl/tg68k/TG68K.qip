@@ -1,5 +1,6 @@
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_MMU_Pack.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_MMU_Decoder.vhd ]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_MMU_ATC.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_MMU_Walker.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_MMU.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_ALU.vhd ]
