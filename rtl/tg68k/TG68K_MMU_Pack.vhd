@@ -64,6 +64,15 @@ package TG68K_MMU_Pack is
 	constant MMU_TT_IMPLEMENTED_MASK : mmu_tt_t := x"FFFF8777";
 
 	constant MMU_STATUS_IMPLEMENTED_MASK : mmu_status_t := x"EE47";
+	constant MMU_STATUS_BUS_ERROR_BIT : natural := 15;
+	constant MMU_STATUS_LIMIT_BIT : natural := 14;
+	constant MMU_STATUS_SUPERVISOR_BIT : natural := 13;
+	constant MMU_STATUS_WRITE_PROTECT_BIT : natural := 11;
+	constant MMU_STATUS_INVALID_BIT : natural := 10;
+	constant MMU_STATUS_MODIFIED_BIT : natural := 9;
+	constant MMU_STATUS_TRANSPARENT_BIT : natural := 6;
+	constant MMU_STATUS_LEVEL_HIGH : natural := 2;
+	constant MMU_STATUS_LEVEL_LOW : natural := 0;
 	constant MMU_DESCRIPTOR_TYPE_INVALID : std_logic_vector(1 downto 0) := "00";
 	constant MMU_DESCRIPTOR_TYPE_PAGE : std_logic_vector(1 downto 0) := "01";
 	constant MMU_DESCRIPTOR_TYPE_SHORT : std_logic_vector(1 downto 0) := "10";

@@ -25,6 +25,11 @@ PMOVE register set and sizes, FC source encodings, PLOAD, the three PFLUSH
 forms, PTEST level and address-register rules, reserved fields, privilege
 indication, and exclusion of other coprocessor IDs.
 
+The MMU instruction-controller test checks big-endian PMOVE word sequencing
+and commit/error behavior, PFLUSH qualifiers, PLOAD invalidate/walk/fill
+ordering, exact PTEST MMUSR results and descriptor-address return, FC source
+selection, and privilege versus F-line exception priority.
+
 The descriptor test covers root, short, and long formats, including invalid,
 table, page, early-termination, and indirect descriptors and every protection
 and history field used by the MC68030.
