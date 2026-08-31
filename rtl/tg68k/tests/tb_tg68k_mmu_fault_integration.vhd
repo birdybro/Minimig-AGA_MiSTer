@@ -5,7 +5,7 @@ use std.env.all;
 
 entity tb_tg68k_mmu_fault_integration is
 generic(
-	FAULT_KIND : natural range 0 to 3 := 0
+	FAULT_KIND : natural range 0 to 5 := 0
 );
 end entity;
 
@@ -36,7 +36,7 @@ architecture test of tb_tg68k_mmu_fault_integration is
 		result(16#0087#) := x"0308";
 		result(16#0088#) := x"F010";
 		result(16#0089#) := x"4000";
-		if FAULT_KIND = 0 then
+		if FAULT_KIND = 0 or FAULT_KIND = 5 then
 			-- MOVE.L #$12345678,$00004000: data write fault.
 			result(16#008A#) := x"23FC";
 			result(16#008B#) := x"1234";
@@ -76,7 +76,11 @@ architecture test of tb_tg68k_mmu_fault_integration is
 		result(16#0806#) := x"0000";
 		result(16#0807#) := x"3001";
 		result(16#0808#) := x"0000";
-		result(16#0809#) := x"0000";
+		if FAULT_KIND = 5 then
+			result(16#0809#) := x"2001";
+		else
+			result(16#0809#) := x"0000";
+		end if;
 		return result;
 	end function;
 
@@ -90,11 +94,18 @@ architecture test of tb_tg68k_mmu_fault_integration is
 	signal nlds : std_logic;
 	signal busstate : std_logic_vector(1 downto 0);
 	signal fc : std_logic_vector(2 downto 0);
+	signal bus_error : std_logic;
 	signal memory : memory_t := initial_memory;
 	signal stack_write_count : natural := 0;
 	signal handler_fetch_seen : std_logic := '0';
+	signal table_fault_cycle_count : natural := 0;
+	signal translated_data_cycle_seen : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
+	bus_error <= '1' when
+		(FAULT_KIND = 4 and busstate = "10" and addr_out = x"00001010") or
+		(FAULT_KIND = 5 and busstate = "11" and addr_out = x"00001012") else
+		'0';
 
 	dut : entity work.TG68KdotC_MMU
 		port map(
@@ -104,7 +115,7 @@ begin
 			data_in => data_in,
 			IPL => "111",
 			IPL_autovector => '1',
-			berr => '0',
+			berr => bus_error,
 			CPU => "11",
 			MMU_enable => '1',
 			addr_out => addr_out,
@@ -148,6 +159,12 @@ begin
 				not is_x(addr_out) then
 			word_address := to_integer(unsigned(addr_out(13 downto 1)));
 			if busstate = "11" and word_address < MEMORY_WORDS then
+				if FAULT_KIND = 5 and addr_out = x"00001012" then
+					assert bus_error = '1' and fc = "101"
+						report "descriptor-update BERR cycle attributes mismatch"
+						severity failure;
+					table_fault_cycle_count <= table_fault_cycle_count + 1;
+				end if;
 				if FAULT_KIND = 1 then
 					lowest_stack_address := to_unsigned(16#0FE0#, 32);
 				else
@@ -163,12 +180,24 @@ begin
 						report "MMU fault frame bus attributes mismatch" severity failure;
 					stack_write_count <= stack_write_count + 1;
 				end if;
-				if nuds = '0' then
+				if nuds = '0' and bus_error = '0' then
 					memory(word_address)(15 downto 8) <= data_write(15 downto 8);
 				end if;
-				if nlds = '0' then
+				if nlds = '0' and bus_error = '0' then
 					memory(word_address)(7 downto 0) <= data_write(7 downto 0);
 				end if;
+			end if;
+			if FAULT_KIND = 4 and busstate = "10" and
+					addr_out = x"00001010" then
+				assert bus_error = '1' and fc = "101"
+					report "descriptor-read BERR cycle attributes mismatch"
+					severity failure;
+				table_fault_cycle_count <= table_fault_cycle_count + 1;
+			end if;
+			if (FAULT_KIND = 4 or FAULT_KIND = 5) and
+					unsigned(addr_out) >= to_unsigned(16#2000#, 32) and
+					unsigned(addr_out) < to_unsigned(16#3000#, 32) then
+				translated_data_cycle_seen <= '1';
 			end if;
 			if busstate = "00" and addr_out = x"00000180" then
 				handler_fetch_seen <= '1';
@@ -241,7 +270,7 @@ begin
 				memory(16#07DB#) = x"4000"
 				report "in-progress instruction logical fault address mismatch"
 				severity failure;
-		else
+		elsif FAULT_KIND = 3 then
 			assert stack_write_count = 46
 				report "MMU data read fault did not write 46 frame words"
 				severity failure;
@@ -255,6 +284,37 @@ begin
 			assert memory(16#07DA#) = x"0000" and
 				memory(16#07DB#) = x"4000"
 				report "data read logical fault address mismatch" severity failure;
+		elsif FAULT_KIND = 4 then
+			assert stack_write_count = 46 and table_fault_cycle_count = 1
+				report "descriptor-read BERR did not produce one format-B fault"
+				severity failure;
+			assert memory(16#07D3#) = x"0000" and
+				memory(16#07D4#) = x"0114" and
+				memory(16#07D5#) = x"B008" and
+				memory(16#07D7#) = x"0145" and
+				memory(16#07DA#) = x"0000" and
+				memory(16#07DB#) = x"4000"
+				report "descriptor-read BERR frame context mismatch"
+				severity failure;
+			assert translated_data_cycle_seen = '0'
+				report "operand cycle escaped a failed descriptor read"
+				severity failure;
+		else
+			assert stack_write_count = 46 and table_fault_cycle_count = 1
+				report "descriptor-update BERR did not produce one format-B fault"
+				severity failure;
+			assert memory(16#07D3#) = x"0000" and
+				memory(16#07D4#) = x"0114" and
+				memory(16#07D5#) = x"B008" and
+				memory(16#07D7#) = x"0105" and
+				memory(16#07DA#) = x"0000" and
+				memory(16#07DB#) = x"4000"
+				report "descriptor-update BERR frame context mismatch"
+				severity failure;
+			assert memory(16#0809#) = x"2001" and
+				translated_data_cycle_seen = '0'
+				report "failed descriptor update committed or operand cycle escaped"
+				severity failure;
 		end if;
 		report "PASS: integrated MMU fault frame kind " &
 			integer'image(FAULT_KIND) & " and bus order" severity note;

@@ -71,6 +71,8 @@ mmu_fault_integration: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=1 $(GHDL_RUN_FLAGS)
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=2 $(GHDL_RUN_FLAGS)
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=3 $(GHDL_RUN_FLAGS)
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=4 $(GHDL_RUN_FLAGS)
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration -gFAULT_KIND=5 $(GHDL_RUN_FLAGS)
 
 mmu_fault_rte: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_rte -gFAULT_KIND=0 $(GHDL_RUN_FLAGS)
