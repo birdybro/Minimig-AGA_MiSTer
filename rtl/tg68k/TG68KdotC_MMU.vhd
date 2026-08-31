@@ -139,7 +139,7 @@ begin
 	bridge_fault_write <= '1' when bridge_busstate = "11" else '0';
 	bridge_fault_instruction <= '1' when bridge_busstate = "00" else '0';
 	translation_logical_request <= operand_request when operand_request = '1' else
-		'1' when kernel_busstate /= "01" else '0';
+		'1' when kernel_busstate /= "01" and mmu_instruction_start = '0' else '0';
 	translation_logical_address <= operand_address when operand_request = '1' else
 		kernel_address;
 	translation_logical_fc <= operand_fc when operand_request = '1' else kernel_fc;

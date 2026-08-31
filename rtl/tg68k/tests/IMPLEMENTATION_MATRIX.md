@@ -12,7 +12,7 @@
 | MMU instruction execution | MC68030UM 9.7.5, 9.8; M68000PM PMMU instructions | `TG68K_MMU_Instruction_Controller.vhd`, `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | `tb_tg68k_mmu_instruction_controller.vhd`, `tb_tg68k_mmu_dispatch.vhd`, `tb_tg68k_mmu_wrapper.vhd` |
 | MMU access-fault frame layout and SSW | MC68030UM 8.2.4, figs. 8-14 and 8-15 | `TG68K_MMU_Fault_Frame.vhd`, `TG68K_MMU_Pack.vhd` | exhaustive `tb_tg68k_mmu_fault_frame.vhd` |
 | MMU access-fault sequencing | MC68030UM 8.1.2, 8.2, 8.4 | `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | format A/B and cycle-order `tb_tg68k_mmu_fault_integration.vhd` |
-| MMU access-fault restart and RTE | MC68030UM 8.1.13, 8.2.3 | planned in kernel RTL | frame validation, repaired-cycle replay, and restart tests |
+| MMU access-fault restart and RTE | MC68030UM 8.1.13, 8.2.3 | `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | format A/B deallocation and repaired-cycle replay in `tb_tg68k_mmu_fault_rte.vhd`; invalid-format/version validation pending |
 | FPU state, formats, and exceptions | MC68881UM 1, 3, 4, 5, 6 | planned in `TG68K_FPU*.vhd` | FPU module tests |
 | FPU arithmetic and constants | MC68881UM 3, 4, 5; M68000PM FPU instructions | planned in FPU RTL | MPFR-generated vectors |
 | FPU conditional and transfer instructions | MC68881UM 3, 4, 5 | planned in FPU and kernel RTL | instruction and bus tests |

@@ -324,6 +324,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal make_trace			: std_logic;
 	signal make_berr			: std_logic;
 	signal useStackframe2	: std_logic;
+	signal rte_fault_longwords_remaining : std_logic_vector(4 downto 0);
 	signal mmu_fault_long_format : std_logic;
 	signal mmu_fault_word_index : std_logic_vector(5 downto 0);
 	signal mmu_fault_status_register : std_logic_vector(15 downto 0);
@@ -606,6 +607,27 @@ ALU: TG68K_ALU
 				end if;
 				if micro_state = trap3 and trap_mmu_access = '1' then
 					trap_mmu_access <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
+	rte_fault_frame_count : process(clk)
+	begin
+		if rising_edge(clk) then
+			if Reset = '1' then
+				rte_fault_longwords_remaining <= (others => '0');
+			elsif clkena_lw = '1' then
+				if micro_state = rte4 then
+					if last_data_in(15 downto 12) = "1010" then
+						rte_fault_longwords_remaining <= "00110";
+					elsif last_data_in(15 downto 12) = "1011" then
+						rte_fault_longwords_remaining <= "10101";
+					end if;
+				elsif micro_state = rte_fault_read and state = "10" and
+						rte_fault_longwords_remaining /= "00000" then
+					rte_fault_longwords_remaining <=
+						rte_fault_longwords_remaining - 1;
 				end if;
 			end if;
 		end if;
@@ -1579,7 +1601,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 MMU_unimplemented_exception, MMU_privilege_exception,
 		 MMU_configuration_exception, MMU_access_fault, MMU_fault_address,
 		 MMU_fault_function_code, MMU_fault_write, MMU_fault_instruction,
-		 mmu_fault_word_index)
+		 mmu_fault_word_index, rte_fault_longwords_remaining)
 	BEGIN
 		TG68_PC_brw <= '0';	
 		setstate <= "00";
@@ -3992,7 +4014,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 											-- arrive
 					next_micro_state <= rte4;
 				WHEN rte4 =>         -- RTE
-											-- check for stack frame format #2
+										-- check for stack frame format #2
 					if last_data_in(15 downto 12)="0010" then
 										  -- read another 32 bits in this case
 						setstate <= "10"; -- read
@@ -4000,12 +4022,30 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						set(postadd) <= '1';
 						setstackaddr <= '1';
 						next_micro_state <= rte5;
+					elsif MMU_enable = '1' and
+							(last_data_in(15 downto 12) = "1010" or
+							last_data_in(15 downto 12) = "1011") then
+						setstate <= "10";
+						datatype <= "10";
+						set(postadd) <= '1';
+						setstackaddr <= '1';
+						next_micro_state <= rte_fault_read;
 					else
 						datatype <= "01";
 						next_micro_state <= nop;
 					end if;
 				WHEN rte5 =>            -- RTE
 					next_micro_state <= nop;
+				WHEN rte_fault_read =>
+					setstate <= "10";
+					datatype <= "10";
+					set(postadd) <= '1';
+					setstackaddr <= '1';
+					if rte_fault_longwords_remaining = "00001" then
+						next_micro_state <= nop;
+					else
+						next_micro_state <= rte_fault_read;
+					end if;
 -------------------------------------
 
 				WHEN rtd1 =>		-- RTD
@@ -4180,8 +4220,8 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					next_micro_state <= pmmu_wait;
 
 				WHEN pmmu_wait =>
+					setstate <= "01";
 					IF MMU_instruction_done = '0' THEN
-						setstate <= "01";
 						next_micro_state <= pmmu_wait;
 					ELSIF MMU_privilege_exception = '1' THEN
 						trap_priv <= '1';
@@ -4192,16 +4232,22 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					ELSIF MMU_unimplemented_exception = '1' THEN
 						trap_1111 <= '1';
 						trapmake <= '1';
+					ELSE
+						next_micro_state <= pmmu_retire;
 					END IF;
 
+				WHEN pmmu_retire =>
+					NULL;
+
 				WHEN mmu_fault_push =>
-					set(presub) <= '1';
 					setstackaddr <= '1';
-					setstate <= "11";
 					datatype <= "01";
 					if mmu_fault_word_index = "000000" then
+						setstate <= "01";
 						next_micro_state <= trap3;
 					else
+						set(presub) <= '1';
+						setstate <= "11";
 						next_micro_state <= mmu_fault_push;
 					end if;
 
