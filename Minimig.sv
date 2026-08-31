@@ -401,10 +401,12 @@ cpu_wrapper cpu_wrapper
 	.z3ram_ena0   (z3ram_ena0      ),
 	.z3ram_base1  (z3ram_base1     ),
 	.z3ram_ena1   (z3ram_ena1      ),
-	.dcache_sw_en (dcache_sw_en    )
+	.dcache_sw_en (dcache_sw_en    ),
+	.cache_inhibit(cpu_cache_inhibit)
 );
 
 wire        dcache_sw_en;
+wire        cpu_cache_inhibit;
 
 wire        z2ram_ena;
 wire  [4:0] z3ram_base0;
@@ -433,6 +435,7 @@ sdram_ctrl ram1
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(cpu_cacr       ),
 	.dcache_sw_en (dcache_sw_en    ),
+	.cache_inhibit(cpu_cache_inhibit),
 
 	.sd_data      (SDRAM_DQ        ),
 	.sd_addr      (SDRAM_A         ),
@@ -527,6 +530,7 @@ ddram_ctrl ram2
 	.cache_rst    (cpu_rst         ),
 	.cpu_cache_ctrl(cpu_cacr       ),
 	.dcache_sw_en (dcache_sw_en    ),
+	.cache_inhibit(cpu_cache_inhibit),
 
 	.DDRAM_CLK    (DDRAM_CLK       ),
 	.DDRAM_BUSY   (DDRAM_BUSY      ),

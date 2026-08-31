@@ -88,11 +88,13 @@ module cpu_wrapper
 	output reg  [3:0] z3ram_base1,
 	output reg        z3ram_ena1,
 
-	output            dcache_sw_en
+	output            dcache_sw_en,
+	output            cache_inhibit
 );
 
 wire dcache_sw_en_p;
 assign dcache_sw_en = cpucfg[1] ? dcache_sw_en_p : 1'b1;
+assign cache_inhibit = (cpucfg[1:0] == 2'b11) && mmu_cache_inhibit_p;
 
 assign ramsel       = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_dd | sel_rtg);
 assign ramshared    = sel_dd;
@@ -130,7 +132,11 @@ memory_router u_memory_router
 
 // we route everything hrtmon related through cart.v (needs a couple of signals to
 // decide what to do, would not be good style to replicate that here).
-wire sel_nmi_vector = (cpu_addr[31:2] == nmi_addr[31:2]) && (cpustate == 2);
+wire sel_nmi_vector = cpucfg[1:0] ?
+                      (cpu_logical_access_p &&
+                       (cpu_logical_addr_p[31:2] == nmi_addr[31:2]) &&
+                       (cpustate == 2)) :
+                      ((cpu_addr[31:2] == nmi_addr[31:2]) && (cpustate == 2));
 
 wire [15:0] ramdat;
 
@@ -208,8 +214,11 @@ wire        uds_p;
 wire        lds_p;
 wire        reset_out_p;
 wire        longword;
+wire        mmu_cache_inhibit_p;
+wire [31:0] cpu_logical_addr_p;
+wire        cpu_logical_access_p;
 
-TG68KdotC_Kernel
+TG68KdotC_MMU
 #(
 	.sr_read(2),        // 0=>user,   1=>privileged,    2=>switchable with CPU(0)
 	.vbr_stackframe(2), // 0=>no,     1=>yes/extended,  2=>switchable with CPU(0)
@@ -226,6 +235,7 @@ cpu_inst_p
   .data_in(cpu_din),
   .ipl(cpu_ipl),
   .ipl_autovector(1),
+  .mmu_enable(cpucfg[1:0] == 2'b11),
   .regin_out(),
   .addr_out(cpu_addr_p),
   .data_write(cpu_dout_p),
@@ -234,6 +244,9 @@ cpu_inst_p
   .nlds(lds_p),
   .nresetout(reset_out_p),
   .longword(longword),
+  .cache_inhibit(mmu_cache_inhibit_p),
+  .logical_bus_address(cpu_logical_addr_p),
+  .logical_bus_access(cpu_logical_access_p),
   
   .cpu(cpucfg[1:0]),
   .busstate(cpustate_p),		// 0: fetch code, 1: no memaccess, 2: read data, 3: write data

@@ -177,8 +177,6 @@ architecture rtl of TG68K_MMU_System is
 	signal atc_fill_b_mux : std_logic;
 
 	signal transparent_match : std_logic;
-	signal transparent_cache_inhibit : std_logic;
-	signal transparent_cpu_space : std_logic;
 
 	signal controller_walker_start : std_logic;
 	signal controller_walker_logical : std_logic_vector(31 downto 0);
@@ -198,7 +196,6 @@ architecture rtl of TG68K_MMU_System is
 	signal walker_force_mux : std_logic;
 	signal walker_suppress_updates_mux : std_logic;
 	signal walker_stop_level_mux : std_logic_vector(2 downto 0);
-	signal walker_busy : std_logic;
 	signal walker_done : std_logic;
 	signal walker_mapping_valid : std_logic;
 	signal walker_physical_address : std_logic_vector(31 downto 0);
@@ -217,15 +214,18 @@ architecture rtl of TG68K_MMU_System is
 	signal translation_busy_internal : std_logic;
 	signal instruction_start_accepted : std_logic;
 	signal translation_start_accepted : std_logic;
+	signal operand_bus_request_internal : std_logic;
 begin
 	combined_atc_flush_all <= register_atc_flush_all or controller_atc_flush_all;
 	instruction_busy <= instruction_busy_internal;
 	translation_busy <= translation_busy_internal;
 	instruction_start_accepted <= instruction_start and not translation_busy_internal;
 	translation_start_accepted <= translation_start and not instruction_start and
-		not instruction_busy_internal;
-	translation_ready <= not instruction_busy_internal and
-		not translation_busy_internal and not instruction_start;
+		not translation_busy_internal and (not instruction_busy_internal or
+		operand_bus_request_internal);
+	translation_ready <= not translation_busy_internal and not instruction_start and
+		(not instruction_busy_internal or operand_bus_request_internal);
+	operand_bus_request <= operand_bus_request_internal;
 
 	atc_lookup_request_mux <= controller_atc_lookup_request or
 		translation_atc_lookup_request;
@@ -330,13 +330,13 @@ begin
 			function_code => controller_atc_lookup_fc,
 			write_access => controller_atc_lookup_write,
 			read_modify_write => '0',
-			cpu_space_access => transparent_cpu_space,
+			cpu_space_access => open,
 			tt0_match => open,
 			tt1_match => open,
 			transparent_match => transparent_match,
 			translation_bypass => open,
 			physical_address => open,
-			cache_inhibit => transparent_cache_inhibit
+			cache_inhibit => open
 		);
 
 	atc : entity work.TG68K_MMU_ATC
@@ -396,7 +396,7 @@ begin
 			bus_address => table_bus_address,
 			bus_write_data => table_bus_write_data,
 			bus_function_code => table_bus_function_code,
-			busy => walker_busy,
+			busy => open,
 			done => walker_done,
 			mapping_valid => walker_mapping_valid,
 			physical_address => walker_physical_address,
@@ -505,7 +505,7 @@ begin
 			memory_ready => operand_bus_ready,
 			memory_error => operand_bus_error,
 			memory_read_data => operand_bus_read_data,
-			memory_request => operand_bus_request,
+			memory_request => operand_bus_request_internal,
 			memory_write => operand_bus_write,
 			memory_address => operand_bus_address,
 			memory_write_data => operand_bus_write_data,
