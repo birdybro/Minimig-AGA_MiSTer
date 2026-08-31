@@ -40,6 +40,29 @@ entity TG68K_MMU_System is
 		address_register_select : out std_logic_vector(2 downto 0);
 		address_register_data : out std_logic_vector(31 downto 0);
 
+		translation_start : in std_logic;
+		translation_logical_address : in std_logic_vector(31 downto 0);
+		translation_function_code : in std_logic_vector(2 downto 0);
+		translation_write : in std_logic;
+		translation_read_modify_write : in std_logic;
+		translation_ready : out std_logic;
+		translation_busy : out std_logic;
+		translation_done : out std_logic;
+		translation_physical_address : out std_logic_vector(31 downto 0);
+		translation_cache_inhibit : out std_logic;
+		translation_bypassed : out std_logic;
+		translation_atc_hit : out std_logic;
+		translation_table_walk : out std_logic;
+		translation_fault : out std_logic;
+		translation_fault_from_atc : out std_logic;
+		translation_fault_bus_error : out std_logic;
+		translation_fault_invalid : out std_logic;
+		translation_fault_limit : out std_logic;
+		translation_fault_supervisor : out std_logic;
+		translation_fault_write_protect : out std_logic;
+		translation_fault_descriptor_address : out std_logic_vector(31 downto 0);
+		translation_fault_during_update : out std_logic;
+
 		operand_bus_ready : in std_logic;
 		operand_bus_error : in std_logic;
 		operand_bus_read_data : in std_logic_vector(15 downto 0);
@@ -127,6 +150,31 @@ architecture rtl of TG68K_MMU_System is
 	signal controller_atc_fill_wp : std_logic;
 	signal controller_atc_fill_m : std_logic;
 	signal controller_atc_fill_b : std_logic;
+	signal translation_atc_lookup_request : std_logic;
+	signal translation_atc_lookup_address : std_logic_vector(31 downto 0);
+	signal translation_atc_lookup_fc : std_logic_vector(2 downto 0);
+	signal translation_atc_lookup_write : std_logic;
+	signal translation_atc_fill_request : std_logic;
+	signal translation_atc_fill_logical : std_logic_vector(31 downto 0);
+	signal translation_atc_fill_fc : std_logic_vector(2 downto 0);
+	signal translation_atc_fill_physical : std_logic_vector(31 downto 0);
+	signal translation_atc_fill_ci : std_logic;
+	signal translation_atc_fill_wp : std_logic;
+	signal translation_atc_fill_m : std_logic;
+	signal translation_atc_fill_b : std_logic;
+	signal atc_lookup_request_mux : std_logic;
+	signal atc_lookup_test_mux : std_logic;
+	signal atc_lookup_address_mux : std_logic_vector(31 downto 0);
+	signal atc_lookup_fc_mux : std_logic_vector(2 downto 0);
+	signal atc_lookup_write_mux : std_logic;
+	signal atc_fill_request_mux : std_logic;
+	signal atc_fill_logical_mux : std_logic_vector(31 downto 0);
+	signal atc_fill_fc_mux : std_logic_vector(2 downto 0);
+	signal atc_fill_physical_mux : std_logic_vector(31 downto 0);
+	signal atc_fill_ci_mux : std_logic;
+	signal atc_fill_wp_mux : std_logic;
+	signal atc_fill_m_mux : std_logic;
+	signal atc_fill_b_mux : std_logic;
 
 	signal transparent_match : std_logic;
 	signal transparent_cache_inhibit : std_logic;
@@ -139,6 +187,17 @@ architecture rtl of TG68K_MMU_System is
 	signal controller_walker_force : std_logic;
 	signal controller_walker_suppress_updates : std_logic;
 	signal controller_walker_stop_level : std_logic_vector(2 downto 0);
+	signal translation_walker_start : std_logic;
+	signal translation_walker_logical : std_logic_vector(31 downto 0);
+	signal translation_walker_fc : std_logic_vector(2 downto 0);
+	signal translation_walker_write : std_logic;
+	signal walker_start_mux : std_logic;
+	signal walker_logical_mux : std_logic_vector(31 downto 0);
+	signal walker_fc_mux : std_logic_vector(2 downto 0);
+	signal walker_write_mux : std_logic;
+	signal walker_force_mux : std_logic;
+	signal walker_suppress_updates_mux : std_logic;
+	signal walker_stop_level_mux : std_logic_vector(2 downto 0);
 	signal walker_busy : std_logic;
 	signal walker_done : std_logic;
 	signal walker_mapping_valid : std_logic;
@@ -154,8 +213,60 @@ architecture rtl of TG68K_MMU_System is
 	signal walker_fault_during_update : std_logic;
 	signal walker_final_descriptor_address : std_logic_vector(31 downto 0);
 	signal walker_descriptor_count : std_logic_vector(2 downto 0);
+	signal instruction_busy_internal : std_logic;
+	signal translation_busy_internal : std_logic;
+	signal instruction_start_accepted : std_logic;
+	signal translation_start_accepted : std_logic;
 begin
 	combined_atc_flush_all <= register_atc_flush_all or controller_atc_flush_all;
+	instruction_busy <= instruction_busy_internal;
+	translation_busy <= translation_busy_internal;
+	instruction_start_accepted <= instruction_start and not translation_busy_internal;
+	translation_start_accepted <= translation_start and not instruction_start and
+		not instruction_busy_internal;
+	translation_ready <= not instruction_busy_internal and
+		not translation_busy_internal and not instruction_start;
+
+	atc_lookup_request_mux <= controller_atc_lookup_request or
+		translation_atc_lookup_request;
+	atc_lookup_test_mux <= controller_atc_lookup_test when
+		controller_atc_lookup_request = '1' else '0';
+	atc_lookup_address_mux <= translation_atc_lookup_address when
+		translation_busy_internal = '1' else controller_atc_lookup_address;
+	atc_lookup_fc_mux <= translation_atc_lookup_fc when
+		translation_busy_internal = '1' else controller_atc_lookup_fc;
+	atc_lookup_write_mux <= translation_atc_lookup_write when
+		translation_busy_internal = '1' else controller_atc_lookup_write;
+	atc_fill_request_mux <= controller_atc_fill_request or
+		translation_atc_fill_request;
+	atc_fill_logical_mux <= translation_atc_fill_logical when
+		translation_atc_fill_request = '1' else controller_atc_fill_logical;
+	atc_fill_fc_mux <= translation_atc_fill_fc when
+		translation_atc_fill_request = '1' else controller_atc_fill_fc;
+	atc_fill_physical_mux <= translation_atc_fill_physical when
+		translation_atc_fill_request = '1' else controller_atc_fill_physical;
+	atc_fill_ci_mux <= translation_atc_fill_ci when
+		translation_atc_fill_request = '1' else controller_atc_fill_ci;
+	atc_fill_wp_mux <= translation_atc_fill_wp when
+		translation_atc_fill_request = '1' else controller_atc_fill_wp;
+	atc_fill_m_mux <= translation_atc_fill_m when
+		translation_atc_fill_request = '1' else controller_atc_fill_m;
+	atc_fill_b_mux <= translation_atc_fill_b when
+		translation_atc_fill_request = '1' else controller_atc_fill_b;
+
+	walker_start_mux <= controller_walker_start or translation_walker_start;
+	walker_logical_mux <= translation_walker_logical when
+		translation_busy_internal = '1' else controller_walker_logical;
+	walker_fc_mux <= translation_walker_fc when
+		translation_busy_internal = '1' else controller_walker_fc;
+	walker_write_mux <= translation_walker_write when
+		translation_busy_internal = '1' else controller_walker_write;
+	walker_force_mux <= '0' when translation_busy_internal = '1' else
+		controller_walker_force;
+	walker_suppress_updates_mux <= '0' when translation_busy_internal = '1' else
+		controller_walker_suppress_updates;
+	walker_stop_level_mux <= "000" when translation_busy_internal = '1' else
+		controller_walker_stop_level;
 	fc_data_register_select <= decoded_fc_data_register;
 	crp_out <= crp;
 	srp_out <= srp;
@@ -233,11 +344,11 @@ begin
 			clk => clk,
 			nReset => nReset,
 			page_size => tc(MMU_TC_PS_HIGH downto MMU_TC_PS_LOW),
-			lookup_request => controller_atc_lookup_request,
-			lookup_logical_address => controller_atc_lookup_address,
-			lookup_function_code => controller_atc_lookup_fc,
-			lookup_write => controller_atc_lookup_write,
-			lookup_test => controller_atc_lookup_test,
+			lookup_request => atc_lookup_request_mux,
+			lookup_logical_address => atc_lookup_address_mux,
+			lookup_function_code => atc_lookup_fc_mux,
+			lookup_write => atc_lookup_write_mux,
+			lookup_test => atc_lookup_test_mux,
 			lookup_match => atc_lookup_match,
 			lookup_hit => atc_lookup_hit,
 			lookup_requires_walk => atc_lookup_requires_walk,
@@ -246,14 +357,14 @@ begin
 			lookup_write_protected => atc_lookup_write_protected,
 			lookup_modified => atc_lookup_modified,
 			lookup_bus_error => atc_lookup_bus_error,
-			fill_request => controller_atc_fill_request,
-			fill_logical_address => controller_atc_fill_logical,
-			fill_function_code => controller_atc_fill_fc,
-			fill_physical_address => controller_atc_fill_physical,
-			fill_cache_inhibit => controller_atc_fill_ci,
-			fill_write_protected => controller_atc_fill_wp,
-			fill_modified => controller_atc_fill_m,
-			fill_bus_error => controller_atc_fill_b,
+			fill_request => atc_fill_request_mux,
+			fill_logical_address => atc_fill_logical_mux,
+			fill_function_code => atc_fill_fc_mux,
+			fill_physical_address => atc_fill_physical_mux,
+			fill_cache_inhibit => atc_fill_ci_mux,
+			fill_write_protected => atc_fill_wp_mux,
+			fill_modified => atc_fill_m_mux,
+			fill_bus_error => atc_fill_b_mux,
 			flush_all => combined_atc_flush_all,
 			flush_request => controller_atc_flush_request,
 			flush_by_address => controller_atc_flush_by_address,
@@ -266,13 +377,13 @@ begin
 		port map(
 			clk => clk,
 			nReset => nReset,
-			start => controller_walker_start,
-			logical_address => controller_walker_logical,
-			function_code => controller_walker_fc,
-			write_access => controller_walker_write,
-			force_table_search => controller_walker_force,
-			suppress_descriptor_updates => controller_walker_suppress_updates,
-			stop_level => controller_walker_stop_level,
+			start => walker_start_mux,
+			logical_address => walker_logical_mux,
+			function_code => walker_fc_mux,
+			write_access => walker_write_mux,
+			force_table_search => walker_force_mux,
+			suppress_descriptor_updates => walker_suppress_updates_mux,
+			stop_level => walker_stop_level_mux,
 			crp => crp,
 			srp => srp,
 			tc => tc,
@@ -302,11 +413,77 @@ begin
 			descriptor_count => walker_descriptor_count
 		);
 
+	translation : entity work.TG68K_MMU_Translation
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => translation_start_accepted,
+			logical_address => translation_logical_address,
+			function_code => translation_function_code,
+			write_access => translation_write,
+			read_modify_write => translation_read_modify_write,
+			tc => tc,
+			tt0 => tt0,
+			tt1 => tt1,
+			atc_lookup_match => atc_lookup_match,
+			atc_lookup_hit => atc_lookup_hit,
+			atc_lookup_requires_walk => atc_lookup_requires_walk,
+			atc_lookup_physical_address => atc_lookup_physical_address,
+			atc_lookup_cache_inhibit => atc_lookup_cache_inhibit,
+			atc_lookup_write_protected => atc_lookup_write_protected,
+			atc_lookup_modified => atc_lookup_modified,
+			atc_lookup_bus_error => atc_lookup_bus_error,
+			atc_lookup_request => translation_atc_lookup_request,
+			atc_lookup_address => translation_atc_lookup_address,
+			atc_lookup_function_code => translation_atc_lookup_fc,
+			atc_lookup_write => translation_atc_lookup_write,
+			atc_fill_request => translation_atc_fill_request,
+			atc_fill_logical_address => translation_atc_fill_logical,
+			atc_fill_function_code => translation_atc_fill_fc,
+			atc_fill_physical_address => translation_atc_fill_physical,
+			atc_fill_cache_inhibit => translation_atc_fill_ci,
+			atc_fill_write_protected => translation_atc_fill_wp,
+			atc_fill_modified => translation_atc_fill_m,
+			atc_fill_bus_error => translation_atc_fill_b,
+			walker_done => walker_done,
+			walker_mapping_valid => walker_mapping_valid,
+			walker_physical_address => walker_physical_address,
+			walker_cache_inhibit => walker_cache_inhibit,
+			walker_write_protected => walker_write_protected,
+			walker_supervisor_violation => walker_supervisor_violation,
+			walker_modified => walker_modified,
+			walker_invalid_descriptor => walker_invalid_descriptor,
+			walker_limit_violation => walker_limit_violation,
+			walker_bus_error => walker_bus_error,
+			walker_fault_descriptor_address => walker_fault_descriptor_address,
+			walker_fault_during_update => walker_fault_during_update,
+			walker_start => translation_walker_start,
+			walker_logical_address => translation_walker_logical,
+			walker_function_code => translation_walker_fc,
+			walker_write_access => translation_walker_write,
+			busy => translation_busy_internal,
+			done => translation_done,
+			physical_address => translation_physical_address,
+			cache_inhibit => translation_cache_inhibit,
+			translation_bypassed => translation_bypassed,
+			translation_atc_hit => translation_atc_hit,
+			translation_table_walk => translation_table_walk,
+			fault => translation_fault,
+			fault_from_atc => translation_fault_from_atc,
+			fault_bus_error => translation_fault_bus_error,
+			fault_invalid => translation_fault_invalid,
+			fault_limit => translation_fault_limit,
+			fault_supervisor => translation_fault_supervisor,
+			fault_write_protect => translation_fault_write_protect,
+			fault_descriptor_address => translation_fault_descriptor_address,
+			fault_during_update => translation_fault_during_update
+		);
+
 	controller : entity work.TG68K_MMU_Instruction_Controller
 		port map(
 			clk => clk,
 			nReset => nReset,
-			start => instruction_start,
+			start => instruction_start_accepted,
 			command_valid => decoded_valid,
 			command_unimplemented => decoded_unimplemented,
 			command_privilege_violation => decoded_privilege,
@@ -382,7 +559,7 @@ begin
 			walker_force_table_search => controller_walker_force,
 			walker_suppress_descriptor_updates => controller_walker_suppress_updates,
 			walker_stop_level => controller_walker_stop_level,
-			busy => instruction_busy,
+			busy => instruction_busy_internal,
 			done => instruction_done,
 			unimplemented_exception => unimplemented_exception,
 			privilege_exception => privilege_exception,

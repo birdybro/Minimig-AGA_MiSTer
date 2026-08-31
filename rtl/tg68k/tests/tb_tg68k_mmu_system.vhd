@@ -31,6 +31,29 @@ architecture test of tb_tg68k_mmu_system is
 	signal address_register_write : std_logic;
 	signal address_register_select : std_logic_vector(2 downto 0);
 	signal address_register_data : std_logic_vector(31 downto 0);
+	signal translation_start : std_logic := '0';
+	signal translation_logical_address : std_logic_vector(31 downto 0) :=
+		(others => '0');
+	signal translation_function_code : std_logic_vector(2 downto 0) := "001";
+	signal translation_write : std_logic := '0';
+	signal translation_read_modify_write : std_logic := '0';
+	signal translation_ready : std_logic;
+	signal translation_busy : std_logic;
+	signal translation_done : std_logic;
+	signal translation_physical_address : std_logic_vector(31 downto 0);
+	signal translation_cache_inhibit : std_logic;
+	signal translation_bypassed : std_logic;
+	signal translation_atc_hit : std_logic;
+	signal translation_table_walk : std_logic;
+	signal translation_fault : std_logic;
+	signal translation_fault_from_atc : std_logic;
+	signal translation_fault_bus_error : std_logic;
+	signal translation_fault_invalid : std_logic;
+	signal translation_fault_limit : std_logic;
+	signal translation_fault_supervisor : std_logic;
+	signal translation_fault_write_protect : std_logic;
+	signal translation_fault_descriptor_address : std_logic_vector(31 downto 0);
+	signal translation_fault_during_update : std_logic;
 
 	signal operand_bus_ready : std_logic := '0';
 	signal operand_bus_error : std_logic := '0';
@@ -86,6 +109,29 @@ begin
 			address_register_write => address_register_write,
 			address_register_select => address_register_select,
 			address_register_data => address_register_data,
+			translation_start => translation_start,
+			translation_logical_address => translation_logical_address,
+			translation_function_code => translation_function_code,
+			translation_write => translation_write,
+			translation_read_modify_write => translation_read_modify_write,
+			translation_ready => translation_ready,
+			translation_busy => translation_busy,
+			translation_done => translation_done,
+			translation_physical_address => translation_physical_address,
+			translation_cache_inhibit => translation_cache_inhibit,
+			translation_bypassed => translation_bypassed,
+			translation_atc_hit => translation_atc_hit,
+			translation_table_walk => translation_table_walk,
+			translation_fault => translation_fault,
+			translation_fault_from_atc => translation_fault_from_atc,
+			translation_fault_bus_error => translation_fault_bus_error,
+			translation_fault_invalid => translation_fault_invalid,
+			translation_fault_limit => translation_fault_limit,
+			translation_fault_supervisor => translation_fault_supervisor,
+			translation_fault_write_protect => translation_fault_write_protect,
+			translation_fault_descriptor_address =>
+				translation_fault_descriptor_address,
+			translation_fault_during_update => translation_fault_during_update,
 			operand_bus_ready => operand_bus_ready,
 			operand_bus_error => operand_bus_error,
 			operand_bus_read_data => operand_bus_read_data,
@@ -144,6 +190,42 @@ begin
 			wait until rising_edge(clk);
 			operand_bus_ready <= '0';
 			wait for 1 ns;
+		end procedure;
+
+		procedure issue_translation(
+			constant address_value : std_logic_vector(31 downto 0);
+			constant fc_value : std_logic_vector(2 downto 0);
+			constant write_value : std_logic) is
+		begin
+			assert translation_ready = '1'
+				report "MMU system did not advertise translation readiness" severity failure;
+			translation_logical_address <= address_value;
+			translation_function_code <= fc_value;
+			translation_write <= write_value;
+			translation_start <= '1';
+			wait until rising_edge(clk);
+			translation_start <= '0';
+			wait for 1 ns;
+		end procedure;
+
+		procedure wait_translation_done is
+		begin
+			for cycle in 0 to 80 loop
+				exit when translation_done = '1';
+				wait until rising_edge(clk);
+				wait for 1 ns;
+			end loop;
+			assert translation_done = '1'
+				report "MMU system translation did not complete" severity failure;
+		end procedure;
+
+		procedure leave_translation_done is
+		begin
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			assert translation_done = '0' and translation_busy = '0' and
+				translation_ready = '1'
+				report "MMU system translator did not return idle" severity failure;
 		end procedure;
 
 		procedure operand_write(
@@ -264,6 +346,24 @@ begin
 		assert tc_out = x"80CC8000"
 			report "PMOVE did not update TC" severity failure;
 		leave_done;
+
+		-- Ordinary accesses share the table walker and ATC with PMMU instructions.
+		issue_translation(x"ABC39123", "001", '0');
+		table_read(x"000010E4", x"D000");
+		table_read(x"000010E6", x"0001");
+		table_write(x"000010E4", x"D000");
+		table_write(x"000010E6", x"0009");
+		wait_translation_done;
+		assert translation_physical_address = x"D0000123" and
+			translation_fault = '0' and translation_table_walk = '1'
+			report "MMU system ordinary table translation mismatch" severity failure;
+		leave_translation_done;
+		issue_translation(x"ABC39123", "001", '0');
+		wait_translation_done;
+		assert translation_physical_address = x"D0000123" and
+			translation_atc_hit = '1' and table_bus_request = '0'
+			report "MMU system ordinary ATC hit mismatch" severity failure;
+		leave_translation_done;
 
 		-- PLOADR invalidates, walks through CPU space, updates U, and fills ATC.
 		issue(x"F010", x"2211", x"ABC34123");
