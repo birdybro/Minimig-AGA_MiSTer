@@ -33,3 +33,8 @@ The ATC test covers all 22 fully associative entries, variable page-size tag
 matching, function-code tags, physical page-index insertion, status fields,
 write misses for clear M bits, reset retention, selective and full flushes,
 invalid-entry preference, and deterministic history-bit replacement.
+
+The transparent-translation test checks exact TT address and function-code
+masking, read/write qualification, locked read-modify-write exclusion, overlap
+and CI combination, and the higher-priority CPU-space bypass. The walker test
+also checks SRE/FC2 root selection and an explicit function-code table level.

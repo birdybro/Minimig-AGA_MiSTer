@@ -402,6 +402,40 @@ begin
 			descriptor_count = "001" and trace_count = 2
 			report "invalid memory descriptor handling failed" severity failure;
 
+		-- FC2 and SRE select SRP only for supervisor-space translations.
+		load_word(x"000010D0", x"8000");
+		load_word(x"000010D2", x"0009");
+		load_word(x"000020D0", x"9000");
+		load_word(x"000020D2", x"0009");
+		crp <= x"7FFF000200001000";
+		srp <= x"7FFF000200002000";
+		tc <= x"82CC8000";
+		reset_trace;
+		run_walk(x"ABC34123", "101", '0');
+		assert physical_address = x"90000123" and trace_address(0) = x"000020D0"
+			report "supervisor translation did not select SRP" severity failure;
+		reset_trace;
+		run_walk(x"ABC34123", "001", '0');
+		assert physical_address = x"80000123" and trace_address(0) = x"000010D0"
+			report "user translation did not select CRP" severity failure;
+
+		-- FCL inserts the three-bit FC table above TIA and suppresses root limits.
+		load_word(x"00003014", x"0000");
+		load_word(x"00003016", x"400A");
+		load_word(x"000040D0", x"A000");
+		load_word(x"000040D2", x"0009");
+		crp <= x"0000000200003000";
+		tc <= x"81CC8000";
+		reset_trace;
+		run_walk(x"ABC34123", "101", '0');
+		assert mapping_valid = '1' and physical_address = x"A0000123" and
+			descriptor_count = "010" and trace_count = 4
+			report "function-code table translation failed" severity failure;
+		check_trace(0, x"00003014", '0');
+		check_trace(1, x"00003016", '0');
+		check_trace(2, x"000040D0", '0');
+		check_trace(3, x"000040D2", '0');
+
 		-- Physical wait states hold the current descriptor transfer and CPU stall.
 		load_word(x"000010D0", x"2000");
 		load_word(x"000010D2", x"0009");

@@ -42,10 +42,18 @@ package TG68K_MMU_Pack is
 	constant MMU_ROOT_IMPLEMENTED_MASK : mmu_root_pointer_t :=
 		x"FFFF0003FFFFFFF0";
 
+	constant MMU_TT_ADDRESS_BASE_HIGH : natural := 31;
+	constant MMU_TT_ADDRESS_BASE_LOW : natural := 24;
+	constant MMU_TT_ADDRESS_MASK_HIGH : natural := 23;
+	constant MMU_TT_ADDRESS_MASK_LOW : natural := 16;
 	constant MMU_TT_ENABLE_BIT : natural := 15;
 	constant MMU_TT_CACHE_INHIBIT_BIT : natural := 10;
 	constant MMU_TT_READ_WRITE_BIT : natural := 9;
 	constant MMU_TT_READ_WRITE_MASK_BIT : natural := 8;
+	constant MMU_TT_FUNCTION_CODE_BASE_HIGH : natural := 6;
+	constant MMU_TT_FUNCTION_CODE_BASE_LOW : natural := 4;
+	constant MMU_TT_FUNCTION_CODE_MASK_HIGH : natural := 2;
+	constant MMU_TT_FUNCTION_CODE_MASK_LOW : natural := 0;
 	constant MMU_TT_IMPLEMENTED_MASK : mmu_tt_t := x"FFFF8777";
 
 	constant MMU_STATUS_IMPLEMENTED_MASK : mmu_status_t := x"EE47";

@@ -3,23 +3,25 @@ GHDL_FLAGS := --std=08 --ieee=synopsys
 GHDL_RUN_FLAGS := --ieee-asserts=disable
 BUILD_DIR := build
 RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Decoder.vhd \
-	../TG68K_MMU_ATC.vhd ../TG68K_MMU_Walker.vhd ../TG68K_MMU.vhd \
-	../TG68K_Pack.vhd ../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd
+	../TG68K_MMU_ATC.vhd ../TG68K_MMU_Transparent.vhd \
+	../TG68K_MMU_Walker.vhd ../TG68K_MMU.vhd ../TG68K_Pack.vhd \
+	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd
 
-.PHONY: all analyze smoke mmu_state mmu_descriptor mmu_atc mmu_walker synth clean
+.PHONY: all analyze smoke mmu_state mmu_descriptor mmu_atc mmu_transparent mmu_walker synth clean
 
-all: smoke mmu_state mmu_descriptor mmu_atc mmu_walker synth
+all: smoke mmu_state mmu_descriptor mmu_atc mmu_transparent mmu_walker synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
 	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(RTL) \
 		tb_tg68k_smoke.vhd tb_tg68k_mmu_state.vhd \
 		tb_tg68k_mmu_descriptor.vhd tb_tg68k_mmu_atc.vhd \
-		tb_tg68k_mmu_walker.vhd
+		tb_tg68k_mmu_transparent.vhd tb_tg68k_mmu_walker.vhd
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_smoke
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_state
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_descriptor
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_atc
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_transparent
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_walker
 
 smoke: analyze
@@ -39,6 +41,9 @@ mmu_descriptor: analyze
 mmu_atc: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_atc $(GHDL_RUN_FLAGS)
 
+mmu_transparent: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_transparent $(GHDL_RUN_FLAGS)
+
 mmu_walker: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_walker $(GHDL_RUN_FLAGS)
 
@@ -46,6 +51,7 @@ synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU > $(BUILD_DIR)/TG68K_MMU_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_Decoder > $(BUILD_DIR)/TG68K_MMU_Decoder_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_ATC > $(BUILD_DIR)/TG68K_MMU_ATC_synth.vhd
+	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_Transparent > $(BUILD_DIR)/TG68K_MMU_Transparent_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_MMU_Walker > $(BUILD_DIR)/TG68K_MMU_Walker_synth.vhd
 
 clean:
