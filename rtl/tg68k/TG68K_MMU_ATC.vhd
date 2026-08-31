@@ -24,6 +24,7 @@ entity TG68K_MMU_ATC is
 		lookup_logical_address : in std_logic_vector(31 downto 0);
 		lookup_function_code : in std_logic_vector(2 downto 0);
 		lookup_write : in std_logic;
+		lookup_test : in std_logic := '0';
 		lookup_match : out std_logic;
 		lookup_hit : out std_logic;
 		lookup_requires_walk : out std_logic;
@@ -99,7 +100,7 @@ architecture rtl of TG68K_MMU_ATC is
 	signal matched_entry : std_logic := '0';
 begin
 	lookup : process(page_size, lookup_request, lookup_logical_address,
-		lookup_function_code, lookup_write, valid_bits, logical_addresses,
+		lookup_function_code, lookup_write, lookup_test, valid_bits, logical_addresses,
 		function_codes, physical_addresses, cache_inhibit_bits,
 		write_protect_bits, modified_bits, bus_error_bits)
 		variable found : boolean;
@@ -141,7 +142,8 @@ begin
 				physical_addresses(selected_index)), 32), 8) and not offset_mask;
 			lookup_physical_address <= std_logic_vector(translated_base or
 				(unsigned(lookup_logical_address) and offset_mask));
-			if lookup_write = '1' and modified_bits(selected_index) = '0' and
+			if lookup_test = '0' and lookup_write = '1' and
+					modified_bits(selected_index) = '0' and
 					write_protect_bits(selected_index) = '0' and
 					bus_error_bits(selected_index) = '0' then
 				lookup_requires_walk <= '1';
@@ -219,7 +221,8 @@ begin
 					bus_error_bits(selected_index) <= fill_bus_error;
 					next_valid(selected_index) := '1';
 					mark_recent(next_history, selected_index);
-				elsif lookup_request = '1' and matched_entry = '1' then
+				elsif lookup_request = '1' and matched_entry = '1' and
+						lookup_test = '0' then
 					if lookup_write = '1' and modified_bits(matched_index) = '0' and
 							write_protect_bits(matched_index) = '0' and
 							bus_error_bits(matched_index) = '0' then

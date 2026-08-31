@@ -22,6 +22,9 @@ entity TG68K_MMU_Walker is
 		logical_address : in std_logic_vector(31 downto 0);
 		function_code : in std_logic_vector(2 downto 0);
 		write_access : in std_logic;
+		force_table_search : in std_logic := '0';
+		suppress_descriptor_updates : in std_logic := '0';
+		stop_level : in std_logic_vector(2 downto 0) := "000";
 		crp : in mmu_root_pointer_t;
 		srp : in mmu_root_pointer_t;
 		tc : in mmu_tc_t;
@@ -116,6 +119,8 @@ architecture rtl of TG68K_MMU_Walker is
 	signal logical_address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) := (others => '0');
 	signal write_access_latched : std_logic := '0';
+	signal suppress_descriptor_updates_latched : std_logic := '0';
+	signal stop_level_latched : unsigned(2 downto 0) := (others => '0');
 	signal tc_latched : mmu_tc_t := (others => '0');
 	signal current_descriptor : mmu_descriptor_info_t := MMU_DESCRIPTOR_INFO_DEFAULT;
 	signal descriptor_data : std_logic_vector(63 downto 0) := (others => '0');
@@ -213,6 +218,9 @@ begin
 							logical_address_latched <= logical_address;
 							function_code_latched <= function_code;
 							write_access_latched <= write_access;
+							suppress_descriptor_updates_latched <=
+								suppress_descriptor_updates;
+							stop_level_latched <= unsigned(stop_level);
 							tc_latched <= tc;
 							mapping_valid_reg <= '0';
 							physical_address_reg <= (others => '0');
@@ -234,7 +242,9 @@ begin
 								MMU_TC_IS_HIGH downto MMU_TC_IS_LOW)));
 							remaining_bits <= initial_remaining;
 
-							if tc(MMU_TC_ENABLE_BIT) = '0' or function_code = "111" then
+							if force_table_search = '0' and
+									(tc(MMU_TC_ENABLE_BIT) = '0' or
+									 function_code = "111") then
 								mapping_valid_reg <= '1';
 								physical_address_reg <= logical_address;
 								state <= COMPLETE;
@@ -384,6 +394,20 @@ begin
 						elsif decoded.kind = MMU_DESCRIPTOR_INVALID then
 							invalid_descriptor_reg <= '1';
 							state <= COMPLETE;
+						elsif stop_level_latched /= 0 and
+								descriptor_count_reg = stop_level_latched then
+							if decoded.kind /= MMU_DESCRIPTOR_INDIRECT then
+								next_write_protect := accrued_write_protect or
+									decoded.write_protect;
+								next_supervisor_violation := accrued_supervisor_violation or
+									(decoded.supervisor_only and not function_code_latched(2));
+								write_protected_reg <= next_write_protect;
+								supervisor_violation_reg <= next_supervisor_violation;
+								if decoded.kind = MMU_DESCRIPTOR_PAGE then
+									modified_reg <= decoded.modified;
+								end if;
+							end if;
+							state <= COMPLETE;
 						elsif decoded.kind = MMU_DESCRIPTOR_INDIRECT then
 							descriptor_base_address <= decoded.address_field;
 							transfer_address <= decoded.address_field;
@@ -408,7 +432,8 @@ begin
 
 							if decoded.kind = MMU_DESCRIPTOR_TABLE then
 								current_descriptor <= decoded;
-								if decoded.used = '0' and
+								if suppress_descriptor_updates_latched = '0' and
+										decoded.used = '0' and
 										next_supervisor_violation = '0' then
 									first_word(MMU_DESCRIPTOR_USED_BIT) := '1';
 									update_first_word <= first_word;
@@ -426,7 +451,8 @@ begin
 								page_early_termination <= decoded.early_termination;
 								cache_inhibit_reg <= decoded.cache_inhibit;
 								modified_reg <= decoded.modified;
-								if next_supervisor_violation = '0' and
+								if suppress_descriptor_updates_latched = '0' and
+										next_supervisor_violation = '0' and
 										(decoded.used = '0' or
 										(write_access_latched = '1' and
 										 next_write_protect = '0' and decoded.modified = '0')) then

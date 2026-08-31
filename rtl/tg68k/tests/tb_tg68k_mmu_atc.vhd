@@ -17,6 +17,7 @@ architecture test of tb_tg68k_mmu_atc is
 	signal lookup_logical_address : std_logic_vector(31 downto 0) := (others => '0');
 	signal lookup_function_code : std_logic_vector(2 downto 0) := (others => '0');
 	signal lookup_write : std_logic := '0';
+	signal lookup_test : std_logic := '0';
 	signal lookup_match : std_logic;
 	signal lookup_hit : std_logic;
 	signal lookup_requires_walk : std_logic;
@@ -51,6 +52,7 @@ begin
 			lookup_logical_address => lookup_logical_address,
 			lookup_function_code => lookup_function_code,
 			lookup_write => lookup_write,
+			lookup_test => lookup_test,
 			lookup_match => lookup_match,
 			lookup_hit => lookup_hit,
 			lookup_requires_walk => lookup_requires_walk,
@@ -196,6 +198,12 @@ begin
 		pulse_flush_all;
 		page_size <= x"8";
 		pulse_fill(x"01000000", "001", x"02000000", '0', '0', '0', '0');
+		lookup_test <= '1';
+		check_lookup(x"01000044", "001", '1', '1', '1', '0',
+			x"02000044", '0', '0', '0', '0');
+		lookup_test <= '0';
+		check_lookup(x"01000044", "001", '0', '1', '1', '0',
+			x"02000044", '0', '0', '0', '0');
 		check_lookup(x"01000044", "001", '1', '1', '0', '1',
 			x"02000044", '0', '0', '0', '0');
 		check_lookup(x"01000044", "001", '0', '0', '0', '1',

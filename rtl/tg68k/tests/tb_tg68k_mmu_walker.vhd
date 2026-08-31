@@ -22,6 +22,9 @@ architecture test of tb_tg68k_mmu_walker is
 	signal logical_address : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code : std_logic_vector(2 downto 0) := "001";
 	signal write_access : std_logic := '0';
+	signal force_table_search : std_logic := '0';
+	signal suppress_descriptor_updates : std_logic := '0';
+	signal stop_level : std_logic_vector(2 downto 0) := "000";
 	signal crp : mmu_root_pointer_t := (others => '0');
 	signal srp : mmu_root_pointer_t := (others => '0');
 	signal tc : mmu_tc_t := (others => '0');
@@ -76,6 +79,9 @@ begin
 			logical_address => logical_address,
 			function_code => function_code,
 			write_access => write_access,
+			force_table_search => force_table_search,
+			suppress_descriptor_updates => suppress_descriptor_updates,
+			stop_level => stop_level,
 			crp => crp,
 			srp => srp,
 			tc => tc,
@@ -207,6 +213,19 @@ begin
 			report "disabled translation did not pass the address through" severity failure;
 		assert trace_count = 0 and descriptor_count = "000"
 			report "disabled translation performed a table access" severity failure;
+
+		-- PLOAD and nonzero-level PTEST searches ignore TC.E.
+		load_word(x"000010D0", x"2000");
+		load_word(x"000010D2", x"0009");
+		crp <= x"7FFF000200001000";
+		tc <= x"00CC8000";
+		force_table_search <= '1';
+		reset_trace;
+		run_walk(x"ABC34123", "001", '0');
+		assert mapping_valid = '1' and physical_address = x"20000123" and
+			trace_count = 2
+			report "forced table search obeyed cleared TC.E" severity failure;
+		force_table_search <= '0';
 
 		tc <= x"80CC8000";
 		reset_trace;
@@ -435,6 +454,34 @@ begin
 		check_trace(1, x"00003016", '0');
 		check_trace(2, x"000040D0", '0');
 		check_trace(3, x"000040D2", '0');
+
+		-- PTEST stops at the requested descriptor and never updates history.
+		force_table_search <= '1';
+		suppress_descriptor_updates <= '1';
+		stop_level <= "001";
+		load_word(x"00003016", x"4002");
+		reset_trace;
+		run_walk(x"ABC34123", "101", '1');
+		assert mapping_valid = '0' and descriptor_count = "001" and
+			final_descriptor_address = x"00003014" and trace_count = 2
+			report "PTEST level-one termination failed" severity failure;
+		assert memory(16#3016# / 2) = x"4002"
+			report "PTEST changed a table descriptor U bit" severity failure;
+
+		stop_level <= "111";
+		load_word(x"000040D2", x"0001");
+		reset_trace;
+		run_walk(x"ABC34123", "101", '1');
+		assert mapping_valid = '1' and descriptor_count = "010" and
+			final_descriptor_address = x"000040D0" and trace_count = 4 and
+			modified = '0'
+			report "PTEST full table search failed" severity failure;
+		assert memory(16#3016# / 2) = x"4002" and
+			memory(16#40D2# / 2) = x"0001"
+			report "PTEST changed descriptor history" severity failure;
+		force_table_search <= '0';
+		suppress_descriptor_updates <= '0';
+		stop_level <= "000";
 
 		-- Physical wait states hold the current descriptor transfer and CPU stall.
 		load_word(x"000010D0", x"2000");

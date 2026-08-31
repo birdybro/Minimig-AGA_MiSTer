@@ -33,12 +33,15 @@ The table-walker test uses a 16-bit physical-memory model and checks exact
 descriptor read and history-write sequences for short, long, mixed-format,
 indirect, and early-termination searches. It also covers root direct mapping,
 limits, supervisor and write protection, CPU-space bypass, and read/update bus
-fault classification.
+fault classification. Instruction-search cases verify TC.E-independent walks,
+PTEST level termination, descriptor-address return, and suppressed history
+updates.
 
 The ATC test covers all 22 fully associative entries, variable page-size tag
 matching, function-code tags, physical page-index insertion, status fields,
 write misses for clear M bits, reset retention, selective and full flushes,
 invalid-entry preference, and deterministic history-bit replacement.
+PTEST lookups are also checked for non-mutating write-status searches.
 
 The transparent-translation test checks exact TT address and function-code
 masking, read/write qualification, locked read-modify-write exclusion, overlap
