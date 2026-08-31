@@ -19,6 +19,12 @@ The MMU state test checks MC68030 control-register reset, readback, reserved
 fields, TC and root-pointer configuration errors, and PMOVE ATC-flush side
 effects independently of the CPU kernel.
 
+The MMU instruction-decoder test exhaustively classifies all 65,536 extension
+words for legal and illegal effective-address fields. It checks the MC68030
+PMOVE register set and sizes, FC source encodings, PLOAD, the three PFLUSH
+forms, PTEST level and address-register rules, reserved fields, privilege
+indication, and exclusion of other coprocessor IDs.
+
 The descriptor test covers root, short, and long formats, including invalid,
 table, page, early-termination, and indirect descriptors and every protection
 and history field used by the MC68030.
