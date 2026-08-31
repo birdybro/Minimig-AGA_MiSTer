@@ -315,6 +315,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_1111			: bit;
 	signal trap_mmu_configuration : bit;
 	signal trap_mmu_access	: bit;
+	signal trap_format			: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
 	signal trap_interrupt	: bit;
@@ -325,6 +326,11 @@ architecture logic of TG68KdotC_Kernel is
 	signal make_berr			: std_logic;
 	signal useStackframe2	: std_logic;
 	signal rte_fault_longwords_remaining : std_logic_vector(4 downto 0);
+	signal rte_saved_stack_pointer : std_logic_vector(31 downto 0);
+	signal rte_saved_status_register : std_logic_vector(15 downto 0);
+	signal rte_saved_program_counter : std_logic_vector(31 downto 0);
+	signal rte_format_recovery : std_logic;
+	signal rte_context_data : std_logic_vector(31 downto 0);
 	signal mmu_fault_long_format : std_logic;
 	signal mmu_fault_word_index : std_logic_vector(5 downto 0);
 	signal mmu_fault_status_register : std_logic_vector(15 downto 0);
@@ -458,7 +464,7 @@ ALU: TG68K_ALU
 		exe_datatype => exe_datatype,		--: in std_logic_vector(1 downto 0);
 		sndOPC => sndOPC,						--: in std_logic_vector(15 downto 0);
 		last_data_read => last_data_read(15 downto 0),	--: in std_logic_vector(31 downto 0);
-		data_read => data_read(15 downto 0),		 		--: in std_logic_vector(31 downto 0);
+		data_read => rte_context_data(15 downto 0),	--: in std_logic_vector(31 downto 0);
 		FlagsSR => FlagsSR,					--: in std_logic_vector(7 downto 0);
 		micro_state => micro_state,		--: in micro_states;  
 		bf_ext_in => bf_ext_in,
@@ -503,6 +509,10 @@ ALU: TG68K_ALU
 	
 	long_start_alu <= to_bit(NOT memmaskmux(3));
 	execOPC_ALU <= execOPC OR exec(alu_exec);
+	rte_context_data <= x"0000" & rte_saved_status_register when
+		rte_format_recovery = '1' and exec(directSR) = '1' else
+		rte_saved_program_counter when
+		rte_format_recovery = '1' and exec(directPC) = '1' else data_read;
 	process (memmaskmux)
 	begin
 		non_aligned <= '0';
@@ -633,6 +643,39 @@ ALU: TG68K_ALU
 		end if;
 	end process;
 
+	rte_validation_context : process(clk)
+	begin
+		if rising_edge(clk) then
+			if Reset = '1' then
+				rte_saved_stack_pointer <= (others => '0');
+				rte_saved_status_register <= (others => '0');
+				rte_saved_program_counter <= (others => '0');
+				rte_format_recovery <= '0';
+			elsif clkena_lw = '1' then
+				if decodeOPC = '1' and opcode = x"4E73" and MMU_enable = '1' then
+					rte_saved_stack_pointer <= regfile(15);
+					rte_saved_status_register <= FlagsSR & Flags(7 downto 0);
+					rte_saved_program_counter <= exe_pc;
+					rte_format_recovery <= '0';
+				elsif micro_state = rte4 and state = "01" and
+						last_data_in(15 downto 12) /= "0000" and
+						last_data_in(15 downto 12) /= "0001" and
+						last_data_in(15 downto 12) /= "0010" and
+						last_data_in(15 downto 12) /= "1001" and
+						last_data_in(15 downto 12) /= "1010" and
+						last_data_in(15 downto 12) /= "1011" then
+					rte_format_recovery <= '1';
+				elsif micro_state = rte_fault_read and state = "10" and
+						rte_fault_longwords_remaining = "01010" and
+						data_read(15 downto 12) /= "0000" then
+					rte_format_recovery <= '1';
+				elsif micro_state = trap3 then
+					rte_format_recovery <= '0';
+				end if;
+			end if;
+		end if;
+	end process;
+
 	PROCESS (clk, long_done, last_data_in, data_in, addr, long_start, memmaskmux, memread, memmask, data_read)
 	BEGIN
 		IF memmaskmux(4)='0' THEN
@@ -722,7 +765,9 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
 		reg_QA <= regfile(RDindex_A);
 		reg_QB <= regfile(RDindex_B);
 		IF rising_edge(clk) THEN
-			IF MMU_address_register_write = '1' THEN
+			IF micro_state = rte_format_trap and rte_format_recovery = '1' THEN
+				regfile(15) <= rte_saved_stack_pointer;
+			ELSIF MMU_address_register_write = '1' THEN
 				regfile(8 + conv_integer(MMU_address_register_select)) <=
 					MMU_address_register_data;
 		    ELSIF clkena_lw='1' THEN
@@ -956,7 +1001,10 @@ PROCESS (clk)
 					ea_data <= last_data_read;
 				END IF;	
 				
-				IF writePC='1' THEN
+				IF micro_state = rte_format_trap or
+						(rte_format_recovery = '1' and micro_state = trap1) THEN
+					data_write_tmp <= rte_saved_program_counter;
+				ELSIF writePC='1' THEN
 					data_write_tmp <= TG68_PC;
 				ELSIF exec(writePC_add)='1' THEN
 					data_write_tmp <= TG68_PC_add;
@@ -1069,6 +1117,9 @@ PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatyp
 				END IF;
 				IF trap_mmu_configuration='1' THEN
 					trap_vector(9 downto 0) <= "00" & X"E0";
+				END IF;
+				IF trap_format='1' THEN
+					trap_vector(9 downto 0) <= "00" & X"38";
 				END IF;
 				IF trap_trap='1' THEN
 					trap_vector(9 downto 0) <= "0010" & opcode(3 downto 0) & "00";
@@ -1255,7 +1306,7 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 --						wbmemmask <= memmask;
 --					END IF;
 					IF exec(directPC)='1' THEN
-						TG68_PC <= data_read;
+						TG68_PC <= rte_context_data;
 					ELSIF exec(ea_to_pc)='1' THEN
 						TG68_PC <= addr;
 					ELSIF (state ="00" OR TG68_PC_brw = '1') AND stop='0'  THEN				
@@ -1565,7 +1616,7 @@ PROCESS (clk, Reset, FlagsSR, last_data_read, OP2out, exec)
 					make_trace <= '0';
 				END IF;
 				IF exec(directSR)='1' OR set_stop='1' THEN
-					FlagsSR <= data_read(15 downto 8);
+					FlagsSR <= rte_context_data(15 downto 8);
 				END IF;	
 				IF interrupt='1' AND trap_interrupt='1' THEN
 					FlagsSR(2 downto 0) <=rIPL_nr;
@@ -1644,6 +1695,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		trap_1010 <='0';
 		trap_1111 <='0';
 		trap_mmu_configuration <= '0';
+		trap_format <= '0';
 		trap_trap <='0';
 		trap_trapv <= '0';
 		trapmake <='0';
@@ -4030,9 +4082,14 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						set(postadd) <= '1';
 						setstackaddr <= '1';
 						next_micro_state <= rte_fault_read;
-					else
+					elsif last_data_in(15 downto 12) = "0000" or
+							last_data_in(15 downto 12) = "0001" or
+							last_data_in(15 downto 12) = "1001" then
 						datatype <= "01";
 						next_micro_state <= nop;
+					else
+						setstate <= "01";
+						next_micro_state <= rte_format_restore_sr;
 					end if;
 				WHEN rte5 =>            -- RTE
 					next_micro_state <= nop;
@@ -4041,11 +4098,28 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					datatype <= "10";
 					set(postadd) <= '1';
 					setstackaddr <= '1';
-					if rte_fault_longwords_remaining = "00001" then
+					if state = "10" and
+							rte_fault_longwords_remaining = "01010" and
+							data_read(15 downto 12) /= "0000" then
+						setstate <= "01";
+						next_micro_state <= rte_format_restore_sr;
+					elsif rte_fault_longwords_remaining = "00001" then
 						next_micro_state <= nop;
 					else
 						next_micro_state <= rte_fault_read;
 					end if;
+				WHEN rte_format_restore_sr =>
+					set(directSR) <= '1';
+					setstate <= "01";
+					next_micro_state <= rte_format_restore_pc;
+				WHEN rte_format_restore_pc =>
+					set(directPC) <= '1';
+					setstate <= "01";
+					next_micro_state <= rte_format_trap;
+				WHEN rte_format_trap =>
+					trap_format <= '1';
+					trapmake <= '1';
+					setstate <= "01";
 -------------------------------------
 
 				WHEN rtd1 =>		-- RTD
