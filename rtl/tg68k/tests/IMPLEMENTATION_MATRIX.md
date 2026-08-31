@@ -14,6 +14,7 @@
 | MMU access-fault sequencing | MC68030UM 8.1.2, 8.2, 8.4 | `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | format A/B, descriptor-read BERR, descriptor-update BERR, and cycle order in `tb_tg68k_mmu_fault_integration.vhd` |
 | MMU access-fault restart and RTE | MC68030UM 8.1.8, 8.1.13, 8.2.3 | `TG68KdotC_Kernel.vhd`, `TG68KdotC_MMU.vhd` | format A/B deallocation and repaired-cycle replay in `tb_tg68k_mmu_fault_rte.vhd`; illegal-format and format-B version rejection in `tb_tg68k_rte_validation.vhd` |
 | FPU architectural state and F-line decode | MC68881UM 2.1-2.4, 4.7-4.9 | `TG68K_FPU.vhd`, `TG68K_FPU_Pack.vhd`, `TG68K_FPU_Decoder.vhd` | `tb_tg68k_fpu_state.vhd`, `tb_tg68k_fpu_decoder.vhd` |
+| FPU inbound binary and integer formats | MC68881UM 3.1-3.6 | `TG68K_FPU_Convert.vhd` | normal, denormal, zero, infinity, NaN, unnormalized extended, and signed integer vectors in `tb_tg68k_fpu_convert.vhd` |
 | FPU formats and exceptions | MC68881UM 3, 4, 6 | planned in FPU RTL | FPU module tests |
 | FPU arithmetic and constants | MC68881UM 3, 4, 5; M68000PM FPU instructions | planned in FPU RTL | MPFR-generated vectors |
 | FPU conditional and transfer instructions | MC68881UM 3, 4, 5 | planned in FPU and kernel RTL | instruction and bus tests |

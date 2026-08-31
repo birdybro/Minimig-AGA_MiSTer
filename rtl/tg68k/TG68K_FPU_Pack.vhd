@@ -50,6 +50,8 @@ package TG68K_FPU_Pack is
 		FPU_OP_CMP, FPU_OP_TST);
 
 	constant FPU_RESET_NAN : fpu_extended_t := x"7FFFFFFFFFFFFFFFFFFF";
+	constant FPU_EXTENDED_EXPONENT_BIAS : natural := 16383;
+	constant FPU_EXTENDED_EXPONENT_MAX : natural := 32767;
 	constant FPU_FPCR_IMPLEMENTED_MASK : std_logic_vector(31 downto 0) :=
 		x"0000FFF0";
 	constant FPU_FPCR_PRECISION_HIGH : natural := 7;
