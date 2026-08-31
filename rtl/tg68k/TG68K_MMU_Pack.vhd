@@ -16,6 +16,10 @@ use ieee.numeric_std.all;
 package TG68K_MMU_Pack is
 	type mmu_register_t is (MMU_REG_CRP, MMU_REG_SRP, MMU_REG_TC,
 		MMU_REG_TT0, MMU_REG_TT1, MMU_REG_MMUSR);
+	type mmu_descriptor_format_t is (MMU_DESCRIPTOR_ROOT,
+		MMU_DESCRIPTOR_SHORT, MMU_DESCRIPTOR_LONG);
+	type mmu_descriptor_kind_t is (MMU_DESCRIPTOR_INVALID,
+		MMU_DESCRIPTOR_PAGE, MMU_DESCRIPTOR_TABLE, MMU_DESCRIPTOR_INDIRECT);
 
 	subtype mmu_root_pointer_t is std_logic_vector(63 downto 0);
 	subtype mmu_tc_t is std_logic_vector(31 downto 0);
@@ -43,10 +47,50 @@ package TG68K_MMU_Pack is
 	constant MMU_TT_IMPLEMENTED_MASK : mmu_tt_t := x"FFFF8777";
 
 	constant MMU_STATUS_IMPLEMENTED_MASK : mmu_status_t := x"EE47";
+	constant MMU_DESCRIPTOR_TYPE_INVALID : std_logic_vector(1 downto 0) := "00";
+	constant MMU_DESCRIPTOR_TYPE_PAGE : std_logic_vector(1 downto 0) := "01";
+	constant MMU_DESCRIPTOR_TYPE_SHORT : std_logic_vector(1 downto 0) := "10";
+	constant MMU_DESCRIPTOR_TYPE_LONG : std_logic_vector(1 downto 0) := "11";
+
+	type mmu_descriptor_info_t is record
+		kind : mmu_descriptor_kind_t;
+		descriptor_type : std_logic_vector(1 downto 0);
+		next_format : mmu_descriptor_format_t;
+		address_field : std_logic_vector(31 downto 0);
+		limit_present : std_logic;
+		limit_lower : std_logic;
+		limit : std_logic_vector(14 downto 0);
+		early_termination : std_logic;
+		supervisor_only : std_logic;
+		cache_inhibit : std_logic;
+		write_protect : std_logic;
+		used : std_logic;
+		modified : std_logic;
+	end record;
+
+	constant MMU_DESCRIPTOR_INFO_DEFAULT : mmu_descriptor_info_t := (
+		kind => MMU_DESCRIPTOR_INVALID,
+		descriptor_type => MMU_DESCRIPTOR_TYPE_INVALID,
+		next_format => MMU_DESCRIPTOR_SHORT,
+		address_field => (others => '0'),
+		limit_present => '0',
+		limit_lower => '0',
+		limit => (others => '0'),
+		early_termination => '0',
+		supervisor_only => '0',
+		cache_inhibit => '0',
+		write_protect => '0',
+		used => '0',
+		modified => '0'
+	);
 
 	function mmu_tc_configuration_valid(value : mmu_tc_t) return boolean;
 	function mmu_root_configuration_valid(
 		value : mmu_root_pointer_t) return boolean;
+	function mmu_decode_descriptor(
+		value : std_logic_vector(63 downto 0);
+		format : mmu_descriptor_format_t;
+		leaf_level : std_logic) return mmu_descriptor_info_t;
 end package;
 
 package body TG68K_MMU_Pack is
@@ -88,5 +132,96 @@ package body TG68K_MMU_Pack is
 		value : mmu_root_pointer_t) return boolean is
 	begin
 		return value(MMU_ROOT_DT_HIGH downto MMU_ROOT_DT_LOW) /= "00";
+	end function;
+
+	function mmu_decode_descriptor(
+		value : std_logic_vector(63 downto 0);
+		format : mmu_descriptor_format_t;
+		leaf_level : std_logic) return mmu_descriptor_info_t is
+		variable result : mmu_descriptor_info_t := MMU_DESCRIPTOR_INFO_DEFAULT;
+		variable descriptor_type : std_logic_vector(1 downto 0);
+	begin
+		if format = MMU_DESCRIPTOR_SHORT then
+			descriptor_type := value(1 downto 0);
+		else
+			descriptor_type := value(33 downto 32);
+		end if;
+		result.descriptor_type := descriptor_type;
+		if descriptor_type = MMU_DESCRIPTOR_TYPE_LONG then
+			result.next_format := MMU_DESCRIPTOR_LONG;
+		end if;
+
+		case format is
+			when MMU_DESCRIPTOR_ROOT =>
+				if descriptor_type = MMU_DESCRIPTOR_TYPE_PAGE then
+					result.kind := MMU_DESCRIPTOR_PAGE;
+					result.early_termination := '1';
+					result.address_field := value(31 downto 4) & "0000";
+				elsif descriptor_type = MMU_DESCRIPTOR_TYPE_SHORT or
+						descriptor_type = MMU_DESCRIPTOR_TYPE_LONG then
+					result.kind := MMU_DESCRIPTOR_TABLE;
+					result.address_field := value(31 downto 4) & "0000";
+				end if;
+				if result.kind /= MMU_DESCRIPTOR_INVALID then
+					result.limit_present := '1';
+					result.limit_lower := value(63);
+					result.limit := value(62 downto 48);
+				end if;
+
+			when MMU_DESCRIPTOR_SHORT =>
+				if descriptor_type = MMU_DESCRIPTOR_TYPE_PAGE then
+					result.kind := MMU_DESCRIPTOR_PAGE;
+					result.early_termination := not leaf_level;
+					result.address_field := value(31 downto 8) & x"00";
+					result.cache_inhibit := value(6);
+					result.modified := value(4);
+					result.used := value(3);
+					result.write_protect := value(2);
+				elsif descriptor_type = MMU_DESCRIPTOR_TYPE_SHORT or
+						descriptor_type = MMU_DESCRIPTOR_TYPE_LONG then
+					if leaf_level = '1' then
+						result.kind := MMU_DESCRIPTOR_INDIRECT;
+						result.address_field := value(31 downto 2) & "00";
+					else
+						result.kind := MMU_DESCRIPTOR_TABLE;
+						result.address_field := value(31 downto 4) & "0000";
+						result.used := value(3);
+						result.write_protect := value(2);
+					end if;
+				end if;
+
+			when MMU_DESCRIPTOR_LONG =>
+				if descriptor_type = MMU_DESCRIPTOR_TYPE_PAGE then
+					result.kind := MMU_DESCRIPTOR_PAGE;
+					result.early_termination := not leaf_level;
+					result.address_field := value(31 downto 8) & x"00";
+					result.supervisor_only := value(40);
+					result.cache_inhibit := value(38);
+					result.modified := value(36);
+					result.used := value(35);
+					result.write_protect := value(34);
+					if leaf_level = '0' then
+						result.limit_present := '1';
+						result.limit_lower := value(63);
+						result.limit := value(62 downto 48);
+					end if;
+				elsif descriptor_type = MMU_DESCRIPTOR_TYPE_SHORT or
+						descriptor_type = MMU_DESCRIPTOR_TYPE_LONG then
+					if leaf_level = '1' then
+						result.kind := MMU_DESCRIPTOR_INDIRECT;
+						result.address_field := value(31 downto 2) & "00";
+					else
+						result.kind := MMU_DESCRIPTOR_TABLE;
+						result.address_field := value(31 downto 4) & "0000";
+						result.limit_present := '1';
+						result.limit_lower := value(63);
+						result.limit := value(62 downto 48);
+						result.supervisor_only := value(40);
+						result.used := value(35);
+						result.write_protect := value(34);
+					end if;
+				end if;
+		end case;
+		return result;
 	end function;
 end package body;

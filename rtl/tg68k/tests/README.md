@@ -18,3 +18,7 @@ Generated test artifacts are confined to the ignored `build` directory.
 The MMU state test checks MC68030 control-register reset, readback, reserved
 fields, TC and root-pointer configuration errors, and PMOVE ATC-flush side
 effects independently of the CPU kernel.
+
+The descriptor test covers root, short, and long formats, including invalid,
+table, page, early-termination, and indirect descriptors and every protection
+and history field used by the MC68030.

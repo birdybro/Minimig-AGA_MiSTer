@@ -3,7 +3,8 @@
 | Feature | Motorola reference | RTL | Directed verification |
 | --- | --- | --- | --- |
 | MMU control state and reset | MC68030UM 9.2.2, 9.7 | `TG68K_MMU*.vhd` | `tb_tg68k_mmu_state.vhd` |
-| MMU descriptors and table search | MC68030UM 9.1, 9.5 | planned in `TG68K_MMU*.vhd` | MMU module tests |
+| MMU descriptor decoding | MC68030UM 9.1.2, 9.5.1 | `TG68K_MMU_Decoder.vhd` | `tb_tg68k_mmu_descriptor.vhd` |
+| MMU table search | MC68030UM 9.5.2-9.5.4 | planned in `TG68K_MMU.vhd` | MMU bus tests |
 | MMU ATC and transparent translation | MC68030UM 9.3, 9.4 | planned in `TG68K_MMU.vhd` | MMU module and bus tests |
 | MMU instructions and faults | MC68030UM 8.2, 9.7.5, 9.8; M68000PM PMMU instructions | planned in kernel and MMU RTL | instruction, frame, and timing tests |
 | FPU state, formats, and exceptions | MC68881UM 1, 3, 4, 5, 6 | planned in `TG68K_FPU*.vhd` | FPU module tests |
