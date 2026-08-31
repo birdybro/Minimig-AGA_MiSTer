@@ -16,6 +16,7 @@
 | FPU architectural state and F-line decode | MC68881UM 2.1-2.4, 4.7-4.9 | `TG68K_FPU.vhd`, `TG68K_FPU_Pack.vhd`, `TG68K_FPU_Decoder.vhd` | `tb_tg68k_fpu_state.vhd`, `tb_tg68k_fpu_decoder.vhd` |
 | FPU inbound binary and integer formats | MC68881UM 3.1-3.6 | `TG68K_FPU_Convert.vhd` | normal, denormal, zero, infinity, NaN, unnormalized extended, and signed integer vectors in `tb_tg68k_fpu_convert.vhd` |
 | FPU rounding and range foundation | MC68881UM 2.2, 3.2, 3.5, 6.1.1, 6.1.4-6.1.7 | `TG68K_FPU_Round.vhd` | ties-to-even, directed modes, precision modes, overflow, gradual underflow, signed zero, infinity, and NaNs in `tb_tg68k_fpu_round.vhd` |
+| FPU outbound binary and integer formats | MC68881UM 3.1-3.6, 4.5.4, 6.1.2-6.1.5, 6.1.7 | `TG68K_FPU_Store_Convert.vhd` | fixed destination precision, directed rounding, saturation, NaNs, infinities, and exact exception bytes in `tb_tg68k_fpu_store_convert.vhd` |
 | FPU formats and exceptions | MC68881UM 3, 4, 6 | planned in FPU RTL | FPU module tests |
 | FPU arithmetic and constants | MC68881UM 3, 4, 5; M68000PM FPU instructions | planned in FPU RTL | MPFR-generated vectors |
 | FPU conditional and transfer instructions | MC68881UM 3, 4, 5 | planned in FPU and kernel RTL | instruction and bus tests |
