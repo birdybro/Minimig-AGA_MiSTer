@@ -1,6 +1,6 @@
 # TG68K verification
 
-Run the standalone TG68K regression with `make`.
+Run the standalone TG68K regressions with `make`.
 
 The testbench uses a zero-wait-state, big-endian 16-bit memory and runs the
 same integer program in the TG68K 68000, 68010, and 68020 modes. It checks the
@@ -14,3 +14,7 @@ The trace state field uses the kernel interface encoding:
 - `3`: data write
 
 Generated test artifacts are confined to the ignored `build` directory.
+
+The MMU state test checks MC68030 control-register reset, readback, reserved
+fields, TC and root-pointer configuration errors, and PMOVE ATC-flush side
+effects independently of the CPU kernel.
