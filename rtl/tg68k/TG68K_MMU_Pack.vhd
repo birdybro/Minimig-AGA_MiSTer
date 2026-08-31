@@ -82,6 +82,17 @@ package TG68K_MMU_Pack is
 	constant MMU_DESCRIPTOR_MODIFIED_BIT : natural := 4;
 	constant MMU_DESCRIPTOR_CACHE_INHIBIT_BIT : natural := 6;
 	constant MMU_LONG_DESCRIPTOR_SUPERVISOR_BIT : natural := 40;
+	constant MMU_SSW_INSTRUCTION_FAULT_C_BIT : natural := 15;
+	constant MMU_SSW_INSTRUCTION_FAULT_B_BIT : natural := 14;
+	constant MMU_SSW_INSTRUCTION_RERUN_C_BIT : natural := 13;
+	constant MMU_SSW_INSTRUCTION_RERUN_B_BIT : natural := 12;
+	constant MMU_SSW_DATA_FAULT_BIT : natural := 8;
+	constant MMU_SSW_READ_MODIFY_WRITE_BIT : natural := 7;
+	constant MMU_SSW_READ_BIT : natural := 6;
+	constant MMU_SSW_SIZE_HIGH : natural := 5;
+	constant MMU_SSW_SIZE_LOW : natural := 4;
+	constant MMU_SSW_FUNCTION_CODE_HIGH : natural := 2;
+	constant MMU_SSW_FUNCTION_CODE_LOW : natural := 0;
 
 	type mmu_descriptor_info_t is record
 		kind : mmu_descriptor_kind_t;
@@ -122,6 +133,14 @@ package TG68K_MMU_Pack is
 		value : std_logic_vector(63 downto 0);
 		format : mmu_descriptor_format_t;
 		leaf_level : std_logic) return mmu_descriptor_info_t;
+	function mmu_data_fault_ssw(
+		function_code : std_logic_vector(2 downto 0);
+		write_access : std_logic;
+		read_modify_write : std_logic;
+		size : std_logic_vector(1 downto 0)) return std_logic_vector;
+	function mmu_instruction_fault_ssw(
+		stage_b_fault : std_logic;
+		stage_c_fault : std_logic) return std_logic_vector;
 end package;
 
 package body TG68K_MMU_Pack is
@@ -253,6 +272,34 @@ package body TG68K_MMU_Pack is
 					end if;
 				end if;
 		end case;
+		return result;
+	end function;
+
+	function mmu_data_fault_ssw(
+		function_code : std_logic_vector(2 downto 0);
+		write_access : std_logic;
+		read_modify_write : std_logic;
+		size : std_logic_vector(1 downto 0)) return std_logic_vector is
+		variable result : std_logic_vector(15 downto 0) := (others => '0');
+	begin
+		result(MMU_SSW_DATA_FAULT_BIT) := '1';
+		result(MMU_SSW_READ_MODIFY_WRITE_BIT) := read_modify_write;
+		result(MMU_SSW_READ_BIT) := not write_access;
+		result(MMU_SSW_SIZE_HIGH downto MMU_SSW_SIZE_LOW) := size;
+		result(MMU_SSW_FUNCTION_CODE_HIGH downto
+			MMU_SSW_FUNCTION_CODE_LOW) := function_code;
+		return result;
+	end function;
+
+	function mmu_instruction_fault_ssw(
+		stage_b_fault : std_logic;
+		stage_c_fault : std_logic) return std_logic_vector is
+		variable result : std_logic_vector(15 downto 0) := (others => '0');
+	begin
+		result(MMU_SSW_INSTRUCTION_FAULT_B_BIT) := stage_b_fault;
+		result(MMU_SSW_INSTRUCTION_RERUN_B_BIT) := stage_b_fault;
+		result(MMU_SSW_INSTRUCTION_FAULT_C_BIT) := stage_c_fault;
+		result(MMU_SSW_INSTRUCTION_RERUN_C_BIT) := stage_c_fault;
 		return result;
 	end function;
 end package body;
