@@ -113,6 +113,16 @@ begin
 			when x"0000A004" => memory_read_data <= x"8000";
 			when x"0000A006" | x"0000A008" => memory_read_data <= x"0000";
 			when x"0000A00A" => memory_read_data <= x"0123";
+			when x"0000B000" => memory_read_data <= x"7FFF";
+			when x"0000B002" => memory_read_data <= x"0000";
+			when x"0000B004" => memory_read_data <= x"8000";
+			when x"0000B006" | x"0000B008" | x"0000B00A" =>
+				memory_read_data <= x"0000";
+			when x"0000B010" => memory_read_data <= x"FFFF";
+			when x"0000B012" => memory_read_data <= x"0000";
+			when x"0000B014" => memory_read_data <= x"8000";
+			when x"0000B016" | x"0000B018" | x"0000B01A" =>
+				memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -602,9 +612,83 @@ begin
 		assert trace_count = 0
 			report "unimplemented packed FMOVE caused a bus cycle" severity failure;
 
-		start_instruction(x"F200", x"0E22", '0');
+		clear_observations;
+		integer_register_data <= x"00000000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fpcr = x"00000000"
+			report "binary arithmetic FPCR setup mismatch" severity failure;
+
+		start_instruction(x"F200", x"0E22", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"4001D000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FADD system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"0E28", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"4001A000000000000000"
+			report "register FSUB system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"0E38", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"4001A000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FCMP system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4622", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"4000E000000000000000"
+			report "memory single FADD system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"0000B000";
+		start_instruction(x"F210", x"4B00", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(6) = x"7FFF8000000000000000"
+			report "positive-infinity setup mismatch" severity failure;
+
+		effective_address <= x"0000B010";
+		start_instruction(x"F210", x"4B80", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(7) = x"FFFF8000000000000000"
+			report "negative-infinity setup mismatch" severity failure;
+
+		integer_register_data <= x"00002000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"1F22", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(6) = x"7FFF8000000000000000" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FADD operand-error exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
+		start_instruction(x"F200", x"0E23", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "arithmetic command was not explicitly reported as unimplemented"
+			report "FMUL command was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 
@@ -622,7 +706,7 @@ begin
 			floating_point_exception_class = FPU_EXCEPTION_NONE
 			report "unexpected FPU system exception" severity failure;
 
-		report "PASS: MC68882 move and unary-operation integration"
+		report "PASS: MC68882 move, unary, and add/subtract integration"
 			severity note;
 		stop;
 	end process;

@@ -116,8 +116,22 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#00DE#) := x"6780";
 		result(16#00DF#) := x"0000";
 		result(16#00E0#) := x"0B00";
-		result(16#00E1#) := x"4E72";
-		result(16#00E2#) := x"2700";
+		result(16#00E1#) := x"F200";
+		result(16#00E2#) := x"1FA2";
+		result(16#00E3#) := x"F239";
+		result(16#00E4#) := x"6780";
+		result(16#00E5#) := x"0000";
+		result(16#00E6#) := x"0B10";
+		result(16#00E7#) := x"F200";
+		result(16#00E8#) := x"1FA8";
+		result(16#00E9#) := x"F200";
+		result(16#00EA#) := x"1FB8";
+		result(16#00EB#) := x"F239";
+		result(16#00EC#) := x"6780";
+		result(16#00ED#) := x"0000";
+		result(16#00EE#) := x"0B14";
+		result(16#00EF#) := x"4E72";
+		result(16#00F0#) := x"2700";
 		result(16#0280#) := x"0000";
 		result(16#0281#) := x"0030";
 		result(16#0282#) := x"A5A5";
@@ -167,6 +181,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal movem_transfer_count : natural range 0 to 48 := 0;
 	signal movem_address_write_count : natural range 0 to 4 := 0;
 	signal unary_result_write_count : natural range 0 to 2 := 0;
+	signal binary_result_write_count : natural range 0 to 4 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -279,8 +294,12 @@ begin
 				if addr_out = x"00000B00" or addr_out = x"00000B02" then
 					unary_result_write_count <= unary_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B10" or addr_out = x"00000B12" or
+						addr_out = x"00000B14" or addr_out = x"00000B16" then
+					binary_result_write_count <= binary_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000001C2" then
+			if busstate = "00" and addr_out = x"000001DE" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -291,7 +310,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 1500 loop
+		for cycle in 0 to 1800 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
@@ -299,7 +318,8 @@ begin
 				control_address_write_count = 4 and
 				movem_transfer_count = 48 and
 				movem_address_write_count = 4 and
-				unary_result_write_count = 2 and post_fpu_fetch = '1';
+				unary_result_write_count = 2 and
+				binary_result_write_count = 4 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -361,7 +381,15 @@ begin
 			report "TG68K FPU unary instruction stream result mismatch: " &
 				to_hstring(memory(16#0580#)) & to_hstring(memory(16#0581#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, unary operations, FMOVEM, and control state"
+		assert binary_result_write_count = 4 and
+			memory(16#0588#) = x"4320" and memory(16#0589#) = x"0001" and
+			memory(16#058A#) = x"0000" and memory(16#058B#) = x"0000"
+			report "TG68K FPU add/subtract instruction stream mismatch: " &
+				to_hstring(memory(16#0588#)) & to_hstring(memory(16#0589#)) &
+				" " & to_hstring(memory(16#058A#)) &
+				to_hstring(memory(16#058B#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, unary and binary operations, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
