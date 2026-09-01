@@ -375,7 +375,11 @@ begin
 				exception_class_latched <= FPU_EXCEPTION_NONE;
 			elsif start = '1' then
 				active <= '1';
-				restore_active <= '1' when family = FPU_FAMILY_RESTORE else '0';
+				if family = FPU_FAMILY_RESTORE then
+					restore_active <= '1';
+				else
+					restore_active <= '0';
+				end if;
 				elapsed_cycles <= 1;
 				target_cycles <= timing_total(family, operation,
 					operand_format, address_mode, address_register,
