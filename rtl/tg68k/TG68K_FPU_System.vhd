@@ -341,7 +341,9 @@ begin
 		decoded_operation = FPU_OP_SGLMUL or
 		decoded_operation = FPU_OP_SGLDIV or
 		decoded_operation = FPU_OP_MOD or decoded_operation = FPU_OP_REM or
-		decoded_operation = FPU_OP_SCALE or decoded_operation = FPU_OP_CMP) and
+		decoded_operation = FPU_OP_SCALE or
+		decoded_operation = FPU_OP_TWOTOX or
+		decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		(decoded_format /= FPU_FORMAT_PACKED and
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED)) else '0';

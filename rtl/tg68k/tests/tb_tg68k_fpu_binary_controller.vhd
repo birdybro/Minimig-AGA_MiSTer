@@ -189,7 +189,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 100
+				assert cycle_count < 280
 					report "FPU binary controller did not complete"
 					severity failure;
 			end loop;
@@ -269,6 +269,16 @@ begin
 			status_write_count = 1 and observed_status = x"00" and
 			observed_cc = "0000" and trace_count = 0
 			report "register FSQRT controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_TWOTOX;
+		run_register_operation(x"3FFE8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFFB504F333F9DE6484" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FTWOTOX controller mismatch" severity failure;
 
 		clear_observations;
 		operation <= FPU_OP_INT;
