@@ -270,6 +270,15 @@ begin
 		exception_enable <= x"00";
 
 		clear_observations;
+		operation <= FPU_OP_SCALE;
+		run_register_operation(x"4000B000000000000000",
+			x"3FFFC000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"4001C000000000000000" and
+			observed_status = x"00" and observed_cc = "0000"
+			report "register FSCALE controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_CMP;
 		run_register_operation(x"4000C000000000000000",
 			x"40008000000000000000");

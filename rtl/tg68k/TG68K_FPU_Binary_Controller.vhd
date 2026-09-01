@@ -116,6 +116,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal square_root_latched : std_logic := '0';
 	signal integer_latched : std_logic := '0';
 	signal force_round_zero_latched : std_logic := '0';
+	signal scale_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -151,6 +152,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal square_root_base_status : std_logic_vector(7 downto 0);
 	signal integer_round_input : fpu_round_input_t;
 	signal integer_base_status : std_logic_vector(7 downto 0);
+	signal scale_round_input : fpu_round_input_t;
+	signal scale_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -165,11 +168,13 @@ begin
 	selected_round_input <= divide_round_input when divide_latched = '1' else
 		square_root_round_input when square_root_latched = '1' else
 		integer_round_input when integer_latched = '1' else
+		scale_round_input when scale_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
 		add_subtract_round_input;
 	selected_base_status <= divide_base_status when divide_latched = '1' else
 		square_root_base_status when square_root_latched = '1' else
 		integer_base_status when integer_latched = '1' else
+		scale_base_status when scale_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
 		add_subtract_base_status;
 	selected_rounding_mode <= FPU_ROUND_ZERO when
@@ -296,6 +301,22 @@ begin
 			base_exception_status => integer_base_status
 		);
 
+	scale_exponent : entity work.TG68K_FPU_Scale
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			source => source_latched,
+			destination => destination_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			round_input => scale_round_input,
+			base_exception_status => scale_base_status
+		);
+
 	shared_round : entity work.TG68K_FPU_Round
 		port map(
 			input_class => selected_round_input.data_class,
@@ -384,6 +405,7 @@ begin
 				square_root_latched <= '0';
 				integer_latched <= '0';
 				force_round_zero_latched <= '0';
+				scale_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -441,6 +463,11 @@ begin
 								force_round_zero_latched <= '1';
 							else
 								force_round_zero_latched <= '0';
+							end if;
+							if operation = FPU_OP_SCALE then
+								scale_latched <= '1';
+							else
+								scale_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;

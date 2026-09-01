@@ -196,15 +196,21 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#081A#) := x"0000";
 		result(16#081B#) := x"0B2C";
 		result(16#081C#) := x"F200";
-		result(16#081D#) := x"1FA8";
-		result(16#081E#) := x"F200";
-		result(16#081F#) := x"1FB8";
-		result(16#0820#) := x"F239";
-		result(16#0821#) := x"6780";
-		result(16#0822#) := x"0000";
-		result(16#0823#) := x"0B14";
-		result(16#0824#) := x"4E72";
-		result(16#0825#) := x"2700";
+		result(16#081D#) := x"12A6";
+		result(16#081E#) := x"F239";
+		result(16#081F#) := x"6680";
+		result(16#0820#) := x"0000";
+		result(16#0821#) := x"0B38";
+		result(16#0822#) := x"F200";
+		result(16#0823#) := x"1FA8";
+		result(16#0824#) := x"F200";
+		result(16#0825#) := x"1FB8";
+		result(16#0826#) := x"F239";
+		result(16#0827#) := x"6780";
+		result(16#0828#) := x"0000";
+		result(16#0829#) := x"0B14";
+		result(16#082A#) := x"4E72";
+		result(16#082B#) := x"2700";
 		return result;
 	end function;
 
@@ -232,6 +238,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal unary_result_write_count : natural range 0 to 2 := 0;
 	signal extraction_result_write_count : natural range 0 to 4 := 0;
 	signal integer_result_write_count : natural range 0 to 4 := 0;
+	signal scale_result_write_count : natural range 0 to 2 := 0;
 	signal binary_result_write_count : natural range 0 to 8 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
@@ -354,6 +361,9 @@ begin
 						addr_out = x"00000B2C" or addr_out = x"00000B2E" then
 					integer_result_write_count <= integer_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B38" or addr_out = x"00000B3A" then
+					scale_result_write_count <= scale_result_write_count + 1;
+				end if;
 				if addr_out = x"00000B10" or addr_out = x"00000B12" or
 						addr_out = x"00000B14" or addr_out = x"00000B16" or
 						addr_out = x"00000B18" or addr_out = x"00000B1A" or
@@ -361,7 +371,7 @@ begin
 					binary_result_write_count <= binary_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001048" then
+			if busstate = "00" and addr_out = x"00001054" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -383,6 +393,7 @@ begin
 				unary_result_write_count = 2 and
 				extraction_result_write_count = 4 and
 				integer_result_write_count = 4 and
+				scale_result_write_count = 2 and
 				binary_result_write_count = 8 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -461,6 +472,11 @@ begin
 				" " & to_hstring(memory(16#0596#)) &
 				to_hstring(memory(16#0597#))
 			severity failure;
+		assert scale_result_write_count = 2 and
+			memory(16#059C#) = x"4080" and memory(16#059D#) = x"0000"
+			report "TG68K FPU scale instruction stream mismatch: " &
+				to_hstring(memory(16#059C#)) & to_hstring(memory(16#059D#))
+			severity failure;
 		assert binary_result_write_count = 8 and
 			memory(16#0588#) = x"4320" and memory(16#0589#) = x"0001" and
 			memory(16#058A#) = x"0000" and memory(16#058B#) = x"0000" and
@@ -474,7 +490,7 @@ begin
 				" " & to_hstring(memory(16#058E#)) &
 				to_hstring(memory(16#058F#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, arithmetic, FMOVEM, and control state"
+		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;

@@ -702,6 +702,22 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
+		start_instruction(x"F200", x"1A26", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(4) = x"4000E000000000000000" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FSCALE operand-error exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
 		start_instruction(x"F200", x"0E23", '1');
 		command_word <= x"0000";
 		wait_done;
@@ -726,6 +742,36 @@ begin
 		assert fp_registers(4) = x"40008000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FSQRT system result mismatch" severity failure;
+
+		integer_register_data <= x"00000002";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E26", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"40028000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FSCALE system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4626", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"40018000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "memory single FSCALE system result mismatch" severity failure;
+
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"40008000000000000000"
+			report "FSCALE destination restore mismatch" severity failure;
 
 		start_instruction(x"F200", x"129E", '1');
 		command_word <= x"0000";

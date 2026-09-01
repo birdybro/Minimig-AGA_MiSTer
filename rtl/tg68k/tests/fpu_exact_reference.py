@@ -170,6 +170,16 @@ def round_integral(value: Fraction, precision: int, mode: int,
     return result, condition_codes, status
 
 
+def round_scale(source: Fraction, destination: Fraction, precision: int,
+                mode: int) -> tuple[int, int, int]:
+    magnitude = abs(source)
+    scale_factor = magnitude.numerator // magnitude.denominator
+    if source < 0:
+        scale_factor = -scale_factor
+    return round_binary(destination * power_of_two(scale_factor),
+                        precision, mode)
+
+
 def precision_name(index: int) -> tuple[str, int]:
     return (
         ("FPU_PRECISION_EXTENDED", 64),
