@@ -319,7 +319,7 @@ begin
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION) and
 		(decoded_operation = FPU_OP_ADD or decoded_operation = FPU_OP_SUB or
-		decoded_operation = FPU_OP_CMP) and
+		decoded_operation = FPU_OP_MUL or decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		(decoded_format /= FPU_FORMAT_PACKED and
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED)) else '0';

@@ -10,46 +10,35 @@ from fpu_exact_reference import (
     round_binary,
 )
 
-SEED = 0x68882ADD
+SEED = 0x68882F3
 VECTOR_COUNT = 512
 
 
-def make_vectors() -> list[tuple[int, int, int, str, str, int, int, int]]:
+def make_vectors() -> list[tuple[int, int, str, str, int, int, int]]:
     generator = random.Random(SEED)
     vectors = []
     for index in range(VECTOR_COUNT):
         source_sign = generator.randrange(2)
         destination_sign = generator.randrange(2)
-        source_exponent = generator.randint(-80, 80)
-        destination_exponent = generator.randint(-80, 80)
+        source_exponent = generator.randint(-40, 40)
+        destination_exponent = generator.randint(-40, 40)
         source_significand = (1 << 63) | generator.getrandbits(63)
         destination_significand = (1 << 63) | generator.getrandbits(63)
-        subtract = generator.randrange(2)
         precision_index = generator.randrange(3)
         mode = generator.randrange(4)
 
         if index % 31 == 0:
-            destination_sign = source_sign
-            destination_exponent = source_exponent
-            destination_significand = source_significand
-            subtract = 1
-        elif index % 31 == 1:
-            source_sign = 0
-            destination_sign = 0
-            source_exponent = generator.randint(-40, 40)
-            destination_exponent = source_exponent + 1
             source_significand = (1 << 64) - 1
-            destination_significand = 1 << 63
-            subtract = 1
+            destination_significand = (1 << 64) - 1
+        elif index % 31 == 1:
+            source_significand = (1 << 63) | 1
+            destination_significand = (1 << 63) | 1
         elif index % 31 == 2:
-            source_sign = destination_sign
-            source_exponent = generator.randint(-80, 40)
-            destination_exponent = source_exponent + 70
-            subtract = generator.randrange(2)
+            source_significand = (1 << 64) - 1
+            destination_significand = (1 << 63) | 1
         elif index % 31 == 3:
-            source_sign = destination_sign
-            destination_exponent = source_exponent + 4
-            subtract = 1
+            source_significand = 1 << 63
+            destination_significand = 1 << 63
 
         source_bits = encode_extended(source_sign, source_exponent,
                                       source_significand)
@@ -61,14 +50,11 @@ def make_vectors() -> list[tuple[int, int, int, str, str, int, int, int]]:
         destination_value = extended_value(destination_sign,
                                            destination_exponent,
                                            destination_significand)
-        exact_result = destination_value - source_value if subtract else (
-            destination_value + source_value)
         precision_enum, precision_bits = precision_name(precision_index)
         result, condition_codes, status = round_binary(
-            exact_result, precision_bits, mode)
-        vectors.append((source_bits, destination_bits, subtract,
-                        precision_enum, mode_name(mode), result,
-                        condition_codes, status))
+            source_value * destination_value, precision_bits, mode)
+        vectors.append((source_bits, destination_bits, precision_enum,
+                        mode_name(mode), result, condition_codes, status))
     return vectors
 
 
@@ -79,14 +65,13 @@ use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_add_differential is
+entity tb_tg68k_fpu_multiply_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_add_differential is
+architecture test of tb_tg68k_fpu_multiply_differential is
     type vector_t is record
         source_value : fpu_extended_t;
         destination_value : fpu_extended_t;
-        subtract_value : std_logic;
         precision_value : fpu_rounding_precision_t;
         mode_value : fpu_rounding_mode_t;
         expected_result : fpu_extended_t;
@@ -96,27 +81,24 @@ architecture test of tb_tg68k_fpu_add_differential is
     type vector_array_t is array (natural range <>) of vector_t;
     constant vectors : vector_array_t := (""")
     for index, vector in enumerate(vectors):
-        source, destination, subtract, precision, mode, result, cc, status = vector
+        source, destination, precision, mode, result, cc, status = vector
         suffix = "," if index + 1 < len(vectors) else ""
         print(f'        (x"{source:020X}", x"{destination:020X}", '
-              f"'{subtract}', {precision}, {mode}, "
+              f"{precision}, {mode}, "
               f'x"{result:020X}", x"{cc:X}", x"{status:02X}"){suffix}')
     print("""    );
     signal source_value : fpu_extended_t := (others => '0');
     signal destination_value : fpu_extended_t := (others => '0');
-    signal subtract_value : std_logic := '0';
     signal precision_value : fpu_rounding_precision_t := FPU_PRECISION_EXTENDED;
     signal mode_value : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
     signal result_value : fpu_extended_t;
     signal condition_codes : std_logic_vector(3 downto 0);
     signal exception_status : std_logic_vector(7 downto 0);
 begin
-    dut : entity work.TG68K_FPU_Add_Subtract
+    dut : entity work.TG68K_FPU_Multiply
         port map(
             source => source_value,
             destination => destination_value,
-            subtract => subtract_value,
-            compare_only => '0',
             rounding_precision => precision_value,
             rounding_mode => mode_value,
             result => result_value,
@@ -129,20 +111,19 @@ begin
         for index in vectors'range loop
             source_value <= vectors(index).source_value;
             destination_value <= vectors(index).destination_value;
-            subtract_value <= vectors(index).subtract_value;
             precision_value <= vectors(index).precision_value;
             mode_value <= vectors(index).mode_value;
             wait for 1 ns;
             assert result_value = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FADD/FSUB vector " & integer'image(index) &
+                report "differential FMUL vector " & integer'image(index) &
                     " mismatch: result=" & to_hstring(result_value) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
                 severity failure;
         end loop;
-        report "PASS: 512 exact-rational FADD/FSUB differential vectors"
+        report "PASS: 512 exact-rational FMUL differential vectors"
             severity note;
         stop;
     end process;

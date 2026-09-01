@@ -686,9 +686,16 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
-		start_instruction(x"F200", x"0E23", '0');
+		start_instruction(x"F200", x"0E23", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"4001A800000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FMUL system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"0E20", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "FMUL command was not explicitly reported as unimplemented"
+			report "FDIV command was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 
@@ -706,7 +713,7 @@ begin
 			floating_point_exception_class = FPU_EXCEPTION_NONE
 			report "unexpected FPU system exception" severity failure;
 
-		report "PASS: MC68882 move, unary, and add/subtract integration"
+		report "PASS: MC68882 move, unary, and fundamental arithmetic integration"
 			severity note;
 		stop;
 	end process;

@@ -110,6 +110,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal state : controller_state_t := IDLE;
 	signal subtract_latched : std_logic := '0';
 	signal compare_latched : std_logic := '0';
+	signal multiply_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -129,9 +130,12 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal transfer_index : natural range 0 to 5 := 0;
 
 	signal unpacked_operand : fpu_extended_t;
-	signal arithmetic_result : fpu_extended_t;
-	signal arithmetic_condition_codes : std_logic_vector(3 downto 0);
-	signal arithmetic_status : std_logic_vector(7 downto 0);
+	signal add_subtract_result : fpu_extended_t;
+	signal add_subtract_condition_codes : std_logic_vector(3 downto 0);
+	signal add_subtract_status : std_logic_vector(7 downto 0);
+	signal multiply_result : fpu_extended_t;
+	signal multiply_condition_codes : std_logic_vector(3 downto 0);
+	signal multiply_status : std_logic_vector(7 downto 0);
 begin
 	unpack : entity work.TG68K_FPU_Convert
 		port map(
@@ -143,7 +147,7 @@ begin
 			external_extended_data => open
 		);
 
-	arithmetic : entity work.TG68K_FPU_Add_Subtract
+	add_subtract : entity work.TG68K_FPU_Add_Subtract
 		port map(
 			source => source_latched,
 			destination => destination_latched,
@@ -151,9 +155,20 @@ begin
 			compare_only => compare_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
-			result => arithmetic_result,
-			condition_codes => arithmetic_condition_codes,
-			exception_status => arithmetic_status
+			result => add_subtract_result,
+			condition_codes => add_subtract_condition_codes,
+			exception_status => add_subtract_status
+		);
+
+	multiply : entity work.TG68K_FPU_Multiply
+		port map(
+			source => source_latched,
+			destination => destination_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => multiply_result,
+			condition_codes => multiply_condition_codes,
+			exception_status => multiply_status
 		);
 
 	outputs : process(state, format_latched, address_latched,
@@ -222,6 +237,7 @@ begin
 				state <= IDLE;
 				subtract_latched <= '0';
 				compare_latched <= '0';
+				multiply_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -252,6 +268,11 @@ begin
 							else
 								compare_latched <= '0';
 								write_result_latched <= '1';
+							end if;
+							if operation = FPU_OP_MUL then
+								multiply_latched <= '1';
+							else
+								multiply_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
@@ -309,9 +330,16 @@ begin
 						state <= EXECUTE;
 
 					when EXECUTE =>
-						result_latched <= arithmetic_result;
-						condition_codes_latched <= arithmetic_condition_codes;
-						status_latched <= arithmetic_status;
+						if multiply_latched = '1' then
+							result_latched <= multiply_result;
+							condition_codes_latched <= multiply_condition_codes;
+							status_latched <= multiply_status;
+						else
+							result_latched <= add_subtract_result;
+							condition_codes_latched <=
+								add_subtract_condition_codes;
+							status_latched <= add_subtract_status;
+						end if;
 						state <= COMMIT;
 
 					when COMMIT => state <= COMPLETE;

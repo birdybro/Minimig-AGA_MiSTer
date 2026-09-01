@@ -218,6 +218,16 @@ begin
 			report "register FADD controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_MUL;
+		run_register_operation(x"3FFFC000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"4000C000000000000000" and
+			status_write_count = 1 and observed_status = x"00" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FMUL controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_CMP;
 		run_register_operation(x"4000C000000000000000",
 			x"40008000000000000000");
@@ -252,6 +262,18 @@ begin
 			report "memory single FADD controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_MUL;
+		fp_register_data <= x"40008000000000000000";
+		start_operation;
+		finish_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"4000C000000000000000" and
+			observed_status = x"00"
+			report "memory single FMUL controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_ADD;
 		external_data_register <= '1';
 		operand_format <= FPU_FORMAT_LONG_INTEGER;
 		integer_register_data <= x"FFFFFFFE";
@@ -333,7 +355,7 @@ begin
 			trace_address(0) = x"00004000" and status_write_count = 1
 			report "binary bus-error retry mismatch" severity failure;
 
-		report "PASS: MC68882 FADD, FSUB, and FCMP controller"
+		report "PASS: MC68882 FADD, FSUB, FMUL, and FCMP controller"
 			severity note;
 		stop;
 	end process;
