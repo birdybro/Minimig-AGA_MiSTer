@@ -141,6 +141,7 @@ begin
 			condition_codes_write => condition_codes_write,
 			operation_condition_codes => operation_condition_codes,
 			operation_exception_status => operation_exception_status,
+			exceptional_operand => open,
 			busy => busy,
 			done => done,
 			bus_error_exception => bus_error_exception

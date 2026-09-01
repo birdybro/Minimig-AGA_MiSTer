@@ -56,6 +56,7 @@ entity TG68K_FPU_Move_Controller is
 		condition_codes_write : out std_logic;
 		operation_condition_codes : out std_logic_vector(3 downto 0);
 		operation_exception_status : out std_logic_vector(7 downto 0);
+		exceptional_operand : out fpu_extended_t;
 
 		busy : out std_logic;
 		done : out std_logic;
@@ -184,6 +185,7 @@ architecture rtl of TG68K_FPU_Move_Controller is
 	signal packed_output_done : std_logic;
 	signal packed_output_start : std_logic;
 begin
+	exceptional_operand <= source_latched;
 	packed_output_start <= '1' when state = START_PACKED_OUTPUT else '0';
 	with precision_latched select precision_format <=
 		FPU_FORMAT_SINGLE when FPU_PRECISION_SINGLE,

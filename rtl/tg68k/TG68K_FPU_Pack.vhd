@@ -79,6 +79,16 @@ package TG68K_FPU_Pack is
 	constant FPU_FPCR_PRECISION_LOW : natural := 6;
 	constant FPU_FPCR_ROUNDING_HIGH : natural := 5;
 	constant FPU_FPCR_ROUNDING_LOW : natural := 4;
+	constant FPU_STATE_FRAME_VERSION_68882 : std_logic_vector(7 downto 0) :=
+		x"1F";
+	constant FPU_STATE_FRAME_IDLE_SIZE_68882 : natural := 16#38#;
+	constant FPU_STATE_FRAME_NULL_BYTES : natural := 4;
+	constant FPU_STATE_FRAME_IDLE_BYTES_68882 : natural :=
+		FPU_STATE_FRAME_IDLE_SIZE_68882 + 4;
+	constant FPU_STATE_FRAME_BIU_IDLE : std_logic_vector(31 downto 0) :=
+		x"7C0EFFFF";
+	constant FPU_STATE_FRAME_BIU_EXCEPTION : std_logic_vector(31 downto 0) :=
+		x"740EFFFF";
 
 	constant FPU_FPSR_NEGATIVE_BIT : natural := 31;
 	constant FPU_FPSR_ZERO_BIT : natural := 30;
@@ -113,6 +123,8 @@ package TG68K_FPU_Pack is
 	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t;
 	function fpu_condition_codes(
 		value : fpu_extended_t) return std_logic_vector;
+	function fpu_highest_exception(
+		status : std_logic_vector(7 downto 0)) return fpu_exception_t;
 end package;
 
 package body TG68K_FPU_Pack is
@@ -233,5 +245,28 @@ package body TG68K_FPU_Pack is
 			when others => null;
 		end case;
 		return condition_codes;
+	end function;
+
+	function fpu_highest_exception(
+		status : std_logic_vector(7 downto 0)) return fpu_exception_t is
+	begin
+		if status(7) = '1' then
+			return FPU_EXCEPTION_BSUN;
+		elsif status(6) = '1' then
+			return FPU_EXCEPTION_SNAN;
+		elsif status(5) = '1' then
+			return FPU_EXCEPTION_OPERR;
+		elsif status(4) = '1' then
+			return FPU_EXCEPTION_OVFL;
+		elsif status(3) = '1' then
+			return FPU_EXCEPTION_UNFL;
+		elsif status(2) = '1' then
+			return FPU_EXCEPTION_DZ;
+		elsif status(1) = '1' then
+			return FPU_EXCEPTION_INEX2;
+		elsif status(0) = '1' then
+			return FPU_EXCEPTION_INEX1;
+		end if;
+		return FPU_EXCEPTION_NONE;
 	end function;
 end package body;

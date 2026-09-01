@@ -140,6 +140,7 @@ begin
 			quotient_write => quotient_write,
 			operation_quotient => operation_quotient,
 			operation_exception_status => operation_exception_status,
+			exceptional_operand => open,
 			busy => busy,
 			done => done,
 			bus_error_exception => bus_error_exception

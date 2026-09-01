@@ -118,6 +118,7 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_instruction_busy : std_logic;
 	signal fpu_instruction_done : std_logic;
 	signal fpu_unimplemented_exception : std_logic;
+	signal fpu_format_error_exception : std_logic;
 	signal fpu_bus_error_exception : std_logic;
 	signal fpu_floating_point_exception : std_logic;
 	signal fpu_exception_class : fpu_exception_t;
@@ -501,6 +502,7 @@ begin
 			FPU_instruction_busy => fpu_instruction_busy,
 			FPU_instruction_done => fpu_instruction_done,
 			FPU_unimplemented_exception => fpu_unimplemented_exception,
+			FPU_format_error_exception => fpu_format_error_exception,
 			FPU_bus_error_exception => fpu_bus_error_exception,
 			FPU_floating_point_exception => fpu_floating_point_exception,
 			FPU_exception_class => fpu_exception_class,
@@ -631,6 +633,7 @@ begin
 			instruction_done => fpu_instruction_done,
 			fline_exception => open,
 			unimplemented_exception => fpu_unimplemented_exception,
+			format_error_exception => fpu_format_error_exception,
 			bus_error_exception => fpu_bus_error_exception,
 			floating_point_exception => fpu_floating_point_exception,
 			floating_point_exception_class => fpu_exception_class,

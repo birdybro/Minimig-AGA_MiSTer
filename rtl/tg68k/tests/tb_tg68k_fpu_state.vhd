@@ -13,6 +13,10 @@ architecture test of tb_tg68k_fpu_state is
 	signal clk : std_logic := '0';
 	signal nreset : std_logic := '0';
 	signal null_restore : std_logic := '0';
+	signal idle_restore : std_logic := '0';
+	signal restore_exception_pending : std_logic := '0';
+	signal instruction_complete : std_logic := '0';
+	signal save_complete : std_logic := '0';
 	signal data_register_select : std_logic_vector(2 downto 0) := "000";
 	signal data_register_write : std_logic := '0';
 	signal data_register_write_data : fpu_extended_t := (others => '0');
@@ -40,6 +44,9 @@ architecture test of tb_tg68k_fpu_state is
 	signal rounding_mode : fpu_rounding_mode_t;
 	signal exception_trap : std_logic;
 	signal exception_class : fpu_exception_t;
+	signal initialized : std_logic;
+	signal exception_pending : std_logic;
+	signal pending_exception_class : fpu_exception_t;
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 
@@ -48,6 +55,10 @@ begin
 			clk => clk,
 			nReset => nreset,
 			null_restore => null_restore,
+			idle_restore => idle_restore,
+			restore_exception_pending => restore_exception_pending,
+			instruction_complete => instruction_complete,
+			save_complete => save_complete,
 			data_register_select => data_register_select,
 			data_register_write => data_register_write,
 			data_register_write_data => data_register_write_data,
@@ -70,6 +81,9 @@ begin
 			fpiar_out => fpiar,
 			rounding_precision_out => rounding_precision,
 			rounding_mode_out => rounding_mode,
+			initialized_out => initialized,
+			exception_pending_out => exception_pending,
+			pending_exception_class => pending_exception_class,
 			exception_trap => exception_trap,
 			exception_class => exception_class
 		);
@@ -139,7 +153,8 @@ begin
 				severity failure;
 		end loop;
 		assert fpcr = x"00000000" and fpsr = x"00000000" and
-			fpiar = x"00000000"
+			fpiar = x"00000000" and initialized = '0' and
+			exception_pending = '0'
 			report "FPU control state did not reset" severity failure;
 
 		wait until falling_edge(clk);
@@ -149,6 +164,14 @@ begin
 				std_logic_vector(to_unsigned(index + 1, 16)) &
 				x"0123456789ABCDEF");
 		end loop;
+		wait until falling_edge(clk);
+		instruction_complete <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		instruction_complete <= '0';
+		assert initialized = '1'
+			report "completed instruction did not initialize FPU state"
+			severity failure;
 		for index in 0 to 7 loop
 			data_register_select <= std_logic_vector(to_unsigned(index, 3));
 			wait for 1 ns;
@@ -179,13 +202,23 @@ begin
 			report "FPSR operation status or accrued exceptions mismatch"
 			severity failure;
 		assert exception_trap = '1' and
-			exception_class = FPU_EXCEPTION_SNAN
+			exception_class = FPU_EXCEPTION_SNAN and
+			exception_pending = '1' and
+			pending_exception_class = FPU_EXCEPTION_SNAN
 			report "enabled FPU exception priority mismatch" severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
 		assert exception_trap = '0' and
 			exception_class = FPU_EXCEPTION_NONE
 			report "FPU exception request was not a pulse" severity failure;
+		wait until falling_edge(clk);
+		save_complete <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		save_complete <= '0';
+		assert exception_pending = '0' and initialized = '1'
+			report "FSAVE completion did not clear pending state"
+			severity failure;
 
 		write_operation_status('0', "0000", '0', x"00", x"08");
 		assert fpsr = x"A08508C8"
@@ -213,7 +246,9 @@ begin
 		wait for 1 ns;
 		conditional_status_write <= '0';
 		assert fpsr = x"A585D4C0" and exception_trap = '1' and
-			exception_class = FPU_EXCEPTION_BSUN
+			exception_class = FPU_EXCEPTION_BSUN and
+			exception_pending = '1' and
+			pending_exception_class = FPU_EXCEPTION_BSUN
 			report "enabled conditional BSUN exception mismatch"
 			severity failure;
 		wait until rising_edge(clk);
@@ -238,8 +273,23 @@ begin
 				severity failure;
 		end loop;
 		assert fpcr = x"00000000" and fpsr = x"00000000" and
-			fpiar = x"00000000"
+			fpiar = x"00000000" and initialized = '0' and
+			exception_pending = '0'
 			report "null restore did not clear FPU control state"
+			severity failure;
+
+		write_control_register(FPU_REG_FPCR, x"00004000");
+		write_control_register(FPU_REG_FPSR, x"00004000");
+		wait until falling_edge(clk);
+		restore_exception_pending <= '1';
+		idle_restore <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		idle_restore <= '0';
+		restore_exception_pending <= '0';
+		assert initialized = '1' and exception_pending = '1' and
+			pending_exception_class = FPU_EXCEPTION_SNAN
+			report "idle restore did not reestablish pending exception state"
 			severity failure;
 
 		report "PASS: MC68882 architectural register state" severity note;

@@ -52,6 +52,7 @@ entity TG68K_FPU_Unary_Controller is
 		condition_codes_write : out std_logic;
 		operation_condition_codes : out std_logic_vector(3 downto 0);
 		operation_exception_status : out std_logic_vector(7 downto 0);
+		exceptional_operand : out fpu_extended_t;
 
 		busy : out std_logic;
 		done : out std_logic;
@@ -136,6 +137,7 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 	signal extracted_result : fpu_extended_t;
 	signal extracted_status : std_logic_vector(7 downto 0);
 begin
+	exceptional_operand <= operand_latched;
 	operand_class <= fpu_classify(operand_latched);
 
 	unpack : entity work.TG68K_FPU_Convert

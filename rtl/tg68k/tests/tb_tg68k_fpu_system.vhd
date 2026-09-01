@@ -39,6 +39,7 @@ architecture test of tb_tg68k_fpu_system is
 	signal instruction_done : std_logic;
 	signal fline_exception : std_logic;
 	signal unimplemented_exception : std_logic;
+	signal format_error_exception : std_logic;
 	signal bus_error_exception : std_logic;
 	signal floating_point_exception : std_logic;
 	signal floating_point_exception_class : fpu_exception_t;
@@ -143,6 +144,22 @@ begin
 			when x"0000C014" => memory_read_data <= x"5000";
 			when x"0000C016" | x"0000C018" | x"0000C01A" =>
 				memory_read_data <= x"0000";
+			when x"0000E000" => memory_read_data <= x"0038";
+			when x"0000E002" => memory_read_data <= x"0000";
+			when x"0000E100" => memory_read_data <= x"1F38";
+			when x"0000E102" => memory_read_data <= x"0000";
+			when x"0000E104" => memory_read_data <= x"89AB";
+			when x"0000E106" => memory_read_data <= x"CDEF";
+			when x"0000E128" => memory_read_data <= x"BFFE";
+			when x"0000E12A" => memory_read_data <= x"0000";
+			when x"0000E12C" => memory_read_data <= x"8000";
+			when x"0000E12E" => memory_read_data <= x"1234";
+			when x"0000E130" => memory_read_data <= x"5678";
+			when x"0000E132" => memory_read_data <= x"9ABC";
+			when x"0000E138" => memory_read_data <= x"740E";
+			when x"0000E13A" => memory_read_data <= x"FFFF";
+			when x"0000E200" => memory_read_data <= x"2A38";
+			when x"0000E202" => memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -176,6 +193,7 @@ begin
 			instruction_done => instruction_done,
 			fline_exception => fline_exception,
 			unimplemented_exception => unimplemented_exception,
+			format_error_exception => format_error_exception,
 			bus_error_exception => bus_error_exception,
 			floating_point_exception => floating_point_exception,
 			floating_point_exception_class => floating_point_exception_class,
@@ -281,6 +299,21 @@ begin
 			wait for 1 ns;
 			assert instruction_done = '0' and instruction_busy = '0'
 				report "FPU system did not return idle" severity failure;
+		end procedure;
+
+		procedure clear_pending_exception is
+		begin
+			clear_observations;
+			effective_address <= x"0000D000";
+			start_instruction(x"F310", x"0000", '1');
+			wait_done;
+			assert trace_count = 30 and trace_write(0) = '1' and
+				trace_address(0) = x"0000D000" and
+				trace_data(0) = x"1F38" and trace_data(1) = x"0000" and
+				trace_address(2) = x"0000D038" and
+				trace_data(2) = x"740E" and trace_data(3) = x"FFFF"
+				report "FSAVE did not preserve and clear pending exception"
+				severity failure;
 		end procedure;
 	begin
 		wait for 3 * CLK_PERIOD;
@@ -521,6 +554,7 @@ begin
 			report "enabled FMOVECR inexact exception mismatch" severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		clear_observations;
 		effective_address <= x"00002000";
@@ -665,6 +699,7 @@ begin
 			floating_point_exception = '0'
 			report "signaling-NaN operation did not retire cleanly"
 			severity failure;
+		clear_pending_exception;
 
 		clear_observations;
 		effective_address <= x"0000C000";
@@ -724,6 +759,7 @@ begin
 			report "dynamic-K packed output FMOVE system mismatch" severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		clear_observations;
 		integer_register_data <= x"00000000";
@@ -798,6 +834,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		start_instruction(x"F200", x"1E04", '1');
 		command_word <= x"0000";
@@ -814,6 +851,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		start_instruction(x"F200", x"1321", '1');
 		command_word <= x"0000";
@@ -831,6 +869,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		start_instruction(x"F200", x"1A26", '1');
 		command_word <= x"0000";
@@ -847,6 +886,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		start_instruction(x"F200", x"0E23", '1');
 		command_word <= x"0000";
@@ -1039,6 +1079,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		clear_observations;
 		effective_address <= x"00009000";
@@ -1074,6 +1115,7 @@ begin
 			report "enabled FINT inexact exception mismatch" severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		integer_register_data <= x"00000000";
 		start_instruction(x"F202", x"4180", '1');
@@ -1101,6 +1143,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		integer_register_data <= x"00000001";
 		start_instruction(x"F202", x"4180", '1');
@@ -1360,6 +1403,7 @@ begin
 			severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+		clear_pending_exception;
 
 		integer_register_data <= x"00000400";
 		start_instruction(x"F203", x"9000", '1');
@@ -1435,6 +1479,7 @@ begin
 			report "enabled FATANH divide-by-zero suppression mismatch: fp4=" &
 				to_hstring(fp_registers(4)) & " fpsr=" & to_hstring(fpsr)
 			severity failure;
+		clear_pending_exception;
 
 		clear_observations;
 		effective_address <= x"00009004";
@@ -1710,6 +1755,80 @@ begin
 			fp_registers(4) = FPU_RESET_NAN and fpcr = x"00000000" and
 			fpsr = x"00000000" and fpiar = x"00000000"
 			report "FPU system null restore mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"0000D000";
+		start_instruction(x"F310", x"0000", '1');
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '1' and
+			trace_address(0) = x"0000D000" and
+			trace_address(1) = x"0000D002" and
+			trace_data(0) = x"0038" and trace_data(1) = x"0000" and
+			address_write_count = 0
+			report "integrated null FSAVE mismatch" severity failure;
+
+		integer_register_data <= x"00004000";
+		start_instruction(x"F202", x"9000", '1');
+		wait_done;
+		start_instruction(x"F202", x"8800", '1');
+		wait_done;
+		clear_observations;
+		effective_address <= x"0000E100";
+		start_instruction(x"F358", x"0000", '1');
+		wait_done;
+		assert trace_count = 30 and trace_write(0) = '0' and
+			trace_address(0) = x"0000E100" and
+			trace_address(29) = x"0000E13A" and
+			address_write_count = 1 and
+			observed_address_select = "000" and
+			observed_address_data = x"0000E13C"
+			report "integrated idle FRESTORE mismatch" severity failure;
+
+		clear_observations;
+		start_instruction(x"F200", x"0018", '1');
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_SNAN and
+			trace_count = 0 and fp_registers(0) = FPU_RESET_NAN
+			report "restored pending exception did not take pre-instruction trap"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
+		clear_pending_exception;
+		assert trace_data(6) = x"5678" and trace_data(7) = x"9ABC" and
+			trace_data(8) = x"8000" and trace_data(9) = x"1234" and
+			trace_data(10) = x"BFFE" and trace_data(11) = x"0000" and
+			trace_data(28) = x"89AB" and trace_data(29) = x"CDEF"
+			report "restored idle exception context did not survive FSAVE"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"0000E000";
+		start_instruction(x"F358", x"0000", '1');
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			address_write_count = 1 and
+			observed_address_data = x"0000E004" and
+			fp_registers(0) = FPU_RESET_NAN and fpcr = x"00000000" and
+			fpsr = x"00000000"
+			report "integrated null FRESTORE mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"0000E200";
+		start_instruction(x"F358", x"0000", '1');
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert format_error_exception = '1' and trace_count = 2 and
+			address_write_count = 0
+			report "invalid FRESTORE format handling mismatch" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
 
 		assert bus_error_exception = '0' and floating_point_exception = '0' and
 			floating_point_exception_class = FPU_EXCEPTION_NONE

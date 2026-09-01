@@ -19,6 +19,10 @@ entity TG68K_FPU is
 		clk : in std_logic;
 		nReset : in std_logic;
 		null_restore : in std_logic;
+		idle_restore : in std_logic;
+		restore_exception_pending : in std_logic;
+		instruction_complete : in std_logic;
+		save_complete : in std_logic;
 
 		data_register_select : in std_logic_vector(2 downto 0);
 		data_register_write : in std_logic;
@@ -44,6 +48,9 @@ entity TG68K_FPU is
 		fpiar_out : out std_logic_vector(31 downto 0);
 		rounding_precision_out : out fpu_rounding_precision_t;
 		rounding_mode_out : out fpu_rounding_mode_t;
+		initialized_out : out std_logic;
+		exception_pending_out : out std_logic;
+		pending_exception_class : out fpu_exception_t;
 		exception_trap : out std_logic;
 		exception_class : out fpu_exception_t
 	);
@@ -55,7 +62,10 @@ architecture rtl of TG68K_FPU is
 	signal fpcr : std_logic_vector(31 downto 0) := (others => '0');
 	signal fpsr : std_logic_vector(31 downto 0) := (others => '0');
 	signal fpiar : std_logic_vector(31 downto 0) := (others => '0');
+	signal initialized : std_logic := '0';
+	signal exception_pending : std_logic := '0';
 	signal exception_class_register : fpu_exception_t := FPU_EXCEPTION_NONE;
+	signal enabled_exception_status : std_logic_vector(7 downto 0);
 begin
 	data_register_read_data <= fp_registers(
 		to_integer(unsigned(data_register_select)));
@@ -68,6 +78,10 @@ begin
 	fpcr_out <= fpcr;
 	fpsr_out <= fpsr;
 	fpiar_out <= fpiar;
+	initialized_out <= initialized;
+	exception_pending_out <= exception_pending;
+	enabled_exception_status <= fpsr(15 downto 8) and fpcr(15 downto 8);
+	pending_exception_class <= fpu_highest_exception(enabled_exception_status);
 	with fpcr(FPU_FPCR_PRECISION_HIGH downto FPU_FPCR_PRECISION_LOW) select
 		rounding_precision_out <=
 		FPU_PRECISION_EXTENDED when "00",
@@ -93,7 +107,20 @@ begin
 				fpcr <= (others => '0');
 				fpsr <= (others => '0');
 				fpiar <= (others => '0');
+				initialized <= '0';
+				exception_pending <= '0';
 			else
+				if idle_restore = '1' then
+					initialized <= '1';
+					exception_pending <= restore_exception_pending;
+				else
+					if instruction_complete = '1' then
+						initialized <= '1';
+					end if;
+					if save_complete = '1' then
+						exception_pending <= '0';
+					end if;
+				end if;
 				if data_register_write = '1' then
 					fp_registers(to_integer(unsigned(
 						data_register_select))) <= data_register_write_data;
@@ -141,23 +168,9 @@ begin
 					enabled_status := operation_exception_status and fpcr(15 downto 8);
 					if enabled_status /= x"00" then
 						exception_trap <= '1';
-						if enabled_status(7) = '1' then
-							exception_class_register <= FPU_EXCEPTION_BSUN;
-						elsif enabled_status(6) = '1' then
-							exception_class_register <= FPU_EXCEPTION_SNAN;
-						elsif enabled_status(5) = '1' then
-							exception_class_register <= FPU_EXCEPTION_OPERR;
-						elsif enabled_status(4) = '1' then
-							exception_class_register <= FPU_EXCEPTION_OVFL;
-						elsif enabled_status(3) = '1' then
-							exception_class_register <= FPU_EXCEPTION_UNFL;
-						elsif enabled_status(2) = '1' then
-							exception_class_register <= FPU_EXCEPTION_DZ;
-						elsif enabled_status(1) = '1' then
-							exception_class_register <= FPU_EXCEPTION_INEX2;
-						else
-							exception_class_register <= FPU_EXCEPTION_INEX1;
-						end if;
+						exception_pending <= '1';
+						exception_class_register <=
+							fpu_highest_exception(enabled_status);
 					end if;
 				end if;
 				if conditional_status_write = '1' then
@@ -166,6 +179,7 @@ begin
 						fpsr(FPU_FPSR_AEXC_IOP_BIT) <= '1';
 						if fpcr(FPU_FPSR_BSUN_BIT) = '1' then
 							exception_trap <= '1';
+							exception_pending <= '1';
 							exception_class_register <= FPU_EXCEPTION_BSUN;
 						end if;
 					end if;

@@ -174,6 +174,7 @@ entity TG68KdotC_Kernel is
 		FPU_instruction_busy	: in std_logic := '0';
 		FPU_instruction_done	: in std_logic := '0';
 		FPU_unimplemented_exception : in std_logic := '0';
+		FPU_format_error_exception : in std_logic := '0';
 		FPU_bus_error_exception	: in std_logic := '0';
 		FPU_floating_point_exception : in std_logic := '0';
 		FPU_exception_class		: in fpu_exception_t := FPU_EXCEPTION_NONE;
@@ -362,6 +363,9 @@ architecture logic of TG68KdotC_Kernel is
 	signal fpu_bsun_trap_pending : std_logic := '0';
 	signal fpu_bsun_trap_pc : std_logic_vector(31 downto 0) :=
 		(others => '0');
+	signal fpu_format_trap_pending : std_logic := '0';
+	signal fpu_format_trap_pc : std_logic_vector(31 downto 0) :=
+		(others => '0');
 	signal trap_format			: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
@@ -497,6 +501,8 @@ BEGIN
 				fpu_conditional_trap_pc <= (others => '0');
 				fpu_bsun_trap_pending <= '0';
 				fpu_bsun_trap_pc <= (others => '0');
+				fpu_format_trap_pending <= '0';
+				fpu_format_trap_pc <= (others => '0');
 			elsif clkena_lw = '1' and FPU_instruction_done = '1' and
 					FPU_conditional_trap_taken = '1' then
 				fpu_conditional_trap_pending <= '1';
@@ -508,6 +514,10 @@ BEGIN
 					fpu_conditional_trap_pc <= tmp_TG68_PC;
 				end if;
 			elsif clkena_lw = '1' and FPU_instruction_done = '1' and
+					FPU_format_error_exception = '1' then
+				fpu_format_trap_pending <= '1';
+				fpu_format_trap_pc <= exe_pc;
+			elsif clkena_lw = '1' and FPU_instruction_done = '1' and
 					FPU_floating_point_exception = '1' and
 					FPU_exception_class = FPU_EXCEPTION_BSUN then
 				fpu_bsun_trap_pending <= '1';
@@ -515,6 +525,7 @@ BEGIN
 			elsif clkena_lw = '1' and micro_state = trap3 then
 				fpu_conditional_trap_pending <= '0';
 				fpu_bsun_trap_pending <= '0';
+				fpu_format_trap_pending <= '0';
 			elsif clkena_lw = '1' and exec(get_ea_now) = '1' and
 					FPU_instruction_match = '1' then
 				fpu_effective_address_latched <= addr;
@@ -1123,6 +1134,9 @@ PROCESS (clk)
 				ELSIF micro_state = trap1 and
 						fpu_conditional_trap_pending = '1' THEN
 					data_write_tmp <= fpu_conditional_trap_pc;
+				ELSIF micro_state = trap1 and
+						fpu_format_trap_pending = '1' THEN
+					data_write_tmp <= fpu_format_trap_pc;
 				ELSIF micro_state = trap1 and fpu_bsun_trap_pending = '1' THEN
 					data_write_tmp <= fpu_bsun_trap_pc;
 				ELSIF writePC='1' THEN
@@ -1806,6 +1820,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 FPU_instruction_requires_command_word, FPU_instruction_requires_ea,
 		 FPU_instruction_family,
 		 FPU_instruction_done, FPU_unimplemented_exception,
+		 FPU_format_error_exception,
 		 FPU_floating_point_exception,
 		 FPU_conditional_branch_taken, FPU_conditional_trap_taken)
 	BEGIN
@@ -3515,8 +3530,18 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						IF FPU_instruction_valid = '0' THEN
 							trap_1111 <= '1';
 							trapmake <= '1';
+						ELSIF (FPU_instruction_family = FPU_FAMILY_SAVE or
+								FPU_instruction_family = FPU_FAMILY_RESTORE) and
+								SVmode = '0' THEN
+							trap_priv <= '1';
+							trapmake <= '1';
 						ELSIF FPU_instruction_requires_ea = '1' THEN
-							set(ea_build) <= '1';
+							if FPU_instruction_family = FPU_FAMILY_SAVE or
+									FPU_instruction_family = FPU_FAMILY_RESTORE then
+								ea_build_now <= '1';
+							else
+								set(ea_build) <= '1';
+							end if;
 							next_micro_state <= nop;
 						ELSIF FPU_instruction_family = FPU_FAMILY_BCC_WORD or
 								FPU_instruction_family = FPU_FAMILY_BCC_LONG then
@@ -4558,6 +4583,9 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					ELSIF FPU_unimplemented_exception = '1' THEN
 						trap_1111 <= '1';
 						trapmake <= '1';
+					ELSIF FPU_format_error_exception = '1' THEN
+						trap_format <= '1';
+						trapmake <= '1';
 					ELSIF FPU_floating_point_exception = '1' THEN
 						trap_fpu <= '1';
 						trapmake <= '1';
@@ -4597,6 +4625,15 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 
 			WHEN OTHERS => NULL;
 			END CASE;
+
+			if FPU_enable = '1' and cpu(1) = '1' and
+					FPU_instruction_match = '1' and set(get_ea_now) = '1' and
+					(FPU_instruction_family = FPU_FAMILY_SAVE or
+					 FPU_instruction_family = FPU_FAMILY_RESTORE) then
+				setnextpass <= '0';
+				setstate <= "01";
+				next_micro_state <= fpu_issue;
+			end if;
 
 			if MMU_access_fault = '1' then
 				setstate <= "01";

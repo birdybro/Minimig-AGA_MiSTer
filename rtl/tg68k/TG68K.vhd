@@ -202,6 +202,7 @@ cpu1: entity work.TG68KdotC_Kernel
       FPU_instruction_busy => '0',
       FPU_instruction_done => '0',
       FPU_unimplemented_exception => '0',
+      FPU_format_error_exception => '0',
       FPU_bus_error_exception => '0',
       FPU_floating_point_exception => '0',
       FPU_exception_class => FPU_EXCEPTION_NONE,

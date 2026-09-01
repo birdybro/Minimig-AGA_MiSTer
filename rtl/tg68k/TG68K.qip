@@ -13,6 +13,7 @@ set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Decoder.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Condition.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Conditional_Controller.vhd ]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_State_Frame_Controller.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Convert.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Round.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Packed_Power_ROM.vhd ]

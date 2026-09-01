@@ -57,6 +57,7 @@ entity TG68K_FPU_Binary_Controller is
 		quotient_write : out std_logic;
 		operation_quotient : out std_logic_vector(7 downto 0);
 		operation_exception_status : out std_logic_vector(7 downto 0);
+		exceptional_operand : out fpu_extended_t;
 
 		busy : out std_logic;
 		done : out std_logic;
@@ -223,6 +224,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal rounded_condition_codes : std_logic_vector(3 downto 0);
 	signal rounded_status : std_logic_vector(7 downto 0);
 begin
+	exceptional_operand <= source_latched;
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
 	selected_round_input <= divide_round_input when divide_latched = '1' else
 		square_root_round_input when square_root_latched = '1' else
