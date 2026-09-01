@@ -25,6 +25,7 @@ entity TG68K_FPU_Logarithm is
 		source : in fpu_extended_t;
 		add_one : in std_logic;
 		logarithm_base : in fpu_logarithm_base_t;
+		inverse_hyperbolic_tangent : in std_logic := '0';
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -47,12 +48,14 @@ architecture rtl of TG68K_FPU_Logarithm is
 	constant SERIES_NORMAL_BIT : natural := 83;
 	constant SERIES_CUBIC_MAX_EXPONENT : integer := -26;
 	constant SERIES_CUBIC_MIN_EXPONENT : integer := -40;
+	constant ATANH_TINY_MAX_EXPONENT : integer := -33;
 	constant CUBE_SQUARE_LOW_BIT : natural := 112;
 	constant POSITIVE_REMAINDER_BOUND_BIT : natural := 9;
 	type logarithm_state_t is
 		(IDLE, NORMALIZE_SERIES_ARGUMENT, SQUARE_SMALL_ARGUMENT,
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
+			NORMALIZE_ATANH_RATIO, DIVIDE_ATANH_RATIO,
 			NORMALIZE_INPUT, LOAD_CORDIC_ANGLE, CORDIC, MULTIPLY_LN2,
 			SCALE_LOGARITHM_BASE, NORMALIZE_RESULT, WRITE_PENDING_RESULT,
 			COMPLETE);
@@ -123,6 +126,7 @@ architecture rtl of TG68K_FPU_Logarithm is
 
 	signal state : logarithm_state_t := IDLE;
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
+	signal inverse_hyperbolic_tangent_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal series_source_significand : unsigned(63 downto 0) :=
 		(others => '0');
@@ -144,12 +148,20 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal input_exponent : signed(16 downto 0) := (others => '0');
 	signal cordic_x : cordic_value_t := (others => '0');
 	signal cordic_y : cordic_value_t := (others => '0');
-	signal cordic_z : cordic_value_t := (others => '0');
+	signal cordic_z : signed(RESULT_WIDTH - 1 downto 0) := (others => '0');
 	signal cordic_iteration : natural range 1 to FRACTION_BITS := 1;
 	signal repeat_iteration : std_logic := '0';
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
 	signal cordic_angle_address : natural range 1 to 31 := 1;
+	signal atanh_numerator : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
+	signal atanh_denominator : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
+	signal atanh_quotient : unsigned(FRACTION_BITS downto 0) :=
+		(others => '0');
+	signal atanh_exponent : signed(16 downto 0) := (others => '0');
+	signal atanh_iteration : natural range 0 to FRACTION_BITS - 1 := 0;
 
 	signal log_fraction : signed(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
@@ -245,24 +257,35 @@ begin
 		procedure begin_fixed_result(constant fixed_value : in signed(
 				RESULT_WIDTH - 1 downto 0)) is
 			variable magnitude : unsigned(RESULT_WIDTH - 1 downto 0);
+			variable result_exponent : integer;
 		begin
+			result_exponent := RESULT_NORMAL_BIT - FRACTION_BITS;
+			if inverse_hyperbolic_tangent_latched = '1' then
+				result_exponent := result_exponent - 1;
+			end if;
 			if fixed_value = 0 then
 				intermediate_class <= FPU_CLASS_ZERO;
-				intermediate_sign <= '0';
+				if inverse_hyperbolic_tangent_latched = '1' then
+					intermediate_sign <= source_sign_latched;
+				else
+					intermediate_sign <= '0';
+				end if;
 				state <= COMPLETE;
 			elsif fixed_value < 0 then
 				magnitude := unsigned(-fixed_value);
 				intermediate_sign <= '1';
 				normalization_value <= magnitude;
-				normalization_exponent <= to_signed(
-					RESULT_NORMAL_BIT - FRACTION_BITS, 17);
+				normalization_exponent <= to_signed(result_exponent, 17);
 				state <= NORMALIZE_RESULT;
 			else
 				magnitude := unsigned(fixed_value);
-				intermediate_sign <= '0';
+				if inverse_hyperbolic_tangent_latched = '1' then
+					intermediate_sign <= source_sign_latched;
+				else
+					intermediate_sign <= '0';
+				end if;
 				normalization_value <= magnitude;
-				normalization_exponent <= to_signed(
-					RESULT_NORMAL_BIT - FRACTION_BITS, 17);
+				normalization_exponent <= to_signed(result_exponent, 17);
 				state <= NORMALIZE_RESULT;
 			end if;
 		end procedure;
@@ -354,6 +377,22 @@ begin
 			end if;
 		end procedure;
 
+		procedure begin_atanh_ratio(
+				constant magnitude_value : in unsigned(CORDIC_WIDTH downto 0)) is
+			variable unit_value : unsigned(CORDIC_WIDTH downto 0);
+		begin
+			-- Apply the identity's factor of one half in begin_fixed_result so
+			-- the ratio logarithm is rounded only once.
+			unit_value := (others => '0');
+			unit_value(FRACTION_BITS) := '1';
+			atanh_numerator <= unit_value + magnitude_value;
+			atanh_denominator <= unit_value - magnitude_value;
+			atanh_quotient <= (others => '0');
+			atanh_exponent <= (others => '0');
+			atanh_iteration <= 0;
+			state <= NORMALIZE_ATANH_RATIO;
+		end procedure;
+
 		procedure write_small_series_result(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0);
 				constant result_exponent : in signed(16 downto 0)) is
@@ -418,7 +457,7 @@ begin
 		variable next_input_exponent : signed(16 downto 0);
 		variable next_x : cordic_value_t;
 		variable next_y : cordic_value_t;
-		variable next_z : cordic_value_t;
+		variable next_z : signed(RESULT_WIDTH - 1 downto 0);
 		variable next_angle : cordic_value_t;
 		variable fractional_log : signed(RESULT_WIDTH - 1 downto 0);
 		variable ln2_sum : unsigned(RESULT_WIDTH - 1 downto 0);
@@ -443,11 +482,17 @@ begin
 		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable atanh_aligned_source : unsigned(CORDIC_WIDTH downto 0);
+		variable atanh_shifted_denominator : unsigned(CORDIC_WIDTH downto 0);
+		variable atanh_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable atanh_next_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable atanh_next_quotient : unsigned(FRACTION_BITS downto 0);
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
 				logarithm_base_latched <= FPU_LOG_BASE_E;
+				inverse_hyperbolic_tangent_latched <= '0';
 				source_sign_latched <= '0';
 				series_source_significand <= (others => '0');
 				series_exponent <= (others => '0');
@@ -470,6 +515,11 @@ begin
 				repeat_iteration <= '0';
 				cordic_shift_angle <= (others => '0');
 				cordic_angle_address <= 1;
+				atanh_numerator <= (others => '0');
+				atanh_denominator <= (others => '0');
+				atanh_quotient <= (others => '0');
+				atanh_exponent <= (others => '0');
+				atanh_iteration <= 0;
 				log_fraction <= (others => '0');
 				ln2_multiplier <= (others => '0');
 				ln2_multiplicand <= (others => '0');
@@ -502,6 +552,8 @@ begin
 							selected_nan := source;
 							selected_nan(62) := '1';
 							logarithm_base_latched <= logarithm_base;
+							inverse_hyperbolic_tangent_latched <=
+								inverse_hyperbolic_tangent;
 							source_sign_latched <= source(79);
 							series_source_significand <= (others => '0');
 							series_exponent <= (others => '0');
@@ -524,6 +576,11 @@ begin
 							repeat_iteration <= '0';
 							cordic_shift_angle <= (others => '0');
 							cordic_angle_address <= 1;
+							atanh_numerator <= (others => '0');
+							atanh_denominator <= (others => '0');
+							atanh_quotient <= (others => '0');
+							atanh_exponent <= (others => '0');
+							atanh_iteration <= 0;
 							log_fraction <= (others => '0');
 							ln2_multiplier <= (others => '0');
 							ln2_multiplicand <= (others => '0');
@@ -558,7 +615,8 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								if add_one = '1' then
+								if add_one = '1' or
+										inverse_hyperbolic_tangent = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 									intermediate_sign <= source(79);
 								else
@@ -568,7 +626,11 @@ begin
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
-								if source(79) = '1' then
+								if inverse_hyperbolic_tangent = '1' then
+									intermediate_class <= FPU_CLASS_QUIET_NAN;
+									intermediate_special <= FPU_RESET_NAN;
+									base_status(5) <= '1';
+								elsif source(79) = '1' then
 									intermediate_class <= FPU_CLASS_QUIET_NAN;
 									intermediate_special <= FPU_RESET_NAN;
 									base_status(5) <= '1';
@@ -583,7 +645,49 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
-								if add_one = '0' and source(79) = '1' then
+								if inverse_hyperbolic_tangent = '1' then
+									if source_exponent >= 0 then
+										if source_exponent = 0 and
+												source_significand = x"8000000000000000" then
+											intermediate_class <= FPU_CLASS_INFINITY;
+											intermediate_sign <= source(79);
+											base_status(2) <= '1';
+										else
+											intermediate_class <= FPU_CLASS_QUIET_NAN;
+											intermediate_special <= FPU_RESET_NAN;
+											base_status(5) <= '1';
+										end if;
+										state <= COMPLETE;
+									elsif source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
+										base_status(1) <= '1';
+										if source_exponent <= ATANH_TINY_MAX_EXPONENT then
+											tiny_significand := shift_left(resize(
+												source_significand, 67), 3) + 1;
+											intermediate_class <= FPU_CLASS_NORMAL;
+											intermediate_sign <= source(79);
+											intermediate_exponent <= to_signed(
+												source_exponent, 17);
+											intermediate_significand <= tiny_significand;
+											state <= COMPLETE;
+										else
+											series_source_significand <= source_significand;
+											series_exponent <= to_signed(source_exponent, 17);
+											series_multiplier <= source_significand;
+											series_multiplicand <= resize(
+												source_significand, 128);
+											series_product <= (others => '0');
+											series_index <= 0;
+											state <= SQUARE_SMALL_ARGUMENT;
+										end if;
+									else
+										base_status(1) <= '1';
+										atanh_aligned_source := shift_left(resize(
+											source_significand, CORDIC_WIDTH + 1), 33);
+										atanh_aligned_source := shift_right(
+											atanh_aligned_source, -source_exponent);
+										begin_atanh_ratio(atanh_aligned_source);
+									end if;
+								elsif add_one = '0' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_QUIET_NAN;
 									intermediate_special <= FPU_RESET_NAN;
 									base_status(5) <= '1';
@@ -733,9 +837,18 @@ begin
 							series_product <= next_square;
 							square_high_register <= next_square(
 								127 downto CUBE_SQUARE_LOW_BIT);
-							correction_shift_count <= 44 -
-								to_integer(series_exponent);
-							state <= ALIGN_SQUARE_TERM;
+							if inverse_hyperbolic_tangent_latched = '1' then
+								series_multiplier <= series_source_significand;
+								series_multiplicand <= resize(next_square(
+									127 downto CUBE_SQUARE_LOW_BIT), 128);
+								cube_accumulator <= (others => '0');
+								series_index <= 0;
+								state <= CUBE_SMALL_ARGUMENT;
+							else
+								correction_shift_count <= 44 -
+									to_integer(series_exponent);
+								state <= ALIGN_SQUARE_TERM;
+							end if;
 						else
 							series_product <= next_square;
 							series_multiplier <= shift_right(series_multiplier, 1);
@@ -824,7 +937,9 @@ begin
 								series_source_significand, SERIES_WIDTH),
 								SERIES_NORMAL_BIT - 63);
 							series_cube_correction := resize(next_cube, SERIES_WIDTH);
-							if source_sign_latched = '0' then
+							if inverse_hyperbolic_tangent_latched = '1' then
+								series_value := series_base + series_cube_correction;
+							elsif source_sign_latched = '0' then
 								series_value := series_base -
 									series_correction_register +
 									series_cube_correction -
@@ -839,6 +954,39 @@ begin
 							complete_small_series(series_value);
 						else
 							cube_shift_count <= cube_shift_count - 1;
+						end if;
+
+					when NORMALIZE_ATANH_RATIO =>
+						atanh_shifted_denominator := shift_left(
+							atanh_denominator, 1);
+						if atanh_shifted_denominator <= atanh_numerator then
+							atanh_denominator <= atanh_shifted_denominator;
+							atanh_exponent <= atanh_exponent + 1;
+						else
+							atanh_numerator <= atanh_numerator - atanh_denominator;
+							atanh_quotient <= (0 => '1', others => '0');
+							atanh_iteration <= 0;
+							state <= DIVIDE_ATANH_RATIO;
+						end if;
+
+					when DIVIDE_ATANH_RATIO =>
+						atanh_shifted_remainder := shift_left(atanh_numerator, 1);
+						atanh_next_quotient := shift_left(atanh_quotient, 1);
+						if atanh_shifted_remainder >= atanh_denominator then
+							atanh_next_remainder := atanh_shifted_remainder -
+								atanh_denominator;
+							atanh_next_quotient(0) := '1';
+						else
+							atanh_next_remainder := atanh_shifted_remainder;
+							atanh_next_quotient(0) := '0';
+						end if;
+						atanh_numerator <= atanh_next_remainder;
+						atanh_quotient <= atanh_next_quotient;
+						if atanh_iteration = FRACTION_BITS - 1 then
+							begin_cordic(resize(atanh_next_quotient, CORDIC_WIDTH),
+								atanh_exponent, FPU_LOG_BASE_E);
+						else
+							atanh_iteration <= atanh_iteration + 1;
 						end if;
 
 					when NORMALIZE_INPUT =>
@@ -865,13 +1013,13 @@ begin
 								cordic_iteration);
 							next_y := cordic_y - shift_right(cordic_x,
 								cordic_iteration);
-							next_z := cordic_z + next_angle;
+							next_z := cordic_z + resize(next_angle, RESULT_WIDTH);
 						else
 							next_x := cordic_x + shift_right(cordic_y,
 								cordic_iteration);
 							next_y := cordic_y + shift_right(cordic_x,
 								cordic_iteration);
-							next_z := cordic_z - next_angle;
+							next_z := cordic_z - resize(next_angle, RESULT_WIDTH);
 						end if;
 						cordic_x <= next_x;
 						cordic_y <= next_y;
@@ -880,8 +1028,7 @@ begin
 								cordic_iteration = 40) and repeat_iteration = '0' then
 							repeat_iteration <= '1';
 						elsif cordic_iteration = FRACTION_BITS then
-							fractional_log := shift_left(resize(next_z,
-								RESULT_WIDTH), 1);
+							fractional_log := shift_left(next_z, 1);
 							begin_log_combine(fractional_log, input_exponent,
 								logarithm_base_latched);
 						else

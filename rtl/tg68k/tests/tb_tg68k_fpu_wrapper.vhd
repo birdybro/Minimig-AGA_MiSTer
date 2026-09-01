@@ -163,6 +163,8 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0483#) := x"0000";
 		result(16#0484#) := x"0000";
 		result(16#0485#) := x"0005";
+		result(16#0C00#) := x"3F00";
+		result(16#0C01#) := x"0000";
 		result(16#0598#) := x"3FC0";
 		result(16#0599#) := x"0000";
 		result(16#059A#) := x"BFC0";
@@ -335,8 +337,16 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08A5#) := x"6580";
 		result(16#08A6#) := x"0000";
 		result(16#08A7#) := x"0B80";
-		result(16#08A8#) := x"4E72";
-		result(16#08A9#) := x"2700";
+		result(16#08A8#) := x"F239";
+		result(16#08A9#) := x"458D";
+		result(16#08AA#) := x"0000";
+		result(16#08AB#) := x"1800";
+		result(16#08AC#) := x"F239";
+		result(16#08AD#) := x"6580";
+		result(16#08AE#) := x"0000";
+		result(16#08AF#) := x"0B84";
+		result(16#08B0#) := x"4E72";
+		result(16#08B1#) := x"2700";
 		return result;
 	end function;
 
@@ -376,6 +386,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal hyperbolic_result_write_count : natural range 0 to 2 := 0;
 	signal hyperbolic_cosine_result_write_count : natural range 0 to 2 := 0;
 	signal hyperbolic_tangent_result_write_count : natural range 0 to 2 := 0;
+	signal inverse_hyperbolic_tangent_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -551,8 +562,12 @@ begin
 					hyperbolic_tangent_result_write_count <=
 						hyperbolic_tangent_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B84" or addr_out = x"00000B86" then
+					inverse_hyperbolic_tangent_result_write_count <=
+						inverse_hyperbolic_tangent_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001152" then
+			if busstate = "00" and addr_out = x"00001162" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -586,6 +601,7 @@ begin
 				hyperbolic_result_write_count = 2 and
 				hyperbolic_cosine_result_write_count = 2 and
 				hyperbolic_tangent_result_write_count = 2 and
+				inverse_hyperbolic_tangent_result_write_count = 2 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -768,6 +784,12 @@ begin
 			report "TG68K FTANH instruction stream mismatch: " &
 				to_hstring(memory(16#05C0#)) &
 				to_hstring(memory(16#05C1#))
+			severity failure;
+		assert inverse_hyperbolic_tangent_result_write_count = 2 and
+			memory(16#05C2#) = x"3F0C" and memory(16#05C3#) = x"9F54"
+			report "TG68K FATANH instruction stream mismatch: " &
+				to_hstring(memory(16#05C2#)) &
+				to_hstring(memory(16#05C3#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

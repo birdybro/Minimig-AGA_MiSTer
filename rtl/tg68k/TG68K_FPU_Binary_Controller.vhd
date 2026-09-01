@@ -132,6 +132,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal hyperbolic_tangent_latched : std_logic := '0';
 	signal logarithm_latched : std_logic := '0';
 	signal logarithm_add_one_latched : std_logic := '0';
+	signal inverse_hyperbolic_tangent_latched : std_logic := '0';
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
 	signal arc_tangent_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
@@ -401,6 +402,8 @@ begin
 			source => source_latched,
 			add_one => logarithm_add_one_latched,
 			logarithm_base => logarithm_base_latched,
+			inverse_hyperbolic_tangent =>
+				inverse_hyperbolic_tangent_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -572,6 +575,7 @@ begin
 				hyperbolic_tangent_latched <= '0';
 				logarithm_latched <= '0';
 				logarithm_add_one_latched <= '0';
+				inverse_hyperbolic_tangent_latched <= '0';
 				logarithm_base_latched <= FPU_LOG_BASE_E;
 				arc_tangent_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
@@ -701,7 +705,8 @@ begin
 							if operation = FPU_OP_LOGNP1 or
 									operation = FPU_OP_LOGN or
 									operation = FPU_OP_LOG10 or
-									operation = FPU_OP_LOG2 then
+									operation = FPU_OP_LOG2 or
+									operation = FPU_OP_ATANH then
 								logarithm_latched <= '1';
 							else
 								logarithm_latched <= '0';
@@ -710,6 +715,11 @@ begin
 								logarithm_add_one_latched <= '1';
 							else
 								logarithm_add_one_latched <= '0';
+							end if;
+							if operation = FPU_OP_ATANH then
+								inverse_hyperbolic_tangent_latched <= '1';
+							else
+								inverse_hyperbolic_tangent_latched <= '0';
 							end if;
 							if operation = FPU_OP_LOG2 then
 								logarithm_base_latched <= FPU_LOG_BASE_TWO;
