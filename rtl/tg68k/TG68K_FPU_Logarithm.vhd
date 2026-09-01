@@ -43,6 +43,7 @@ architecture rtl of TG68K_FPU_Logarithm is
 	constant FRACTION_BITS : natural := 96;
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant RESULT_WIDTH : natural := FRACTION_BITS + 17;
+	constant ARITHMETIC_WIDTH : natural := 128;
 	constant RESULT_NORMAL_BIT : natural := RESULT_WIDTH - 2;
 	constant SERIES_WIDTH : natural := 85;
 	constant SERIES_NORMAL_BIT : natural := 83;
@@ -56,8 +57,10 @@ architecture rtl of TG68K_FPU_Logarithm is
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_ATANH_RATIO, DIVIDE_ATANH_RATIO,
-			NORMALIZE_INPUT, LOAD_CORDIC_ANGLE, CORDIC, MULTIPLY_LN2,
-			SCALE_LOGARITHM_BASE, NORMALIZE_RESULT, WRITE_PENDING_RESULT,
+			NORMALIZE_INPUT, START_CORDIC, LOAD_CORDIC_ANGLE, ROTATE_CORDIC_XY,
+			ROTATE_CORDIC_Z,
+			FINISH_CORDIC, MULTIPLY_LN2, SCALE_LOGARITHM_BASE,
+			LOAD_FIXED_RESULT, NORMALIZE_RESULT, FORMAT_SMALL_SERIES_RESULT,
 			COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
@@ -154,6 +157,10 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
 	signal cordic_angle_address : natural range 1 to 31 := 1;
+	signal cordic_z_previous : signed(RESULT_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal cordic_angle_previous : cordic_value_t := (others => '0');
+	signal cordic_direction_previous : std_logic := '0';
 	signal atanh_numerator : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
 	signal atanh_denominator : unsigned(CORDIC_WIDTH downto 0) :=
@@ -183,9 +190,18 @@ architecture rtl of TG68K_FPU_Logarithm is
 		(others => '0');
 	signal normalization_exponent : signed(16 downto 0) :=
 		(others => '0');
-	signal pending_sign : std_logic := '0';
-	signal pending_exponent : signed(16 downto 0) := (others => '0');
-	signal pending_significand : fpu_significand_grs_t := (others => '0');
+	signal series_result_register : unsigned(SERIES_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal series_result_exponent : signed(16 downto 0) := (others => '0');
+
+	signal arithmetic_left_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_left_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_subtract_a : std_logic;
+	signal arithmetic_subtract_b : std_logic;
+	signal arithmetic_result_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_result_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -207,6 +223,105 @@ begin
 	round_input.significand <= intermediate_significand;
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
+
+	arithmetic_operands : process(state, series_product, series_multiplier,
+		series_multiplicand, cube_accumulator, atanh_numerator,
+		atanh_denominator, cordic_x, cordic_y, cordic_iteration,
+		cordic_z_previous, cordic_angle_previous,
+		cordic_direction_previous, ln2_accumulator, ln2_multiplier,
+		ln2_multiplicand, base_scale_accumulator, base_scale_multiplier,
+		base_scale_index, logarithm_base_latched)
+		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable base_scale_constant : unsigned(RESULT_WIDTH - 1 downto 0);
+	begin
+		arithmetic_left_a <= (others => '0');
+		arithmetic_right_a <= (others => '0');
+		arithmetic_left_b <= (others => '0');
+		arithmetic_right_b <= (others => '0');
+		arithmetic_subtract_a <= '0';
+		arithmetic_subtract_b <= '0';
+		case state is
+			when SQUARE_SMALL_ARGUMENT =>
+				arithmetic_left_a <= resize(series_product, ARITHMETIC_WIDTH);
+				if series_multiplier(0) = '1' then
+					arithmetic_right_a <= resize(series_multiplicand,
+						ARITHMETIC_WIDTH);
+				end if;
+			when CUBE_SMALL_ARGUMENT =>
+				arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
+				if series_multiplier(0) = '1' then
+					arithmetic_right_a <= resize(series_multiplicand(79 downto 0),
+						ARITHMETIC_WIDTH);
+				end if;
+			when NORMALIZE_ATANH_RATIO =>
+				arithmetic_left_a <= resize(atanh_numerator, ARITHMETIC_WIDTH);
+				arithmetic_right_a <= resize(atanh_denominator,
+					ARITHMETIC_WIDTH);
+				arithmetic_subtract_a <= '1';
+			when DIVIDE_ATANH_RATIO =>
+				shifted_remainder := shift_left(atanh_numerator, 1);
+				arithmetic_left_a <= resize(shifted_remainder, ARITHMETIC_WIDTH);
+				if shifted_remainder >= atanh_denominator then
+					arithmetic_right_a <= resize(atanh_denominator,
+						ARITHMETIC_WIDTH);
+					arithmetic_subtract_a <= '1';
+				end if;
+			when ROTATE_CORDIC_XY =>
+				arithmetic_left_a <= unsigned(resize(cordic_x,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_a <= unsigned(resize(shift_right(cordic_y,
+					cordic_iteration), ARITHMETIC_WIDTH));
+				arithmetic_left_b <= unsigned(resize(cordic_y,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_b <= unsigned(resize(shift_right(cordic_x,
+					cordic_iteration), ARITHMETIC_WIDTH));
+				if cordic_y >= 0 then
+					arithmetic_subtract_a <= '1';
+					arithmetic_subtract_b <= '1';
+				end if;
+			when ROTATE_CORDIC_Z =>
+				arithmetic_left_a <= unsigned(resize(cordic_z_previous,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_a <= unsigned(resize(cordic_angle_previous,
+					ARITHMETIC_WIDTH));
+				arithmetic_subtract_a <= not cordic_direction_previous;
+			when MULTIPLY_LN2 =>
+				arithmetic_left_a <= resize(ln2_accumulator, ARITHMETIC_WIDTH);
+				if ln2_multiplier(0) = '1' then
+					arithmetic_right_a <= resize(ln2_multiplicand,
+						ARITHMETIC_WIDTH);
+				end if;
+			when SCALE_LOGARITHM_BASE =>
+				arithmetic_left_a <= resize(base_scale_accumulator,
+					ARITHMETIC_WIDTH);
+				if logarithm_base_latched = FPU_LOG_BASE_TWO then
+					base_scale_constant := LOG2_E_FIXED;
+				else
+					base_scale_constant := LOG10_E_FIXED;
+				end if;
+				if base_scale_multiplier(base_scale_index) = '1' then
+					arithmetic_right_a <= resize(base_scale_constant,
+						ARITHMETIC_WIDTH);
+				end if;
+			when others => null;
+		end case;
+	end process;
+
+	arithmetic_add_subtract : process(arithmetic_subtract_a,
+		arithmetic_left_a, arithmetic_right_a, arithmetic_subtract_b,
+		arithmetic_left_b, arithmetic_right_b)
+	begin
+		if arithmetic_subtract_a = '1' then
+			arithmetic_result_a <= arithmetic_left_a - arithmetic_right_a;
+		else
+			arithmetic_result_a <= arithmetic_left_a + arithmetic_right_a;
+		end if;
+		if arithmetic_subtract_b = '1' then
+			arithmetic_result_b <= arithmetic_left_b - arithmetic_right_b;
+		else
+			arithmetic_result_b <= arithmetic_left_b + arithmetic_right_b;
+		end if;
+	end process;
 
 	angle_rom_read : process(clk)
 	begin
@@ -256,38 +371,9 @@ begin
 	logarithm_sequence : process(clk)
 		procedure begin_fixed_result(constant fixed_value : in signed(
 				RESULT_WIDTH - 1 downto 0)) is
-			variable magnitude : unsigned(RESULT_WIDTH - 1 downto 0);
-			variable result_exponent : integer;
 		begin
-			result_exponent := RESULT_NORMAL_BIT - FRACTION_BITS;
-			if inverse_hyperbolic_tangent_latched = '1' then
-				result_exponent := result_exponent - 1;
-			end if;
-			if fixed_value = 0 then
-				intermediate_class <= FPU_CLASS_ZERO;
-				if inverse_hyperbolic_tangent_latched = '1' then
-					intermediate_sign <= source_sign_latched;
-				else
-					intermediate_sign <= '0';
-				end if;
-				state <= COMPLETE;
-			elsif fixed_value < 0 then
-				magnitude := unsigned(-fixed_value);
-				intermediate_sign <= '1';
-				normalization_value <= magnitude;
-				normalization_exponent <= to_signed(result_exponent, 17);
-				state <= NORMALIZE_RESULT;
-			else
-				magnitude := unsigned(fixed_value);
-				if inverse_hyperbolic_tangent_latched = '1' then
-					intermediate_sign <= source_sign_latched;
-				else
-					intermediate_sign <= '0';
-				end if;
-				normalization_value <= magnitude;
-				normalization_exponent <= to_signed(result_exponent, 17);
-				state <= NORMALIZE_RESULT;
-			end if;
+			log_fraction <= fixed_value;
+			state <= LOAD_FIXED_RESULT;
 		end procedure;
 
 		procedure begin_base_ten_scale(constant natural_log : in signed(
@@ -358,23 +444,11 @@ begin
 				constant mantissa_value : in unsigned(CORDIC_WIDTH - 1 downto 0);
 				constant exponent_value : in signed(16 downto 0);
 				constant base_value : in fpu_logarithm_base_t) is
-			variable unit_value : unsigned(CORDIC_WIDTH - 1 downto 0);
 		begin
-			unit_value := (others => '0');
-			unit_value(FRACTION_BITS) := '1';
+			input_mantissa <= mantissa_value;
 			input_exponent <= exponent_value;
-			if mantissa_value = unit_value then
-				begin_log_combine(to_signed(0, RESULT_WIDTH), exponent_value,
-					base_value);
-			else
-				cordic_x <= signed(mantissa_value + unit_value);
-				cordic_y <= signed(mantissa_value - unit_value);
-				cordic_z <= (others => '0');
-				cordic_iteration <= 1;
-				repeat_iteration <= '0';
-				cordic_angle_address <= 1;
-				state <= LOAD_CORDIC_ANGLE;
-			end if;
+			logarithm_base_latched <= base_value;
+			state <= START_CORDIC;
 		end procedure;
 
 		procedure begin_atanh_ratio(
@@ -396,35 +470,10 @@ begin
 		procedure write_small_series_result(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0);
 				constant result_exponent : in signed(16 downto 0)) is
-			variable final_significand : fpu_significand_grs_t;
 		begin
-			final_significand := (others => '0');
-			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
-				final_significand(66 downto 1) := series_result(
-					SERIES_NORMAL_BIT + 1 downto SERIES_NORMAL_BIT - 64);
-			elsif series_result(SERIES_NORMAL_BIT) = '1' then
-				final_significand(66 downto 1) := series_result(
-					SERIES_NORMAL_BIT downto SERIES_NORMAL_BIT - 65);
-			elsif series_result(SERIES_NORMAL_BIT - 1) = '1' then
-				final_significand(66 downto 1) := series_result(
-					SERIES_NORMAL_BIT - 1 downto SERIES_NORMAL_BIT - 66);
-			else
-				final_significand(66 downto 1) := series_result(
-					SERIES_NORMAL_BIT - 2 downto SERIES_NORMAL_BIT - 67);
-			end if;
-			final_significand(0) := '1';
-			pending_sign <= source_sign_latched;
-			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
-				pending_exponent <= result_exponent + 1;
-			elsif series_result(SERIES_NORMAL_BIT) = '1' then
-				pending_exponent <= result_exponent;
-			elsif series_result(SERIES_NORMAL_BIT - 1) = '1' then
-				pending_exponent <= result_exponent - 1;
-			else
-				pending_exponent <= result_exponent - 2;
-			end if;
-			pending_significand <= final_significand;
-			state <= WRITE_PENDING_RESULT;
+			series_result_register <= series_result;
+			series_result_exponent <= result_exponent;
+			state <= FORMAT_SMALL_SERIES_RESULT;
 		end procedure;
 
 		procedure complete_small_series(
@@ -455,16 +504,10 @@ begin
 		variable selected_nan : fpu_extended_t;
 		variable next_input : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable next_input_exponent : signed(16 downto 0);
-		variable next_x : cordic_value_t;
-		variable next_y : cordic_value_t;
-		variable next_z : signed(RESULT_WIDTH - 1 downto 0);
 		variable next_angle : cordic_value_t;
 		variable fractional_log : signed(RESULT_WIDTH - 1 downto 0);
-		variable ln2_sum : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable next_ln2 : unsigned(RESULT_WIDTH - 1 downto 0);
-		variable base_scale_sum : unsigned(RESULT_WIDTH downto 0);
 		variable next_base_scale : unsigned(RESULT_WIDTH downto 0);
-		variable base_scale_constant : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable scaled_series : unsigned(SERIES_WIDTH downto 0);
 		variable scaled_series_result : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable combined_log : signed(RESULT_WIDTH - 1 downto 0);
@@ -472,9 +515,7 @@ begin
 		variable next_normalization_exponent : signed(16 downto 0);
 		variable final_significand : fpu_significand_grs_t;
 		variable tiny_significand : fpu_significand_grs_t;
-		variable square_sum : unsigned(127 downto 0);
 		variable next_square : unsigned(127 downto 0);
-		variable cube_sum : unsigned(79 downto 0);
 		variable next_cube : unsigned(79 downto 0);
 		variable next_cube_quotient : unsigned(79 downto 0);
 		variable division_trial : natural range 0 to 5;
@@ -487,6 +528,9 @@ begin
 		variable atanh_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_next_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_next_quotient : unsigned(FRACTION_BITS downto 0);
+		variable fixed_magnitude : unsigned(RESULT_WIDTH - 1 downto 0);
+		variable fixed_result_exponent : integer;
+		variable formatted_significand : fpu_significand_grs_t;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -515,6 +559,9 @@ begin
 				repeat_iteration <= '0';
 				cordic_shift_angle <= (others => '0');
 				cordic_angle_address <= 1;
+				cordic_z_previous <= (others => '0');
+				cordic_angle_previous <= (others => '0');
+				cordic_direction_previous <= '0';
 				atanh_numerator <= (others => '0');
 				atanh_denominator <= (others => '0');
 				atanh_quotient <= (others => '0');
@@ -533,9 +580,8 @@ begin
 				base_scale_sign <= '0';
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
-				pending_sign <= '0';
-				pending_exponent <= (others => '0');
-				pending_significand <= (others => '0');
+				series_result_register <= (others => '0');
+				series_result_exponent <= (others => '0');
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -576,6 +622,9 @@ begin
 							repeat_iteration <= '0';
 							cordic_shift_angle <= (others => '0');
 							cordic_angle_address <= 1;
+							cordic_z_previous <= (others => '0');
+							cordic_angle_previous <= (others => '0');
+							cordic_direction_previous <= '0';
 							atanh_numerator <= (others => '0');
 							atanh_denominator <= (others => '0');
 							atanh_quotient <= (others => '0');
@@ -594,9 +643,8 @@ begin
 							base_scale_sign <= '0';
 							normalization_value <= (others => '0');
 							normalization_exponent <= (others => '0');
-							pending_sign <= '0';
-							pending_exponent <= (others => '0');
-							pending_significand <= (others => '0');
+							series_result_register <= (others => '0');
+							series_result_exponent <= (others => '0');
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= '0';
 							intermediate_exponent <= (others => '0');
@@ -828,11 +876,7 @@ begin
 						end if;
 
 					when SQUARE_SMALL_ARGUMENT =>
-						square_sum := series_product;
-						if series_multiplier(0) = '1' then
-							square_sum := square_sum + series_multiplicand;
-						end if;
-						next_square := square_sum;
+						next_square := arithmetic_result_a(127 downto 0);
 						if series_index = 63 then
 							series_product <= next_square;
 							square_high_register <= next_square(
@@ -888,11 +932,7 @@ begin
 						end if;
 
 					when CUBE_SMALL_ARGUMENT =>
-						cube_sum := cube_accumulator;
-						if series_multiplier(0) = '1' then
-							cube_sum := cube_sum + series_multiplicand(79 downto 0);
-						end if;
-						next_cube := cube_sum;
+						next_cube := arithmetic_result_a(79 downto 0);
 						if series_index = 63 then
 							series_multiplicand <= resize(next_cube, 128);
 							cube_accumulator <= (others => '0');
@@ -963,7 +1003,8 @@ begin
 							atanh_denominator <= atanh_shifted_denominator;
 							atanh_exponent <= atanh_exponent + 1;
 						else
-							atanh_numerator <= atanh_numerator - atanh_denominator;
+							atanh_numerator <= arithmetic_result_a(
+								CORDIC_WIDTH downto 0);
 							atanh_quotient <= (0 => '1', others => '0');
 							atanh_iteration <= 0;
 							state <= DIVIDE_ATANH_RATIO;
@@ -971,13 +1012,12 @@ begin
 
 					when DIVIDE_ATANH_RATIO =>
 						atanh_shifted_remainder := shift_left(atanh_numerator, 1);
+						atanh_next_remainder := arithmetic_result_a(
+							CORDIC_WIDTH downto 0);
 						atanh_next_quotient := shift_left(atanh_quotient, 1);
 						if atanh_shifted_remainder >= atanh_denominator then
-							atanh_next_remainder := atanh_shifted_remainder -
-								atanh_denominator;
 							atanh_next_quotient(0) := '1';
 						else
-							atanh_next_remainder := atanh_shifted_remainder;
 							atanh_next_quotient(0) := '0';
 						end if;
 						atanh_numerator <= atanh_next_remainder;
@@ -999,60 +1039,81 @@ begin
 								logarithm_base_latched);
 						end if;
 
-					when LOAD_CORDIC_ANGLE =>
-						state <= CORDIC;
+					when START_CORDIC =>
+						aligned_unit := (others => '0');
+						aligned_unit(FRACTION_BITS) := '1';
+						if input_mantissa = aligned_unit then
+							begin_log_combine(to_signed(0, RESULT_WIDTH),
+								input_exponent, logarithm_base_latched);
+						else
+							cordic_x <= signed(input_mantissa + aligned_unit);
+							cordic_y <= signed(input_mantissa - aligned_unit);
+							cordic_z <= (others => '0');
+							cordic_iteration <= 1;
+							repeat_iteration <= '0';
+							cordic_angle_address <= 1;
+							state <= LOAD_CORDIC_ANGLE;
+						end if;
 
-					when CORDIC =>
+					when LOAD_CORDIC_ANGLE =>
+						state <= ROTATE_CORDIC_XY;
+
+					when ROTATE_CORDIC_XY =>
 						if cordic_iteration <= 31 then
 							next_angle := cordic_angle_rom_data;
 						else
 							next_angle := cordic_shift_angle;
 						end if;
+						cordic_z_previous <= cordic_z;
+						cordic_angle_previous <= next_angle;
 						if cordic_y >= 0 then
-							next_x := cordic_x - shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y - shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z + resize(next_angle, RESULT_WIDTH);
+							cordic_direction_previous <= '1';
 						else
-							next_x := cordic_x + shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y + shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z - resize(next_angle, RESULT_WIDTH);
+							cordic_direction_previous <= '0';
 						end if;
-						cordic_x <= next_x;
-						cordic_y <= next_y;
-						cordic_z <= next_z;
-						if (cordic_iteration = 4 or cordic_iteration = 13 or
-								cordic_iteration = 40) and repeat_iteration = '0' then
-							repeat_iteration <= '1';
-						elsif cordic_iteration = FRACTION_BITS then
-							fractional_log := shift_left(next_z, 1);
-							begin_log_combine(fractional_log, input_exponent,
-								logarithm_base_latched);
-						else
-							repeat_iteration <= '0';
-							cordic_iteration <= cordic_iteration + 1;
+						cordic_x <= signed(arithmetic_result_a(
+							CORDIC_WIDTH - 1 downto 0));
+						cordic_y <= signed(arithmetic_result_b(
+							CORDIC_WIDTH - 1 downto 0));
+						if not ((cordic_iteration = 4 or
+								cordic_iteration = 13 or cordic_iteration = 40) and
+								repeat_iteration = '0') then
 							if cordic_iteration < 31 then
 								cordic_angle_address <= cordic_iteration + 1;
-								state <= LOAD_CORDIC_ANGLE;
 							elsif cordic_iteration = 31 then
 								next_angle := (others => '0');
 								next_angle(FRACTION_BITS - 32) := '1';
 								cordic_shift_angle <= next_angle;
-							else
+							elsif cordic_iteration < FRACTION_BITS then
 								cordic_shift_angle <= shift_right(
 									cordic_shift_angle, 1);
 							end if;
 						end if;
+						state <= ROTATE_CORDIC_Z;
+
+					when ROTATE_CORDIC_Z =>
+						cordic_z <= signed(arithmetic_result_a(
+							RESULT_WIDTH - 1 downto 0));
+						if (cordic_iteration = 4 or cordic_iteration = 13 or
+								cordic_iteration = 40) and repeat_iteration = '0' then
+							repeat_iteration <= '1';
+							state <= ROTATE_CORDIC_XY;
+						elsif cordic_iteration = FRACTION_BITS then
+							state <= FINISH_CORDIC;
+						else
+							repeat_iteration <= '0';
+							cordic_iteration <= cordic_iteration + 1;
+							state <= ROTATE_CORDIC_XY;
+						end if;
+
+					when FINISH_CORDIC =>
+						fractional_log := shift_left(cordic_z, 1);
+						begin_log_combine(fractional_log, input_exponent,
+							logarithm_base_latched);
 
 					when MULTIPLY_LN2 =>
-						ln2_sum := ln2_accumulator;
-						if ln2_multiplier(0) = '1' then
-							ln2_sum := ln2_sum + ln2_multiplicand;
-						end if;
-						next_ln2 := ln2_sum;
+						next_ln2 := arithmetic_result_a(
+							RESULT_WIDTH - 1 downto 0);
 						if ln2_index = 14 then
 							if input_exponent < 0 then
 								combined_log := log_fraction - signed(next_ln2);
@@ -1072,17 +1133,8 @@ begin
 						end if;
 
 					when SCALE_LOGARITHM_BASE =>
-						base_scale_sum := base_scale_accumulator;
-						if logarithm_base_latched = FPU_LOG_BASE_TWO then
-							base_scale_constant := LOG2_E_FIXED;
-						else
-							base_scale_constant := LOG10_E_FIXED;
-						end if;
-						if base_scale_multiplier(base_scale_index) = '1' then
-							base_scale_sum := base_scale_sum + resize(
-								base_scale_constant, RESULT_WIDTH + 1);
-						end if;
-						next_base_scale := shift_right(base_scale_sum, 1);
+						next_base_scale := shift_right(arithmetic_result_a(
+							RESULT_WIDTH downto 0), 1);
 						base_scale_accumulator <= next_base_scale;
 						if base_scale_index = RESULT_WIDTH - 1 then
 							if scaling_series = '1' then
@@ -1118,6 +1170,39 @@ begin
 							base_scale_index <= base_scale_index + 1;
 						end if;
 
+					when LOAD_FIXED_RESULT =>
+						fixed_result_exponent := RESULT_NORMAL_BIT - FRACTION_BITS;
+						if inverse_hyperbolic_tangent_latched = '1' then
+							fixed_result_exponent := fixed_result_exponent - 1;
+						end if;
+						if log_fraction = 0 then
+							intermediate_class <= FPU_CLASS_ZERO;
+							if inverse_hyperbolic_tangent_latched = '1' then
+								intermediate_sign <= source_sign_latched;
+							else
+								intermediate_sign <= '0';
+							end if;
+							state <= COMPLETE;
+						elsif log_fraction < 0 then
+							fixed_magnitude := unsigned(-log_fraction);
+							intermediate_sign <= '1';
+							normalization_value <= fixed_magnitude;
+							normalization_exponent <= to_signed(
+								fixed_result_exponent, 17);
+							state <= NORMALIZE_RESULT;
+						else
+							fixed_magnitude := unsigned(log_fraction);
+							if inverse_hyperbolic_tangent_latched = '1' then
+								intermediate_sign <= source_sign_latched;
+							else
+								intermediate_sign <= '0';
+							end if;
+							normalization_value <= fixed_magnitude;
+							normalization_exponent <= to_signed(
+								fixed_result_exponent, 17);
+							state <= NORMALIZE_RESULT;
+						end if;
+
 					when NORMALIZE_RESULT =>
 						if normalization_value(RESULT_NORMAL_BIT) = '1' then
 							final_significand := (others => '0');
@@ -1141,11 +1226,33 @@ begin
 							normalization_exponent <= next_normalization_exponent;
 						end if;
 
-					when WRITE_PENDING_RESULT =>
+					when FORMAT_SMALL_SERIES_RESULT =>
+						formatted_significand := (others => '0');
+						if series_result_register(SERIES_NORMAL_BIT + 1) = '1' then
+							formatted_significand(66 downto 1) :=
+								series_result_register(SERIES_NORMAL_BIT + 1 downto
+									SERIES_NORMAL_BIT - 64);
+							intermediate_exponent <= series_result_exponent + 1;
+						elsif series_result_register(SERIES_NORMAL_BIT) = '1' then
+							formatted_significand(66 downto 1) :=
+								series_result_register(SERIES_NORMAL_BIT downto
+									SERIES_NORMAL_BIT - 65);
+							intermediate_exponent <= series_result_exponent;
+						elsif series_result_register(SERIES_NORMAL_BIT - 1) = '1' then
+							formatted_significand(66 downto 1) :=
+								series_result_register(SERIES_NORMAL_BIT - 1 downto
+									SERIES_NORMAL_BIT - 66);
+							intermediate_exponent <= series_result_exponent - 1;
+						else
+							formatted_significand(66 downto 1) :=
+								series_result_register(SERIES_NORMAL_BIT - 2 downto
+									SERIES_NORMAL_BIT - 67);
+							intermediate_exponent <= series_result_exponent - 2;
+						end if;
+						formatted_significand(0) := '1';
 						intermediate_class <= FPU_CLASS_NORMAL;
-						intermediate_sign <= pending_sign;
-						intermediate_exponent <= pending_exponent;
-						intermediate_significand <= pending_significand;
+						intermediate_sign <= source_sign_latched;
+						intermediate_significand <= formatted_significand;
 						state <= COMPLETE;
 
 					when COMPLETE => state <= IDLE;

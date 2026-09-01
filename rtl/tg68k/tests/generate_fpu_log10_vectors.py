@@ -131,7 +131,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 500
+                assert cycles < 580
                     report "differential FLOG10 timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
