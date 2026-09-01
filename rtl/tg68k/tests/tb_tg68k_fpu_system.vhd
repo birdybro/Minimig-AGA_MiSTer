@@ -106,6 +106,13 @@ begin
 			when x"00006004" => memory_read_data <= x"A000";
 			when x"00006006" | x"00006008" => memory_read_data <= x"0000";
 			when x"0000600A" => memory_read_data <= x"0005";
+			when x"00009000" => memory_read_data <= x"BFC0";
+			when x"00009002" => memory_read_data <= x"0000";
+			when x"0000A000" => memory_read_data <= x"7FFF";
+			when x"0000A002" => memory_read_data <= x"0000";
+			when x"0000A004" => memory_read_data <= x"8000";
+			when x"0000A006" | x"0000A008" => memory_read_data <= x"0000";
+			when x"0000A00A" => memory_read_data <= x"0123";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -493,6 +500,99 @@ begin
 			report "address-register-to-FPIAR system mismatch" severity failure;
 
 		clear_observations;
+		start_instruction(x"F200", x"171A", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(6) = x"C005A000000000000005" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"00"
+			report "register FNEG system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"1B98", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(7) = x"4005A000000000000005" and
+			fpsr(31 downto 28) = "0000"
+			report "register FABS system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"183A", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(6) = x"C005A000000000000005" and
+			fpsr(31 downto 28) = "1000"
+			report "register FTST changed its source or condition result"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4518", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(2) = x"3FFFC000000000000000" and
+			fpsr(31 downto 28) = "0000"
+			report "memory single FABS system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009000";
+		start_instruction(x"F219", x"4598", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"00009004" and
+			fp_registers(3) = x"3FFFC000000000000000"
+			report "postincrement FABS effective-address mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00009004";
+		start_instruction(x"F221", x"4498", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"00009000" and
+			fp_registers(1) = x"3FFFC000000000000000"
+			report "predecrement FABS effective-address mismatch"
+			severity failure;
+
+		clear_observations;
+		integer_register_data <= x"00004000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fpcr = x"00004000"
+			report "signaling-NaN exception enable setup mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"0000A000";
+		start_instruction(x"F210", x"4818", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_SNAN and
+			trace_count = 6 and fp_registers(0) = x"40019000000000000000" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"40" and
+			fpiar = x"00000400"
+			report "enabled signaling-NaN FABS exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		assert instruction_done = '0' and instruction_busy = '0' and
+			floating_point_exception = '0'
+			report "signaling-NaN operation did not retire cleanly"
+			severity failure;
+
+		clear_observations;
 		start_instruction(x"F210", x"4C00", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1' and
 			memory_request = '0'
@@ -522,7 +622,7 @@ begin
 			floating_point_exception_class = FPU_EXCEPTION_NONE
 			report "unexpected FPU system exception" severity failure;
 
-		report "PASS: MC68882 FMOVE decode, state, and transfer integration"
+		report "PASS: MC68882 move and unary-operation integration"
 			severity note;
 		stop;
 	end process;

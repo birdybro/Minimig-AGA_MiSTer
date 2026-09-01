@@ -132,6 +132,7 @@ architecture rtl of TG68K_FPU_System is
 	signal move_implemented : std_logic;
 	signal control_implemented : std_logic;
 	signal movem_implemented : std_logic;
+	signal unary_implemented : std_logic;
 	signal operation_implemented : std_logic;
 	signal operation_busy : std_logic;
 	signal operation_done : std_logic;
@@ -208,6 +209,26 @@ architecture rtl of TG68K_FPU_System is
 	signal movem_memory_write_data : std_logic_vector(15 downto 0);
 	signal movem_memory_fc : std_logic_vector(2 downto 0);
 
+	signal unary_start : std_logic;
+	signal unary_external_source : std_logic;
+	signal unary_external_data_register : std_logic;
+	signal unary_fp_write : std_logic;
+	signal unary_fp_write_data : fpu_extended_t;
+	signal unary_status_write : std_logic;
+	signal unary_condition_codes_write : std_logic;
+	signal unary_condition_codes : std_logic_vector(3 downto 0);
+	signal unary_exception_status : std_logic_vector(7 downto 0);
+	signal unary_busy : std_logic;
+	signal unary_done : std_logic;
+	signal unary_bus_error : std_logic;
+	signal unary_memory_request : std_logic;
+	signal unary_memory_write : std_logic;
+	signal unary_memory_address : std_logic_vector(31 downto 0);
+	signal unary_memory_write_data : std_logic_vector(15 downto 0);
+	signal unary_memory_nuds : std_logic;
+	signal unary_memory_nlds : std_logic;
+	signal unary_memory_fc : std_logic_vector(2 downto 0);
+
 	signal effective_address_latched : std_logic_vector(31 downto 0) :=
 		(others => '0');
 	signal address_mode_latched : std_logic_vector(2 downto 0) := "000";
@@ -225,6 +246,10 @@ architecture rtl of TG68K_FPU_System is
 	signal state_control_write_data : std_logic_vector(31 downto 0);
 	signal state_fp_write : std_logic;
 	signal state_fp_write_data : fpu_extended_t;
+	signal state_status_write : std_logic;
+	signal state_condition_codes_write : std_logic;
+	signal state_condition_codes : std_logic_vector(3 downto 0);
+	signal state_exception_status : std_logic_vector(7 downto 0);
 begin
 	decoder : entity work.TG68K_FPU_Decoder
 		port map(
@@ -261,10 +286,17 @@ begin
 	movem_implemented <= '1' when
 		decoded_family = FPU_FAMILY_MOVEM_TO_FP or
 		decoded_family = FPU_FAMILY_MOVEM_FROM_FP else '0';
+	unary_implemented <= '1' when
+		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
+		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION) and
+		(decoded_operation = FPU_OP_ABS or decoded_operation = FPU_OP_NEG or
+		decoded_operation = FPU_OP_TST) and
+		decoded_format /= FPU_FORMAT_PACKED and
+		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED else '0';
 	operation_implemented <= move_implemented or control_implemented or
-		movem_implemented;
-	operation_busy <= move_busy or control_busy or movem_busy;
-	operation_done <= move_done or control_done or movem_done;
+		movem_implemented or unary_implemented;
+	operation_busy <= move_busy or control_busy or movem_busy or unary_busy;
+	operation_done <= move_done or control_done or movem_done or unary_done;
 	subsystem_reset <= nReset and not null_restore;
 
 	move_start <= instruction_start and decoded_match and decoded_valid and
@@ -273,6 +305,12 @@ begin
 		control_implemented and not operation_busy;
 	movem_start <= instruction_start and decoded_match and decoded_valid and
 		movem_implemented and not operation_busy;
+	unary_start <= instruction_start and decoded_match and decoded_valid and
+		unary_implemented and not operation_busy;
+	unary_external_source <= '1' when
+		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION else '0';
+	unary_external_data_register <= '1' when
+		opcode(5 downto 3) = "000" else '0';
 	movem_memory_to_register <= '1' when
 		decoded_family = FPU_FAMILY_MOVEM_TO_FP else '0';
 	movem_predecrement <= '1' when opcode(5 downto 3) = "100" else '0';
@@ -292,10 +330,13 @@ begin
 		decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL else
 		decoded_source_register;
 	fp_data_select <= movem_fp_select when movem_busy = '1' else
+		decoded_source_register when unary_start = '1' else
 		move_source_select when move_start = '1' else
+		destination_select_latched when unary_fp_write = '1' else
 		destination_select_latched when move_fp_write = '1' else
 		source_select_latched;
-	fpiar_write <= move_start when fpcr(15 downto 8) /= x"00" else '0';
+	fpiar_write <= move_start or unary_start when
+		fpcr(15 downto 8) /= x"00" else '0';
 
 	movem_register_mask <= integer_register_data(7 downto 0) when
 		command_word(11) = '1' else decoded_register_list;
@@ -334,26 +375,34 @@ begin
 	instruction_done <= operation_done or unsupported_done;
 	fline_exception <= decoded_fline;
 	unimplemented_exception <= unsupported_exception;
-	bus_error_exception <= move_bus_error or control_bus_error or movem_bus_error;
+	bus_error_exception <= move_bus_error or control_bus_error or
+		movem_bus_error or unary_bus_error;
 	fpcr_out <= fpcr;
 
-	memory_request <= movem_memory_request when movem_busy = '1' else
+	memory_request <= unary_memory_request when unary_busy = '1' else
+		movem_memory_request when movem_busy = '1' else
 		control_memory_request when control_busy = '1' else
 		move_memory_request;
-	memory_write <= movem_memory_write when movem_busy = '1' else
+	memory_write <= unary_memory_write when unary_busy = '1' else
+		movem_memory_write when movem_busy = '1' else
 		control_memory_write when control_busy = '1' else
 		move_memory_write;
-	memory_address <= movem_memory_address when movem_busy = '1' else
+	memory_address <= unary_memory_address when unary_busy = '1' else
+		movem_memory_address when movem_busy = '1' else
 		control_memory_address when control_busy = '1' else
 		move_memory_address;
-	memory_write_data <= movem_memory_write_data when movem_busy = '1' else
+	memory_write_data <= unary_memory_write_data when unary_busy = '1' else
+		movem_memory_write_data when movem_busy = '1' else
 		control_memory_write_data when control_busy = '1' else
 		move_memory_write_data;
-	memory_nuds <= '0' when movem_busy = '1' or control_busy = '1' else
+	memory_nuds <= unary_memory_nuds when unary_busy = '1' else
+		'0' when movem_busy = '1' or control_busy = '1' else
 		move_memory_nuds;
-	memory_nlds <= '0' when movem_busy = '1' or control_busy = '1' else
+	memory_nlds <= unary_memory_nlds when unary_busy = '1' else
+		'0' when movem_busy = '1' or control_busy = '1' else
 		move_memory_nlds;
-	memory_function_code <= movem_memory_fc when movem_busy = '1' else
+	memory_function_code <= unary_memory_fc when unary_busy = '1' else
+		movem_memory_fc when movem_busy = '1' else
 		control_memory_fc when control_busy = '1' else
 		move_memory_fc;
 
@@ -376,9 +425,17 @@ begin
 	state_control_write <= fpiar_write or control_register_write;
 	state_control_write_data <= instruction_address when fpiar_write = '1' else
 		control_register_write_data;
-	state_fp_write <= move_fp_write or movem_fp_write;
-	state_fp_write_data <= movem_fp_write_data when movem_fp_write = '1' else
+	state_fp_write <= move_fp_write or movem_fp_write or unary_fp_write;
+	state_fp_write_data <= unary_fp_write_data when unary_fp_write = '1' else
+		movem_fp_write_data when movem_fp_write = '1' else
 		move_fp_write_data;
+	state_status_write <= move_status_write or unary_status_write;
+	state_condition_codes_write <= unary_condition_codes_write when
+		unary_status_write = '1' else move_condition_codes_write;
+	state_condition_codes <= unary_condition_codes when
+		unary_status_write = '1' else move_condition_codes;
+	state_exception_status <= unary_exception_status when
+		unary_status_write = '1' else move_exception_status;
 
 	dispatch_state : process(clk)
 	begin
@@ -515,6 +572,42 @@ begin
 			bus_error_exception => movem_bus_error
 		);
 
+	unary_controller : entity work.TG68K_FPU_Unary_Controller
+		port map(
+			clk => clk,
+			nReset => subsystem_reset,
+			start => unary_start,
+			operation => decoded_operation,
+			external_source => unary_external_source,
+			operand_format => decoded_format,
+			external_data_register => unary_external_data_register,
+			effective_address => operation_effective_address,
+			function_code => function_code,
+			integer_register_data => integer_register_data,
+			fp_register_data => fp_data_read,
+			exception_enable => fpcr(15 downto 8),
+			memory_ready => memory_ready,
+			memory_error => memory_error,
+			retry => retry,
+			memory_read_data => memory_read_data,
+			memory_request => unary_memory_request,
+			memory_write => unary_memory_write,
+			memory_address => unary_memory_address,
+			memory_write_data => unary_memory_write_data,
+			memory_nuds => unary_memory_nuds,
+			memory_nlds => unary_memory_nlds,
+			memory_function_code => unary_memory_fc,
+			fp_register_write => unary_fp_write,
+			fp_register_write_data => unary_fp_write_data,
+			operation_status_write => unary_status_write,
+			condition_codes_write => unary_condition_codes_write,
+			operation_condition_codes => unary_condition_codes,
+			operation_exception_status => unary_exception_status,
+			busy => unary_busy,
+			done => unary_done,
+			bus_error_exception => unary_bus_error
+		);
+
 	state : entity work.TG68K_FPU
 		port map(
 			clk => clk,
@@ -528,12 +621,12 @@ begin
 			control_register_write => state_control_write,
 			control_register_write_data => state_control_write_data,
 			control_register_read_data => control_register_read_data,
-			operation_status_write => move_status_write,
-			condition_codes_write => move_condition_codes_write,
-			operation_condition_codes => move_condition_codes,
+			operation_status_write => state_status_write,
+			condition_codes_write => state_condition_codes_write,
+			operation_condition_codes => state_condition_codes,
 			quotient_write => '0',
 			operation_quotient => (others => '0'),
-			operation_exception_status => move_exception_status,
+			operation_exception_status => state_exception_status,
 			fp_registers_out => fp_registers_out,
 			fpcr_out => fpcr,
 			fpsr_out => fpsr_out,

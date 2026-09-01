@@ -106,8 +106,18 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#00D4#) := x"0A00";
 		result(16#00D5#) := x"F216";
 		result(16#00D6#) := x"F850";
-		result(16#00D7#) := x"4E72";
-		result(16#00D8#) := x"2700";
+		result(16#00D7#) := x"F200";
+		result(16#00D8#) := x"171A";
+		result(16#00D9#) := x"F200";
+		result(16#00DA#) := x"1B98";
+		result(16#00DB#) := x"F200";
+		result(16#00DC#) := x"183A";
+		result(16#00DD#) := x"F239";
+		result(16#00DE#) := x"6780";
+		result(16#00DF#) := x"0000";
+		result(16#00E0#) := x"0B00";
+		result(16#00E1#) := x"4E72";
+		result(16#00E2#) := x"2700";
 		result(16#0280#) := x"0000";
 		result(16#0281#) := x"0030";
 		result(16#0282#) := x"A5A5";
@@ -156,6 +166,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal control_address_write_count : natural range 0 to 4 := 0;
 	signal movem_transfer_count : natural range 0 to 48 := 0;
 	signal movem_address_write_count : natural range 0 to 4 := 0;
+	signal unary_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -265,8 +276,11 @@ begin
 						addr_out = x"0000021C" or addr_out = x"0000021E" then
 					movem_address_write_count <= movem_address_write_count + 1;
 				end if;
+				if addr_out = x"00000B00" or addr_out = x"00000B02" then
+					unary_result_write_count <= unary_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000001AE" then
+			if busstate = "00" and addr_out = x"000001C2" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -284,7 +298,8 @@ begin
 				control_result_write_count = 2 and
 				control_address_write_count = 4 and
 				movem_transfer_count = 48 and
-				movem_address_write_count = 4 and post_fpu_fetch = '1';
+				movem_address_write_count = 4 and
+				unary_result_write_count = 2 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -341,7 +356,12 @@ begin
 			memory(16#010E#) = x"0000" and memory(16#010F#) = x"0800"
 			report "TG68K FPU data-register FMOVEM EA update mismatch"
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, FMOVEM, and control state"
+		assert unary_result_write_count = 2 and
+			memory(16#0580#) = x"42A0" and memory(16#0581#) = x"0001"
+			report "TG68K FPU unary instruction stream result mismatch: " &
+				to_hstring(memory(16#0580#)) & to_hstring(memory(16#0581#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, unary operations, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
