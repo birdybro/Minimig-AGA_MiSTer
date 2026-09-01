@@ -13,6 +13,7 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
 	signal cosine : std_logic := '0';
+	signal tangent : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
@@ -27,6 +28,7 @@ begin
 			nReset => nReset,
 			start => start,
 			cosine => cosine,
+			tangent => tangent,
 			source => source,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
@@ -46,11 +48,13 @@ begin
 				constant expected_cc : in std_logic_vector(3 downto 0);
 				constant expected_status : in std_logic_vector(7 downto 0);
 				constant expected_cycles : in natural := 0;
-				constant cosine_value : in std_logic := '0') is
+				constant cosine_value : in std_logic := '0';
+				constant tangent_value : in std_logic := '0') is
 			variable cycles : natural := 0;
 		begin
 			wait until falling_edge(clk);
 			cosine <= cosine_value;
+			tangent <= tangent_value;
 			source <= source_value;
 			start <= '1';
 			wait until rising_edge(clk);
@@ -146,7 +150,22 @@ begin
 		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF",
 			x"1", x"20", 0, '1');
 
-		report "PASS: FSIN/FCOS range reduction, CORDIC, special values, and status"
+		execute(x"00000000000000000000", x"00000000000000000000",
+			x"4", x"00", 0, '0', '1');
+		execute(x"80000000000000000000", x"80000000000000000000",
+			x"C", x"00", 0, '0', '1');
+		execute(x"3FFE8000000000000000", x"3FFE8BDA7ADF9A3A5219",
+			x"0", x"02", 323, '0', '1');
+		execute(x"BFFE8000000000000000", x"BFFE8BDA7ADF9A3A5219",
+			x"8", x"02", 0, '0', '1');
+		execute(x"3FFFC90FDAA22168C235", x"C0408A51E04DAABDA35F",
+			x"8", x"02", 0, '0', '1');
+		execute(x"3FD68000000000000000", x"3FD68000000000000000",
+			x"0", x"02", 0, '0', '1');
+		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF",
+			x"1", x"20", 0, '0', '1');
+
+		report "PASS: FSIN/FCOS/FTAN range reduction, CORDIC, special values, and status"
 			severity note;
 		stop;
 	end process;

@@ -401,6 +401,16 @@ begin
 			report "register FCOS controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_TAN;
+		run_register_operation(x"3FFE8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFE8BDA7ADF9A3A5219" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FTAN controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_ATANH;
 		run_register_operation(x"3FFE8000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");
@@ -699,6 +709,15 @@ begin
 		assert fp_write_count = 0 and observed_status = x"20" and
 			observed_cc = "0001"
 			report "enabled FSIN OPERR suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_TAN;
+		run_register_operation(x"7FFF8000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001"
+			report "enabled FTAN OPERR suppression mismatch"
 			severity failure;
 
 		clear_observations;

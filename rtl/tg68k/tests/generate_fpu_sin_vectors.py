@@ -106,12 +106,17 @@ def sine_cosine_decimal(angle: Decimal, cosine: bool) -> Decimal:
 
 
 @lru_cache(maxsize=None)
-def high_precision_trig(source: int, cosine: bool) -> Fraction:
+def high_precision_trig(source: int, cosine: bool,
+                        tangent: bool = False) -> Fraction:
     source_value = extended_bits_value(source)
     sign = -1 if source_value < 0 else 1
     magnitude = abs(source_value)
     if magnitude < power_of_two(-100):
         square = magnitude * magnitude
+        if tangent:
+            result = magnitude + magnitude * square / 3 + (
+                2 * magnitude * square * square / 15)
+            return result * sign
         if cosine:
             return 1 - square / 2 + square * square / 24
         result = magnitude - magnitude * square / 6 + (
@@ -121,34 +126,39 @@ def high_precision_trig(source: int, cosine: bool) -> Fraction:
         context.prec = 450
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
+        if tangent:
+            sine = sine_cosine_decimal(source_decimal, False)
+            cosine_result = sine_cosine_decimal(source_decimal, True)
+            return Fraction(sine / cosine_result)
         return Fraction(sine_cosine_decimal(source_decimal, cosine))
 
 
 def reference_trig(source: int, precision_bits: int, mode: int,
-                   cosine: bool) -> tuple[int, int, int]:
+                   cosine: bool, tangent: bool = False) -> tuple[int, int, int]:
     result, condition_codes, status = round_binary_precision(
-        high_precision_trig(source, cosine), precision_bits, mode)
+        high_precision_trig(source, cosine, tangent), precision_bits, mode)
     return result, condition_codes, status | 0x02
 
 
-def make_vectors(cosine: bool):
+def make_vectors(cosine: bool, tangent: bool = False):
     vectors = []
     for source in source_values():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
                 result, condition_codes, status = reference_trig(
-                    source, precision_bits, mode, cosine)
+                    source, precision_bits, mode, cosine, tangent)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
     return vectors
 
 
-def emit_testbench(cosine: bool) -> None:
-    operation = "cos" if cosine else "sin"
+def emit_testbench(cosine: bool, tangent: bool = False) -> None:
+    operation = "tan" if tangent else "cos" if cosine else "sin"
     operation_upper = operation.upper()
     cosine_literal = "'1'" if cosine else "'0'"
-    vectors = make_vectors(cosine)
+    tangent_literal = "'1'" if tangent else "'0'"
+    vectors = make_vectors(cosine, tangent)
     print(f"""library ieee;
 use ieee.std_logic_1164.all;
 use std.env.all;
@@ -195,6 +205,7 @@ begin
             nReset => nReset,
             start => start,
             cosine => {cosine_literal},
+            tangent => {tangent_literal},
             source => source,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
@@ -228,7 +239,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 300
+                assert cycles < 400
                     report "differential F{operation_upper} timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and

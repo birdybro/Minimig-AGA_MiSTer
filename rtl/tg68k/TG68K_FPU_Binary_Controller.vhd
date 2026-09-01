@@ -139,6 +139,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal arc_cosine_latched : std_logic := '0';
 	signal sine_cosine_latched : std_logic := '0';
 	signal sine_cosine_cosine_latched : std_logic := '0';
+	signal sine_cosine_tangent_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -462,6 +463,7 @@ begin
 			nReset => nReset,
 			start => sine_cosine_start,
 			cosine => sine_cosine_cosine_latched,
+			tangent => sine_cosine_tangent_latched,
 			source => source_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
@@ -618,6 +620,7 @@ begin
 				arc_cosine_latched <= '0';
 				sine_cosine_latched <= '0';
 				sine_cosine_cosine_latched <= '0';
+				sine_cosine_tangent_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -786,7 +789,8 @@ begin
 								arc_cosine_latched <= '0';
 							end if;
 							if operation = FPU_OP_SIN or
-									operation = FPU_OP_COS then
+									operation = FPU_OP_COS or
+									operation = FPU_OP_TAN then
 								sine_cosine_latched <= '1';
 							else
 								sine_cosine_latched <= '0';
@@ -795,6 +799,11 @@ begin
 								sine_cosine_cosine_latched <= '1';
 							else
 								sine_cosine_cosine_latched <= '0';
+							end if;
+							if operation = FPU_OP_TAN then
+								sine_cosine_tangent_latched <= '1';
+							else
+								sine_cosine_tangent_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
