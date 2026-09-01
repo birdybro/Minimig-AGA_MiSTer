@@ -46,6 +46,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant FIXED_WIDTH : natural := FRACTION_BITS + 16;
 	constant SERIES_WIDTH : natural := 197;
+	constant ARITHMETIC_WIDTH : natural := SERIES_WIDTH;
 	constant SERIES_NORMAL_BIT : natural := 195;
 	constant SERIES_CUBIC_MAX_EXPONENT : integer := -26;
 	constant SERIES_CUBIC_MIN_EXPONENT : integer := -32;
@@ -58,10 +59,11 @@ architecture rtl of TG68K_FPU_Exponential is
 	type exponential_state_t is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
 			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
-			MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC,
+			MULTIPLY_LOG2, ROTATE_CORDIC_XY, ROTATE_CORDIC_Z,
+			FINISH_CORDIC,
 			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
 			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
-			NORMALIZE_SUBTRACTION,
+			NORMALIZE_SUBTRACTION, FORMAT_NORMALIZED_RESULT,
 			WRITE_PENDING_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
@@ -177,6 +179,17 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
 	signal cordic_angle_address : natural range 1 to 31 := 1;
+	signal cordic_z_previous : cordic_value_t := (others => '0');
+	signal cordic_angle_previous : cordic_value_t := (others => '0');
+	signal cordic_direction_previous : std_logic := '0';
+	signal arithmetic_left_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_left_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_subtract_a : std_logic;
+	signal arithmetic_subtract_b : std_logic;
+	signal arithmetic_result_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal arithmetic_result_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -198,6 +211,110 @@ begin
 	round_input.significand <= intermediate_significand;
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
+
+	arithmetic_operands : process(state, series_product, series_multiplier,
+		series_multiplicand, cube_accumulator, scale_accumulator,
+		scale_magnitude_register, scale_index, product_accumulator,
+		fraction_register, multiply_index, cordic_x, cordic_y, cordic_z,
+		cordic_iteration, cordic_z_previous, cordic_angle_previous,
+		cordic_direction_previous, subtraction_value, subtraction_one)
+		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+	begin
+		arithmetic_left_a <= (others => '0');
+		arithmetic_right_a <= (others => '0');
+		arithmetic_left_b <= (others => '0');
+		arithmetic_right_b <= (others => '0');
+		arithmetic_subtract_a <= '0';
+		arithmetic_subtract_b <= '0';
+		case state is
+			when SQUARE_SMALL_ARGUMENT =>
+				arithmetic_left_a <= resize(series_product, ARITHMETIC_WIDTH);
+				if series_multiplier(0) = '1' then
+					arithmetic_right_a <= resize(series_multiplicand,
+						ARITHMETIC_WIDTH);
+				end if;
+			when CUBE_SMALL_ARGUMENT =>
+				arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
+				if series_multiplier(0) = '1' then
+					arithmetic_right_a <= resize(series_multiplicand(79 downto 0),
+						ARITHMETIC_WIDTH);
+				end if;
+			when SCALE_E_TO_BASE_TWO =>
+				arithmetic_left_a <= resize(scale_accumulator,
+					ARITHMETIC_WIDTH);
+				if scale_magnitude_register(scale_index) = '1' then
+					arithmetic_right_a <= resize(LOG2_E_FIXED,
+						ARITHMETIC_WIDTH);
+				end if;
+			when SCALE_TEN_TO_BASE_TWO =>
+				arithmetic_left_a <= resize(scale_accumulator,
+					ARITHMETIC_WIDTH);
+				if scale_magnitude_register(scale_index) = '1' then
+					arithmetic_right_a <= resize(LOG2_TEN_FIXED,
+						ARITHMETIC_WIDTH);
+				end if;
+			when MULTIPLY_LOG2 =>
+				arithmetic_left_a <= resize(product_accumulator,
+					ARITHMETIC_WIDTH);
+				if fraction_register(multiply_index) = '1' then
+					arithmetic_right_a <= resize(LN2_FIXED,
+						ARITHMETIC_WIDTH);
+				end if;
+			when ROTATE_CORDIC_XY =>
+				arithmetic_left_a <= unsigned(resize(cordic_x,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_a <= unsigned(resize(shift_right(cordic_y,
+					cordic_iteration), ARITHMETIC_WIDTH));
+				arithmetic_left_b <= unsigned(resize(cordic_y,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_b <= unsigned(resize(shift_right(cordic_x,
+					cordic_iteration), ARITHMETIC_WIDTH));
+				if cordic_z < 0 then
+					arithmetic_subtract_a <= '1';
+					arithmetic_subtract_b <= '1';
+				end if;
+			when ROTATE_CORDIC_Z =>
+				arithmetic_left_a <= unsigned(resize(cordic_z_previous,
+					ARITHMETIC_WIDTH));
+				arithmetic_right_a <= unsigned(resize(cordic_angle_previous,
+					ARITHMETIC_WIDTH));
+				arithmetic_subtract_a <= cordic_direction_previous;
+			when NORMALIZE_HYPERBOLIC_TANGENT =>
+				arithmetic_left_a <= resize(subtraction_value,
+					ARITHMETIC_WIDTH);
+				if subtraction_value >= subtraction_one then
+					arithmetic_right_a <= resize(subtraction_one,
+						ARITHMETIC_WIDTH);
+					arithmetic_subtract_a <= '1';
+				end if;
+			when DIVIDE_HYPERBOLIC_TANGENT =>
+				shifted_remainder := shift_left(subtraction_value, 1);
+				arithmetic_left_a <= resize(shifted_remainder,
+					ARITHMETIC_WIDTH);
+				if shifted_remainder >= subtraction_one then
+					arithmetic_right_a <= resize(subtraction_one,
+						ARITHMETIC_WIDTH);
+					arithmetic_subtract_a <= '1';
+				end if;
+			when others => null;
+		end case;
+	end process;
+
+	arithmetic_add_subtract : process(arithmetic_subtract_a,
+		arithmetic_left_a, arithmetic_right_a, arithmetic_subtract_b,
+		arithmetic_left_b, arithmetic_right_b)
+	begin
+		if arithmetic_subtract_a = '1' then
+			arithmetic_result_a <= arithmetic_left_a - arithmetic_right_a;
+		else
+			arithmetic_result_a <= arithmetic_left_a + arithmetic_right_a;
+		end if;
+		if arithmetic_subtract_b = '1' then
+			arithmetic_result_b <= arithmetic_left_b - arithmetic_right_b;
+		else
+			arithmetic_result_b <= arithmetic_left_b + arithmetic_right_b;
+		end if;
+	end process;
 
 	angle_rom_read : process(clk)
 	begin
@@ -245,24 +362,27 @@ begin
 	end process;
 
 	exponential_sequence : process(clk)
+		procedure format_normalized_result(
+				constant normalized_value : in unsigned(CORDIC_WIDTH downto 0);
+				constant normalized_exponent : in signed(16 downto 0);
+				constant normalized_sign : in std_logic;
+				constant prior_sticky : in std_logic) is
+		begin
+			subtraction_value <= normalized_value;
+			subtraction_exponent <= normalized_exponent;
+			intermediate_sign <= normalized_sign;
+			subtraction_sticky <= prior_sticky;
+			state <= FORMAT_NORMALIZED_RESULT;
+		end procedure;
+
 		procedure complete_subtraction(
 				constant difference : in unsigned(CORDIC_WIDTH downto 0);
 				constant difference_exponent : in signed(16 downto 0);
 				constant difference_sign : in std_logic;
 				constant prior_sticky : in std_logic) is
-			variable final_significand : fpu_significand_grs_t;
 		begin
-			final_significand := (others => '0');
-			final_significand(66 downto 3) := difference(
-				FRACTION_BITS downto FRACTION_BITS - 63);
-			final_significand(2) := difference(FRACTION_BITS - 64);
-			final_significand(1) := difference(FRACTION_BITS - 65);
-			final_significand(0) := prior_sticky or or_reduce(difference(
-				FRACTION_BITS - 66 downto 0));
-			pending_sign <= difference_sign;
-			pending_exponent <= difference_exponent;
-			pending_significand <= final_significand;
-			state <= WRITE_PENDING_RESULT;
+			format_normalized_result(difference, difference_exponent,
+				difference_sign, prior_sticky);
 		end procedure;
 
 		procedure complete_hyperbolic_sine(
@@ -309,7 +429,6 @@ begin
 				constant prior_sticky : in std_logic) is
 			variable normalized_sum : unsigned(CORDIC_WIDTH downto 0);
 			variable normalized_exponent : signed(16 downto 0);
-			variable final_significand : fpu_significand_grs_t;
 			variable final_sticky : std_logic;
 		begin
 			normalized_sum := sum;
@@ -320,17 +439,8 @@ begin
 				normalized_sum := shift_right(normalized_sum, 1);
 				normalized_exponent := normalized_exponent + 1;
 			end if;
-			final_significand := (others => '0');
-			final_significand(66 downto 3) := normalized_sum(
-				FRACTION_BITS downto FRACTION_BITS - 63);
-			final_significand(2) := normalized_sum(FRACTION_BITS - 64);
-			final_significand(1) := normalized_sum(FRACTION_BITS - 65);
-			final_significand(0) := final_sticky or or_reduce(normalized_sum(
-				FRACTION_BITS - 66 downto 0));
-			pending_sign <= '0';
-			pending_exponent <= normalized_exponent;
-			pending_significand <= final_significand;
-			state <= WRITE_PENDING_RESULT;
+			format_normalized_result(normalized_sum, normalized_exponent,
+				'0', final_sticky);
 		end procedure;
 
 		procedure complete_hyperbolic_cosine(
@@ -570,20 +680,13 @@ begin
 		variable magnitude_fixed : unsigned(FIXED_WIDTH - 1 downto 0);
 		variable exponent_value : integer range -65536 to 65535;
 		variable selected_nan : fpu_extended_t;
-		variable multiply_sum : unsigned(FRACTION_BITS downto 0);
 		variable next_accumulator : unsigned(FRACTION_BITS downto 0);
-		variable scale_sum : unsigned(FIXED_WIDTH + 2 downto 0);
 		variable next_scale : unsigned(FIXED_WIDTH + 2 downto 0);
-		variable next_x : cordic_value_t;
-		variable next_y : cordic_value_t;
-		variable next_z : cordic_value_t;
 		variable next_angle : cordic_value_t;
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
 		variable cordic_difference : signed(CORDIC_WIDTH downto 0);
 		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
-		variable square_sum : unsigned(127 downto 0);
 		variable next_square : unsigned(127 downto 0);
-		variable cube_sum : unsigned(79 downto 0);
 		variable next_cube : unsigned(79 downto 0);
 		variable next_cube_quotient : unsigned(79 downto 0);
 		variable division_trial : natural range 0 to 11;
@@ -645,6 +748,9 @@ begin
 				repeat_iteration <= '0';
 				cordic_shift_angle <= (others => '0');
 				cordic_angle_address <= 1;
+				cordic_z_previous <= (others => '0');
+				cordic_angle_previous <= (others => '0');
+				cordic_direction_previous <= '0';
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -696,6 +802,9 @@ begin
 							repeat_iteration <= '0';
 							cordic_shift_angle <= (others => '0');
 							cordic_angle_address <= 1;
+							cordic_z_previous <= (others => '0');
+							cordic_angle_previous <= (others => '0');
+							cordic_direction_previous <= '0';
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= '0';
 							intermediate_exponent <= (others => '0');
@@ -927,11 +1036,7 @@ begin
 						end if;
 
 					when SQUARE_SMALL_ARGUMENT =>
-						square_sum := series_product;
-						if series_multiplier(0) = '1' then
-							square_sum := square_sum + series_multiplicand;
-						end if;
-						next_square := square_sum;
+						next_square := arithmetic_result_a(127 downto 0);
 						if series_index = 63 then
 							series_product <= next_square;
 							if hyperbolic_cosine_latched = '1' then
@@ -1005,11 +1110,7 @@ begin
 						end if;
 
 					when CUBE_SMALL_ARGUMENT =>
-						cube_sum := cube_accumulator;
-						if series_multiplier(0) = '1' then
-							cube_sum := cube_sum + series_multiplicand(79 downto 0);
-						end if;
-						next_cube := cube_sum;
+						next_cube := arithmetic_result_a(79 downto 0);
 						if series_index = 63 then
 							series_multiplicand <= resize(next_cube, 128);
 							cube_accumulator <= (others => '0');
@@ -1080,17 +1181,8 @@ begin
 						end if;
 
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
-						scale_sum := scale_accumulator;
-						if scale_magnitude_register(scale_index) = '1' then
-							if state = SCALE_E_TO_BASE_TWO then
-								scale_sum := scale_sum + resize(LOG2_E_FIXED,
-									FIXED_WIDTH + 3);
-							else
-								scale_sum := scale_sum + resize(LOG2_TEN_FIXED,
-									FIXED_WIDTH + 3);
-							end if;
-						end if;
-						next_scale := shift_right(scale_sum, 1);
+						next_scale := shift_right(arithmetic_result_a(
+							FIXED_WIDTH + 2 downto 0), 1);
 						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
 							if hyperbolic_sine_latched = '1' or
@@ -1108,12 +1200,8 @@ begin
 						end if;
 
 					when MULTIPLY_LOG2 =>
-						multiply_sum := product_accumulator;
-						if fraction_register(multiply_index) = '1' then
-							multiply_sum := multiply_sum + resize(LN2_FIXED,
-								FRACTION_BITS + 1);
-						end if;
-						next_accumulator := shift_right(multiply_sum, 1);
+						next_accumulator := shift_right(arithmetic_result_a(
+							FRACTION_BITS downto 0), 1);
 						product_accumulator <= next_accumulator;
 						if multiply_index = FRACTION_BITS - 1 then
 							if next_accumulator = 0 then
@@ -1143,77 +1231,82 @@ begin
 								cordic_iteration <= 1;
 								repeat_iteration <= '0';
 								cordic_angle_address <= 1;
-								state <= LOAD_CORDIC_ANGLE;
+								state <= ROTATE_CORDIC_XY;
 							end if;
 						else
 							multiply_index <= multiply_index + 1;
 						end if;
 
-					when LOAD_CORDIC_ANGLE =>
-						state <= CORDIC;
-
-					when CORDIC =>
+					when ROTATE_CORDIC_XY =>
 						if cordic_iteration <= 31 then
 							next_angle := cordic_angle_rom_data;
 						else
 							next_angle := cordic_shift_angle;
 						end if;
+						cordic_z_previous <= cordic_z;
+						cordic_angle_previous <= next_angle;
 						if cordic_z >= 0 then
-							next_x := cordic_x + shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y + shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z - next_angle;
+							cordic_direction_previous <= '1';
 						else
-							next_x := cordic_x - shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y - shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z + next_angle;
+							cordic_direction_previous <= '0';
 						end if;
-						cordic_x <= next_x;
-						cordic_y <= next_y;
-						cordic_z <= next_z;
-						-- Hyperbolic CORDIC repeats these iterations to converge.
-						if (cordic_iteration = 4 or cordic_iteration = 13 or
-								cordic_iteration = 40) and repeat_iteration = '0' then
-							repeat_iteration <= '1';
-						elsif cordic_iteration = FRACTION_BITS then
-							cordic_sum := resize(next_x, CORDIC_WIDTH + 1) +
-								resize(next_y, CORDIC_WIDTH + 1);
-							if hyperbolic_sine_latched = '1' then
-								cordic_difference := resize(next_x, CORDIC_WIDTH + 1) -
-									resize(next_y, CORDIC_WIDTH + 1);
-								complete_hyperbolic_sine(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							elsif hyperbolic_cosine_latched = '1' then
-								cordic_difference := resize(next_x, CORDIC_WIDTH + 1) -
-									resize(next_y, CORDIC_WIDTH + 1);
-								complete_hyperbolic_cosine(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							elsif hyperbolic_tangent_latched = '1' then
-								cordic_difference := resize(next_x, CORDIC_WIDTH + 1) -
-									resize(next_y, CORDIC_WIDTH + 1);
-								complete_hyperbolic_tangent(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							else
-								complete_exponential(unsigned(cordic_sum), result_exponent,
-									subtract_one_latched);
-							end if;
-						else
-							repeat_iteration <= '0';
-							cordic_iteration <= cordic_iteration + 1;
+						cordic_x <= signed(arithmetic_result_a(
+							CORDIC_WIDTH - 1 downto 0));
+						cordic_y <= signed(arithmetic_result_b(
+							CORDIC_WIDTH - 1 downto 0));
+						if not ((cordic_iteration = 4 or
+								cordic_iteration = 13 or cordic_iteration = 40) and
+								repeat_iteration = '0') then
 							if cordic_iteration < 31 then
 								cordic_angle_address <= cordic_iteration + 1;
-								state <= LOAD_CORDIC_ANGLE;
 							elsif cordic_iteration = 31 then
 								next_angle := (others => '0');
 								next_angle(FRACTION_BITS - 32) := '1';
 								cordic_shift_angle <= next_angle;
-							else
-								cordic_shift_angle <=
-									shift_right(cordic_shift_angle, 1);
+							elsif cordic_iteration < FRACTION_BITS then
+								cordic_shift_angle <= shift_right(
+									cordic_shift_angle, 1);
 							end if;
+						end if;
+						state <= ROTATE_CORDIC_Z;
+
+					when ROTATE_CORDIC_Z =>
+						cordic_z <= signed(arithmetic_result_a(
+							CORDIC_WIDTH - 1 downto 0));
+						-- Hyperbolic CORDIC repeats these iterations to converge.
+						if (cordic_iteration = 4 or cordic_iteration = 13 or
+								cordic_iteration = 40) and repeat_iteration = '0' then
+							repeat_iteration <= '1';
+							state <= ROTATE_CORDIC_XY;
+						elsif cordic_iteration = FRACTION_BITS then
+							state <= FINISH_CORDIC;
+						else
+							repeat_iteration <= '0';
+							cordic_iteration <= cordic_iteration + 1;
+							state <= ROTATE_CORDIC_XY;
+						end if;
+
+					when FINISH_CORDIC =>
+						cordic_sum := resize(cordic_x, CORDIC_WIDTH + 1) +
+							resize(cordic_y, CORDIC_WIDTH + 1);
+						if hyperbolic_sine_latched = '1' then
+							cordic_difference := resize(cordic_x, CORDIC_WIDTH + 1) -
+								resize(cordic_y, CORDIC_WIDTH + 1);
+							complete_hyperbolic_sine(unsigned(cordic_sum),
+								unsigned(cordic_difference), result_exponent, '0');
+						elsif hyperbolic_cosine_latched = '1' then
+							cordic_difference := resize(cordic_x, CORDIC_WIDTH + 1) -
+								resize(cordic_y, CORDIC_WIDTH + 1);
+							complete_hyperbolic_cosine(unsigned(cordic_sum),
+								unsigned(cordic_difference), result_exponent, '0');
+						elsif hyperbolic_tangent_latched = '1' then
+							cordic_difference := resize(cordic_x, CORDIC_WIDTH + 1) -
+								resize(cordic_y, CORDIC_WIDTH + 1);
+							complete_hyperbolic_tangent(unsigned(cordic_sum),
+								unsigned(cordic_difference), result_exponent, '0');
+						else
+							complete_exponential(unsigned(cordic_sum), result_exponent,
+								subtract_one_latched);
 						end if;
 
 					when ALIGN_HYPERBOLIC =>
@@ -1260,7 +1353,8 @@ begin
 
 					when NORMALIZE_HYPERBOLIC_TANGENT =>
 						if subtraction_value >= subtraction_one then
-							subtraction_value <= subtraction_value - subtraction_one;
+							subtraction_value <= arithmetic_result_a(
+								CORDIC_WIDTH downto 0);
 							tangent_quotient <= (0 => '1', others => '0');
 							tangent_iteration <= 0;
 							intermediate_class <= FPU_CLASS_NORMAL;
@@ -1274,13 +1368,12 @@ begin
 					when DIVIDE_HYPERBOLIC_TANGENT =>
 						tangent_shifted_remainder := shift_left(
 							subtraction_value, 1);
+						tangent_next_remainder := arithmetic_result_a(
+							CORDIC_WIDTH downto 0);
 						tangent_next_quotient := shift_left(tangent_quotient, 1);
 						if tangent_shifted_remainder >= subtraction_one then
-							tangent_next_remainder := tangent_shifted_remainder -
-								subtraction_one;
 							tangent_next_quotient(0) := '1';
 						else
-							tangent_next_remainder := tangent_shifted_remainder;
 							tangent_next_quotient(0) := '0';
 						end if;
 						subtraction_value <= tangent_next_remainder;
@@ -1354,6 +1447,22 @@ begin
 								next_subtraction_exponent, intermediate_sign,
 								subtraction_sticky);
 						end if;
+
+					when FORMAT_NORMALIZED_RESULT =>
+						intermediate_class <= FPU_CLASS_NORMAL;
+						intermediate_exponent <= subtraction_exponent;
+						intermediate_significand <= (others => '0');
+						intermediate_significand(66 downto 3) <=
+							subtraction_value(FRACTION_BITS downto
+								FRACTION_BITS - 63);
+						intermediate_significand(2) <=
+							subtraction_value(FRACTION_BITS - 64);
+						intermediate_significand(1) <=
+							subtraction_value(FRACTION_BITS - 65);
+						intermediate_significand(0) <= subtraction_sticky or
+							or_reduce(subtraction_value(
+								FRACTION_BITS - 66 downto 0));
+						state <= COMPLETE;
 
 					when WRITE_PENDING_RESULT =>
 						intermediate_class <= FPU_CLASS_NORMAL;
