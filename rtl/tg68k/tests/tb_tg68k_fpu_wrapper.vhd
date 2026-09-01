@@ -130,20 +130,22 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#00EC#) := x"0B18";
 		result(16#00ED#) := x"F200";
 		result(16#00EE#) := x"1FA0";
-		result(16#00EF#) := x"F239";
-		result(16#00F0#) := x"6780";
-		result(16#00F1#) := x"0000";
-		result(16#00F2#) := x"0B1C";
-		result(16#00F3#) := x"F200";
-		result(16#00F4#) := x"1FA8";
+		result(16#00EF#) := x"F200";
+		result(16#00F0#) := x"1F84";
+		result(16#00F1#) := x"F239";
+		result(16#00F2#) := x"6780";
+		result(16#00F3#) := x"0000";
+		result(16#00F4#) := x"0B1C";
 		result(16#00F5#) := x"F200";
-		result(16#00F6#) := x"1FB8";
-		result(16#00F7#) := x"F239";
-		result(16#00F8#) := x"6780";
-		result(16#00F9#) := x"0000";
-		result(16#00FA#) := x"0B14";
-		result(16#00FB#) := x"4E72";
-		result(16#00FC#) := x"2700";
+		result(16#00F6#) := x"1FA8";
+		result(16#00F7#) := x"F200";
+		result(16#00F8#) := x"1FB8";
+		result(16#00F9#) := x"F239";
+		result(16#00FA#) := x"6780";
+		result(16#00FB#) := x"0000";
+		result(16#00FC#) := x"0B14";
+		result(16#00FD#) := x"4E72";
+		result(16#00FE#) := x"2700";
 		result(16#0280#) := x"0000";
 		result(16#0281#) := x"0030";
 		result(16#0282#) := x"A5A5";
@@ -313,7 +315,7 @@ begin
 					binary_result_write_count <= binary_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000001F6" then
+			if busstate = "00" and addr_out = x"000001FA" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;

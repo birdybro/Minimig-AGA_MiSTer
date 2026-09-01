@@ -58,8 +58,8 @@ end entity;
 
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
-		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, COMMIT, BUS_ERROR_WAIT,
-		COMPLETE);
+		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT, COMMIT,
+		BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -113,6 +113,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal compare_latched : std_logic := '0';
 	signal multiply_latched : std_logic := '0';
 	signal divide_latched : std_logic := '0';
+	signal square_root_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -142,6 +143,10 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal divide_done : std_logic;
 	signal divide_round_input : fpu_round_input_t;
 	signal divide_base_status : std_logic_vector(7 downto 0);
+	signal square_root_start : std_logic;
+	signal square_root_done : std_logic;
+	signal square_root_round_input : fpu_round_input_t;
+	signal square_root_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal rounded_result : fpu_extended_t;
@@ -153,9 +158,11 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 begin
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
 	selected_round_input <= divide_round_input when divide_latched = '1' else
+		square_root_round_input when square_root_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
 		add_subtract_round_input;
 	selected_base_status <= divide_base_status when divide_latched = '1' else
+		square_root_base_status when square_root_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
 		add_subtract_base_status;
 	rounded_condition_codes <= add_subtract_compare_codes
@@ -238,6 +245,29 @@ begin
 			done => divide_done,
 			round_input => divide_round_input,
 			base_exception_status => divide_base_status
+		);
+
+	square_root_start <= '1' when state = EXECUTE and
+		square_root_latched = '1' else '0';
+
+	square_root : entity work.TG68K_FPU_Square_Root
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => square_root_start,
+			source => source_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			busy => open,
+			done => square_root_done,
+			round_input => square_root_round_input,
+			base_exception_status => square_root_base_status
 		);
 
 	shared_round : entity work.TG68K_FPU_Round
@@ -325,6 +355,7 @@ begin
 				compare_latched <= '0';
 				multiply_latched <= '0';
 				divide_latched <= '0';
+				square_root_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -366,6 +397,11 @@ begin
 								divide_latched <= '1';
 							else
 								divide_latched <= '0';
+							end if;
+							if operation = FPU_OP_SQRT then
+								square_root_latched <= '1';
+							else
+								square_root_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
@@ -426,6 +462,8 @@ begin
 					when EXECUTE =>
 						if divide_latched = '1' then
 							state <= WAIT_DIVIDE;
+						elsif square_root_latched = '1' then
+							state <= WAIT_SQUARE_ROOT;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -435,6 +473,14 @@ begin
 
 					when WAIT_DIVIDE =>
 						if divide_done = '1' then
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_SQUARE_ROOT =>
+						if square_root_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;

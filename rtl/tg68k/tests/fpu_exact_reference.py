@@ -1,4 +1,5 @@
 from fractions import Fraction
+from math import isqrt
 
 
 EXPONENT_BIAS = 16383
@@ -60,6 +61,42 @@ def round_binary(value: Fraction, precision: int, mode: int) -> tuple[int, int, 
     condition_codes = sign << 3
     status = 0x02 if inexact else 0
     return encoded, condition_codes, status
+
+
+def round_square_root(value: Fraction, precision: int,
+                      mode: int) -> tuple[int, int, int]:
+    if value <= 0:
+        raise ValueError("square-root reference requires a positive operand")
+
+    source_exponent = value.numerator.bit_length() - value.denominator.bit_length()
+    if value < power_of_two(source_exponent):
+        source_exponent -= 1
+    result_exponent = source_exponent // 2
+    scaled_squared = value * power_of_two(
+        2 * ((precision - 1) - result_exponent))
+    quotient = isqrt(scaled_squared.numerator // scaled_squared.denominator)
+    inexact = quotient * quotient * scaled_squared.denominator != \
+        scaled_squared.numerator
+
+    increment = False
+    if inexact:
+        if mode == 0:
+            midpoint = 2 * quotient + 1
+            comparison = 4 * scaled_squared.numerator - \
+                midpoint * midpoint * scaled_squared.denominator
+            increment = comparison > 0 or (comparison == 0 and
+                                            (quotient & 1) != 0)
+        elif mode == 3:
+            increment = True
+    if increment:
+        quotient += 1
+    if quotient == 1 << precision:
+        quotient >>= 1
+        result_exponent += 1
+
+    significand = quotient << (64 - precision)
+    encoded = encode_extended(0, result_exponent, significand)
+    return encoded, 0, 0x02 if inexact else 0
 
 
 def precision_name(index: int) -> tuple[str, int]:

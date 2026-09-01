@@ -686,6 +686,22 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
+		start_instruction(x"F200", x"1E04", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(4) = x"4000E000000000000000" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FSQRT operand-error exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
 		start_instruction(x"F200", x"0E23", '1');
 		command_word <= x"0000";
 		wait_done;
@@ -699,6 +715,17 @@ begin
 		assert fp_registers(4) = x"4000E000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FDIV system result mismatch" severity failure;
+
+		integer_register_data <= x"00000004";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E04", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"40008000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FSQRT system result mismatch" severity failure;
 
 		integer_register_data <= x"00000000";
 		start_instruction(x"F202", x"4180", '1');
@@ -719,7 +746,7 @@ begin
 		end loop;
 		assert floating_point_exception = '1' and
 			floating_point_exception_class = FPU_EXCEPTION_DZ and
-			fp_registers(4) = x"4000E000000000000000" and
+			fp_registers(4) = x"40008000000000000000" and
 			fpsr(31 downto 28) = "0010" and fpsr(15 downto 8) = x"04" and
 			fpiar = x"00000400"
 			report "enabled FDIV divide-by-zero exception mismatch"

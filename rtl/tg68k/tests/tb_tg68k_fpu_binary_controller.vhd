@@ -228,6 +228,16 @@ begin
 			report "register FMUL controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_SQRT;
+		run_register_operation(x"40018000000000000000",
+			x"3FFF8000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"40008000000000000000" and
+			status_write_count = 1 and observed_status = x"00" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FSQRT controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_CMP;
 		run_register_operation(x"4000C000000000000000",
 			x"40008000000000000000");
@@ -284,6 +294,16 @@ begin
 			report "memory single FDIV controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_SQRT;
+		start_operation;
+		finish_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"3FFF9CC470A0490973E8" and
+			observed_status = x"02"
+			report "memory single FSQRT controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_ADD;
 		external_data_register <= '1';
 		operand_format <= FPU_FORMAT_LONG_INTEGER;
@@ -317,6 +337,15 @@ begin
 		assert fp_write_count = 0 and observed_status = x"20" and
 			observed_cc = "0001"
 			report "enabled OPERR destination suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SQRT;
+		run_register_operation(x"C0018000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001"
+			report "enabled FSQRT OPERR destination suppression mismatch"
 			severity failure;
 
 		clear_observations;
@@ -377,7 +406,7 @@ begin
 			trace_address(0) = x"00004000" and status_write_count = 1
 			report "binary bus-error retry mismatch" severity failure;
 
-		report "PASS: MC68882 FADD, FSUB, FMUL, FDIV, and FCMP controller"
+		report "PASS: MC68882 FSQRT and fundamental binary controller"
 			severity note;
 		stop;
 	end process;
