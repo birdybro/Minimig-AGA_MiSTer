@@ -108,11 +108,14 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 	signal state : controller_state_t := IDLE;
 	signal negate_latched : std_logic := '0';
 	signal test_latched : std_logic := '0';
+	signal extract_latched : std_logic := '0';
+	signal get_exponent_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
 		(others => '0');
 	signal snan_enable_latched : std_logic := '0';
+	signal operand_error_enable_latched : std_logic := '0';
 	signal external_buffer : std_logic_vector(95 downto 0) := (others => '0');
 	signal operand_latched : fpu_extended_t := (others => '0');
 	signal result_latched : fpu_extended_t := (others => '0');
@@ -122,6 +125,8 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 
 	signal unpacked_operand : fpu_extended_t;
 	signal operand_class : fpu_data_class_t;
+	signal extracted_result : fpu_extended_t;
+	signal extracted_status : std_logic_vector(7 downto 0);
 begin
 	operand_class <= fpu_classify(operand_latched);
 
@@ -135,9 +140,19 @@ begin
 			external_extended_data => open
 		);
 
+	extract : entity work.TG68K_FPU_Extract
+		port map(
+			source => operand_latched,
+			get_exponent => get_exponent_latched,
+			result => extracted_result,
+			condition_codes => open,
+			exception_status => extracted_status
+		);
+
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, result_latched, status_latched,
-		write_result_latched, snan_enable_latched)
+		write_result_latched, snan_enable_latched,
+		operand_error_enable_latched)
 		variable suppress_write : boolean;
 	begin
 		memory_request <= '0';
@@ -174,8 +189,10 @@ begin
 			end if;
 		end if;
 
-		suppress_write := status_latched(6) = '1' and
-			snan_enable_latched = '1';
+		suppress_write := (status_latched(6) = '1' and
+			snan_enable_latched = '1') or
+			(status_latched(5) = '1' and
+			operand_error_enable_latched = '1');
 		case state is
 			when COMMIT =>
 				operation_status_write <= '1';
@@ -201,10 +218,13 @@ begin
 				state <= IDLE;
 				negate_latched <= '0';
 				test_latched <= '0';
+				extract_latched <= '0';
+				get_exponent_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
 				snan_enable_latched <= '0';
+				operand_error_enable_latched <= '0';
 				external_buffer <= (others => '0');
 				operand_latched <= (others => '0');
 				result_latched <= (others => '0');
@@ -225,10 +245,22 @@ begin
 							else
 								test_latched <= '0';
 							end if;
+							if operation = FPU_OP_GETEXP or
+									operation = FPU_OP_GETMAN then
+								extract_latched <= '1';
+							else
+								extract_latched <= '0';
+							end if;
+							if operation = FPU_OP_GETEXP then
+								get_exponent_latched <= '1';
+							else
+								get_exponent_latched <= '0';
+							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
 							function_code_latched <= function_code;
 							snan_enable_latched <= exception_enable(6);
+							operand_error_enable_latched <= exception_enable(5);
 							external_buffer <= (others => '0');
 							status_latched <= (others => '0');
 							write_result_latched <= '0';
@@ -272,33 +304,39 @@ begin
 						state <= EXECUTE;
 
 					when EXECUTE =>
-						status := (others => '0');
-						result := operand_latched;
-						if operand_class = FPU_CLASS_SIGNALING_NAN then
-							status(6) := '1';
-							result(62) := '1';
-						elsif operand_class = FPU_CLASS_NORMAL and
-								operand_latched(78 downto 64) =
-								"000000000000000" then
-							status(3) := '1';
-						end if;
-						if test_latched = '1' then
-							result_latched <= operand_latched;
-							status(3) := '0';
-							write_result_latched <= '0';
-						else
-							if operand_class /= FPU_CLASS_QUIET_NAN and
-									operand_class /= FPU_CLASS_SIGNALING_NAN then
-								if negate_latched = '1' then
-									result(79) := not operand_latched(79);
-								else
-									result(79) := '0';
-								end if;
-							end if;
-							result_latched <= result;
+						if extract_latched = '1' then
+							result_latched <= extracted_result;
+							status_latched <= extracted_status;
 							write_result_latched <= '1';
+						else
+							status := (others => '0');
+							result := operand_latched;
+							if operand_class = FPU_CLASS_SIGNALING_NAN then
+								status(6) := '1';
+								result(62) := '1';
+							elsif operand_class = FPU_CLASS_NORMAL and
+									operand_latched(78 downto 64) =
+									"000000000000000" then
+								status(3) := '1';
+							end if;
+							if test_latched = '1' then
+								result_latched <= operand_latched;
+								status(3) := '0';
+								write_result_latched <= '0';
+							else
+								if operand_class /= FPU_CLASS_QUIET_NAN and
+										operand_class /= FPU_CLASS_SIGNALING_NAN then
+									if negate_latched = '1' then
+										result(79) := not operand_latched(79);
+									else
+										result(79) := '0';
+									end if;
+								end if;
+								result_latched <= result;
+								write_result_latched <= '1';
+							end if;
+							status_latched <= status;
 						end if;
-						status_latched <= status;
 						state <= COMMIT;
 
 					when COMMIT => state <= COMPLETE;

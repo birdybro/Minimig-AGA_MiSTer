@@ -203,6 +203,23 @@ begin
 			report "register FNEG infinity result mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_GETEXP;
+		fp_register_data <= x"C001C000000000000000";
+		run_operation;
+		assert fp_write_count = 1 and
+			observed_fp_data = x"40008000000000000000" and
+			observed_cc = "0000" and observed_status = x"00"
+			report "register FGETEXP result mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_GETMAN;
+		run_operation;
+		assert fp_write_count = 1 and
+			observed_fp_data = x"BFFFC000000000000000" and
+			observed_cc = "1000" and observed_status = x"00"
+			report "register FGETMAN result mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_TST;
 		fp_register_data <= x"FFFFC000000000000123";
 		run_operation;
@@ -229,7 +246,26 @@ begin
 			severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_GETEXP;
+		fp_register_data <= x"7FFF8000000000000000";
 		exception_enable <= x"00";
+		run_operation;
+		assert fp_write_count = 1 and observed_fp_data = FPU_RESET_NAN and
+			observed_status = x"20" and observed_cc = "0001"
+			report "masked FGETEXP operand-error result mismatch"
+			severity failure;
+
+		clear_observations;
+		exception_enable <= x"20";
+		run_operation;
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001"
+			report "enabled FGETEXP operand error did not suppress destination"
+			severity failure;
+
+		clear_observations;
+		exception_enable <= x"00";
+		operation <= FPU_OP_ABS;
 		external_source <= '1';
 		external_data_register <= '0';
 		operand_format <= FPU_FORMAT_SINGLE;
@@ -252,6 +288,15 @@ begin
 			observed_fp_data = x"3FFFC000000000000000" and
 			observed_cc = "0000" and memory_function_code = "101"
 			report "memory single FABS transfer mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_GETMAN;
+		run_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"BFFFC000000000000000" and
+			observed_cc = "1000" and observed_status = x"00"
+			report "memory single FGETMAN transfer mismatch" severity failure;
 
 		clear_observations;
 		external_data_register <= '1';
@@ -312,7 +357,7 @@ begin
 			trace_address(0) = x"00003000" and status_write_count = 1
 			report "unary bus-error retry mismatch" severity failure;
 
-		report "PASS: MC68882 FABS, FNEG, and FTST unary operations"
+		report "PASS: MC68882 unary and extraction controller"
 			severity note;
 		stop;
 	end process;

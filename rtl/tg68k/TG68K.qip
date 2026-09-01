@@ -17,6 +17,7 @@ set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Move_Controller.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Control_Controller.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Movem_Controller.vhd ]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Extract.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Unary_Controller.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Add_Subtract.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Multiply.vhd ]

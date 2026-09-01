@@ -20,6 +20,57 @@ def encode_extended(sign: int, exponent: int, significand: int) -> int:
     return (sign << 79) | ((exponent + EXPONENT_BIAS) << 64) | significand
 
 
+def extended_condition_codes(value: int) -> int:
+    sign = (value >> 79) & 1
+    exponent = (value >> 64) & 0x7FFF
+    significand = value & ((1 << 64) - 1)
+    if exponent == 0x7FFF:
+        if significand & ((1 << 63) - 1):
+            return (sign << 3) | 1
+        return (sign << 3) | 2
+    if exponent == 0 and significand == 0:
+        return (sign << 3) | 4
+    return sign << 3
+
+
+def extract_extended(source: int, get_exponent: bool) -> tuple[int, int, int]:
+    sign = (source >> 79) & 1
+    exponent_field = (source >> 64) & 0x7FFF
+    significand = source & ((1 << 64) - 1)
+
+    if exponent_field == 0x7FFF:
+        if significand & ((1 << 63) - 1):
+            result = source | (1 << 62)
+            status = 0x40 if (significand & (1 << 62)) == 0 else 0
+        else:
+            result = (0x7FFF << 64) | ((1 << 64) - 1)
+            status = 0x20
+    elif significand == 0:
+        result = sign << 79
+        status = 0
+    else:
+        leading_position = significand.bit_length() - 1
+        normalized = significand << (63 - leading_position)
+        unbiased_exponent = (
+            1 - EXPONENT_BIAS if exponent_field == 0
+            else exponent_field - EXPONENT_BIAS
+        ) - (63 - leading_position)
+        if get_exponent:
+            if unbiased_exponent == 0:
+                result = 0
+            else:
+                result_sign = int(unbiased_exponent < 0)
+                magnitude = abs(unbiased_exponent)
+                integer_exponent = magnitude.bit_length() - 1
+                result = encode_extended(
+                    result_sign, integer_exponent,
+                    magnitude << (63 - integer_exponent))
+        else:
+            result = encode_extended(sign, 0, normalized)
+        status = 0
+    return result, extended_condition_codes(result), status
+
+
 def rounding_increment(mode: int, sign: int, quotient: int,
                        remainder: int, denominator: int) -> bool:
     if remainder == 0:

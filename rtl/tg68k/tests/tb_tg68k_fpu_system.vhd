@@ -727,6 +727,36 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FSQRT system result mismatch" severity failure;
 
+		start_instruction(x"F200", x"129E", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(5) = x"3FFF8000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FGETEXP system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"111F", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(2) = x"3FFF8000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FGETMAN system result mismatch" severity failure;
+
+		start_instruction(x"F200", x"1A9F", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(5) = x"3FFF8000000000000000" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FGETMAN operand-error exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
 		integer_register_data <= x"00000000";
 		start_instruction(x"F202", x"4180", '1');
 		command_word <= x"0000";
@@ -774,7 +804,7 @@ begin
 			floating_point_exception_class = FPU_EXCEPTION_NONE
 			report "unexpected FPU system exception" severity failure;
 
-		report "PASS: MC68882 move, unary, and fundamental arithmetic integration"
+		report "PASS: MC68882 move, extraction, unary, and arithmetic integration"
 			severity note;
 		stop;
 	end process;

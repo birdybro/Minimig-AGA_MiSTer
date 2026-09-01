@@ -136,16 +136,9 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#00F2#) := x"6780";
 		result(16#00F3#) := x"0000";
 		result(16#00F4#) := x"0B1C";
-		result(16#00F5#) := x"F200";
-		result(16#00F6#) := x"1FA8";
-		result(16#00F7#) := x"F200";
-		result(16#00F8#) := x"1FB8";
-		result(16#00F9#) := x"F239";
-		result(16#00FA#) := x"6780";
-		result(16#00FB#) := x"0000";
-		result(16#00FC#) := x"0B14";
-		result(16#00FD#) := x"4E72";
-		result(16#00FE#) := x"2700";
+		result(16#00F5#) := x"4EF9";
+		result(16#00F6#) := x"0000";
+		result(16#00F7#) := x"1000";
 		result(16#0280#) := x"0000";
 		result(16#0281#) := x"0030";
 		result(16#0282#) := x"A5A5";
@@ -170,6 +163,28 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0483#) := x"0000";
 		result(16#0484#) := x"0000";
 		result(16#0485#) := x"0005";
+		result(16#0800#) := x"F200";
+		result(16#0801#) := x"1F1E";
+		result(16#0802#) := x"F239";
+		result(16#0803#) := x"6700";
+		result(16#0804#) := x"0000";
+		result(16#0805#) := x"0B20";
+		result(16#0806#) := x"F200";
+		result(16#0807#) := x"1E9F";
+		result(16#0808#) := x"F239";
+		result(16#0809#) := x"6680";
+		result(16#080A#) := x"0000";
+		result(16#080B#) := x"0B24";
+		result(16#080C#) := x"F200";
+		result(16#080D#) := x"1FA8";
+		result(16#080E#) := x"F200";
+		result(16#080F#) := x"1FB8";
+		result(16#0810#) := x"F239";
+		result(16#0811#) := x"6780";
+		result(16#0812#) := x"0000";
+		result(16#0813#) := x"0B14";
+		result(16#0814#) := x"4E72";
+		result(16#0815#) := x"2700";
 		return result;
 	end function;
 
@@ -195,6 +210,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal movem_transfer_count : natural range 0 to 48 := 0;
 	signal movem_address_write_count : natural range 0 to 4 := 0;
 	signal unary_result_write_count : natural range 0 to 2 := 0;
+	signal extraction_result_write_count : natural range 0 to 4 := 0;
 	signal binary_result_write_count : natural range 0 to 8 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
@@ -308,6 +324,11 @@ begin
 				if addr_out = x"00000B00" or addr_out = x"00000B02" then
 					unary_result_write_count <= unary_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B20" or addr_out = x"00000B22" or
+						addr_out = x"00000B24" or addr_out = x"00000B26" then
+					extraction_result_write_count <=
+						extraction_result_write_count + 1;
+				end if;
 				if addr_out = x"00000B10" or addr_out = x"00000B12" or
 						addr_out = x"00000B14" or addr_out = x"00000B16" or
 						addr_out = x"00000B18" or addr_out = x"00000B1A" or
@@ -315,7 +336,7 @@ begin
 					binary_result_write_count <= binary_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000001FA" then
+			if busstate = "00" and addr_out = x"00001028" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -335,6 +356,7 @@ begin
 				movem_transfer_count = 48 and
 				movem_address_write_count = 4 and
 				unary_result_write_count = 2 and
+				extraction_result_write_count = 4 and
 				binary_result_write_count = 8 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -397,6 +419,14 @@ begin
 			report "TG68K FPU unary instruction stream result mismatch: " &
 				to_hstring(memory(16#0580#)) & to_hstring(memory(16#0581#))
 			severity failure;
+		assert extraction_result_write_count = 4 and
+			memory(16#0590#) = x"0000" and memory(16#0591#) = x"0000" and
+			memory(16#0592#) = x"3F80" and memory(16#0593#) = x"0000"
+			report "TG68K FPU extraction instruction stream mismatch: " &
+				to_hstring(memory(16#0590#)) & to_hstring(memory(16#0591#)) &
+				" " & to_hstring(memory(16#0592#)) &
+				to_hstring(memory(16#0593#))
+			severity failure;
 		assert binary_result_write_count = 8 and
 			memory(16#0588#) = x"4320" and memory(16#0589#) = x"0001" and
 			memory(16#058A#) = x"0000" and memory(16#058B#) = x"0000" and
@@ -410,7 +440,7 @@ begin
 				" " & to_hstring(memory(16#058E#)) &
 				to_hstring(memory(16#058F#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, unary and binary operations, FMOVEM, and control state"
+		report "PASS: TG68K instruction-level FPU moves, extraction, arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
