@@ -252,6 +252,17 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_memory_nlds : std_logic;
 	signal binary_memory_fc : std_logic_vector(2 downto 0);
 
+	signal constant_implemented : std_logic;
+	signal constant_start : std_logic;
+	signal constant_fp_write : std_logic;
+	signal constant_fp_write_data : fpu_extended_t;
+	signal constant_status_write : std_logic;
+	signal constant_condition_codes_write : std_logic;
+	signal constant_condition_codes : std_logic_vector(3 downto 0);
+	signal constant_exception_status : std_logic_vector(7 downto 0);
+	signal constant_busy : std_logic;
+	signal constant_done : std_logic;
+
 	signal effective_address_latched : std_logic_vector(31 downto 0) :=
 		(others => '0');
 	signal address_mode_latched : std_logic_vector(2 downto 0) := "000";
@@ -309,6 +320,8 @@ begin
 	movem_implemented <= '1' when
 		decoded_family = FPU_FAMILY_MOVEM_TO_FP or
 		decoded_family = FPU_FAMILY_MOVEM_FROM_FP else '0';
+	constant_implemented <= '1' when
+		decoded_family = FPU_FAMILY_MOVE_CONSTANT else '0';
 	unary_implemented <= '1' when
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION) and
@@ -333,11 +346,12 @@ begin
 		(decoded_format /= FPU_FORMAT_PACKED and
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED)) else '0';
 	operation_implemented <= move_implemented or control_implemented or
-		movem_implemented or unary_implemented or binary_implemented;
+		movem_implemented or constant_implemented or unary_implemented or
+		binary_implemented;
 	operation_busy <= move_busy or control_busy or movem_busy or unary_busy or
-		binary_busy;
+		binary_busy or constant_busy;
 	operation_done <= move_done or control_done or movem_done or unary_done or
-		binary_done;
+		binary_done or constant_done;
 	subsystem_reset <= nReset and not null_restore;
 
 	move_start <= instruction_start and decoded_match and decoded_valid and
@@ -346,6 +360,8 @@ begin
 		control_implemented and not operation_busy;
 	movem_start <= instruction_start and decoded_match and decoded_valid and
 		movem_implemented and not operation_busy;
+	constant_start <= instruction_start and decoded_match and decoded_valid and
+		constant_implemented and not operation_busy;
 	unary_start <= instruction_start and decoded_match and decoded_valid and
 		unary_implemented and not operation_busy;
 	binary_start <= instruction_start and decoded_match and decoded_valid and
@@ -381,15 +397,17 @@ begin
 		decoded_source_register when unary_start = '1' else
 		move_source_select when move_start = '1' else
 		destination_select_latched when binary_busy = '1' else
+		destination_select_latched when constant_fp_write = '1' else
 		destination_select_latched when unary_fp_write = '1' else
 		destination_select_latched when move_fp_write = '1' else
 		source_select_latched;
-	fpiar_write <= move_start or unary_start or binary_start when
+	fpiar_write <= move_start or unary_start or binary_start or constant_start when
 		fpcr(15 downto 8) /= x"00" else '0';
 
 	movem_register_mask <= integer_register_data(7 downto 0) when
 		command_word(11) = '1' else decoded_register_list;
-	operation_byte_count <= movem_byte_count(movem_register_mask) when
+	operation_byte_count <= 0 when constant_implemented = '1' else
+		movem_byte_count(movem_register_mask) when
 		movem_implemented = '1' else
 		control_byte_count(decoded_control_registers) when
 		control_implemented = '1' else
@@ -413,7 +431,8 @@ begin
 		opcode(5 downto 3) = "000" or
 		(control_implemented = '1' and opcode(5 downto 3) = "001" and
 		decoded_control_registers = "001") else decoded_requires_ea;
-	instruction_operand_format <= FPU_FORMAT_LONG_INTEGER when
+	instruction_operand_format <= FPU_FORMAT_EXTENDED when
+		constant_implemented = '1' else FPU_FORMAT_LONG_INTEGER when
 		control_implemented = '1' else FPU_FORMAT_EXTENDED when
 		movem_implemented = '1' else decoded_format;
 	integer_register_select <= integer_operand_select when operation_busy = '0' else
@@ -481,23 +500,27 @@ begin
 	state_control_write <= fpiar_write or control_register_write;
 	state_control_write_data <= instruction_address when fpiar_write = '1' else
 		control_register_write_data;
-	state_fp_write <= move_fp_write or movem_fp_write or unary_fp_write or
-		binary_fp_write;
+	state_fp_write <= move_fp_write or movem_fp_write or constant_fp_write or
+		unary_fp_write or binary_fp_write;
 	state_fp_write_data <= binary_fp_write_data when binary_fp_write = '1' else
+		constant_fp_write_data when constant_fp_write = '1' else
 		unary_fp_write_data when unary_fp_write = '1' else
 		movem_fp_write_data when movem_fp_write = '1' else
 		move_fp_write_data;
-	state_status_write <= move_status_write or unary_status_write or
-		binary_status_write;
+	state_status_write <= move_status_write or constant_status_write or
+		unary_status_write or binary_status_write;
 	state_condition_codes_write <= binary_condition_codes_write when
 		binary_status_write = '1' else unary_condition_codes_write when
-		unary_status_write = '1' else move_condition_codes_write;
+		unary_status_write = '1' else constant_condition_codes_write when
+		constant_status_write = '1' else move_condition_codes_write;
 	state_condition_codes <= binary_condition_codes when
 		binary_status_write = '1' else unary_condition_codes when
-		unary_status_write = '1' else move_condition_codes;
+		unary_status_write = '1' else constant_condition_codes when
+		constant_status_write = '1' else move_condition_codes;
 	state_exception_status <= binary_exception_status when
 		binary_status_write = '1' else unary_exception_status when
-		unary_status_write = '1' else move_exception_status;
+		unary_status_write = '1' else constant_exception_status when
+		constant_status_write = '1' else move_exception_status;
 
 	dispatch_state : process(clk)
 	begin
@@ -632,6 +655,24 @@ begin
 			busy => movem_busy,
 			done => movem_done,
 			bus_error_exception => movem_bus_error
+		);
+
+	constant_controller : entity work.TG68K_FPU_Constant_Controller
+		port map(
+			clk => clk,
+			nReset => subsystem_reset,
+			start => constant_start,
+			rom_offset => command_word(5 downto 0),
+			rounding_precision => rounding_precision,
+			rounding_mode => rounding_mode,
+			fp_register_write => constant_fp_write,
+			fp_register_write_data => constant_fp_write_data,
+			operation_status_write => constant_status_write,
+			condition_codes_write => constant_condition_codes_write,
+			operation_condition_codes => constant_condition_codes,
+			operation_exception_status => constant_exception_status,
+			busy => constant_busy,
+			done => constant_done
 		);
 
 	unary_controller : entity work.TG68K_FPU_Unary_Controller

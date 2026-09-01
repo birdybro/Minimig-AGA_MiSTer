@@ -163,7 +163,7 @@ begin
 						when "010" =>
 							if command_word(12 downto 10) = "111" then
 								decoded_family := FPU_FAMILY_MOVE_CONSTANT;
-								valid := true;
+								valid := command_word(6) = '0';
 							else
 								decoded_family := FPU_FAMILY_EXTERNAL_OPERATION;
 								decoded_operation := fpu_decode_operation(

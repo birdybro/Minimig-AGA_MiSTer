@@ -106,7 +106,9 @@ begin
 			FPU_FAMILY_EXTERNAL_OPERATION);
 		assert operand_format = FPU_FORMAT_EXTENDED
 			report "external extended format was not decoded" severity failure;
-		check_decode(x"F23F", x"5C7F", '1', '1', '1', '0',
+		check_decode(x"F23F", x"5C3F", '1', '1', '1', '0',
+			FPU_FAMILY_MOVE_CONSTANT);
+		check_decode(x"F23F", x"5C40", '1', '0', '1', '0',
 			FPU_FAMILY_MOVE_CONSTANT);
 
 		check_decode(x"F200", x"6400", '1', '1', '1', '1',

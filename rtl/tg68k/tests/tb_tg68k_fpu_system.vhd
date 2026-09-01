@@ -459,6 +459,39 @@ begin
 			report "FPCR-to-data-register transfer mismatch" severity failure;
 
 		clear_observations;
+		start_instruction(x"F200", x"5D0C", '1');
+		assert instruction_requires_effective_address = '0' and
+			instruction_operand_format = FPU_FORMAT_EXTENDED
+			report "FMOVECR requested an external operand" severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(2) = x"4000ADF85458A2BB5000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "double/plus FMOVECR system result mismatch" severity failure;
+
+		clear_observations;
+		integer_register_data <= x"00000200";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"5D80", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_INEX2 and
+			fp_registers(3) = x"4000C90FDAA22168C235" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02" and
+			fpsr(FPU_FPSR_AEXC_INEX_BIT) = '1' and fpiar = x"00000400" and
+			trace_count = 0
+			report "enabled FMOVECR inexact exception mismatch" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
+		clear_observations;
 		effective_address <= x"00002000";
 		function_code <= "101";
 		start_instruction(x"F210", x"9C00", '1');

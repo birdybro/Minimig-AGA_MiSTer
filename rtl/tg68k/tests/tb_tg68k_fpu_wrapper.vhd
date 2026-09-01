@@ -252,8 +252,14 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0852#) := x"6600";
 		result(16#0853#) := x"0000";
 		result(16#0854#) := x"0B4C";
-		result(16#0855#) := x"4E72";
-		result(16#0856#) := x"2700";
+		result(16#0855#) := x"F200";
+		result(16#0856#) := x"5E00";
+		result(16#0857#) := x"F239";
+		result(16#0858#) := x"6600";
+		result(16#0859#) := x"0000";
+		result(16#085A#) := x"0B50";
+		result(16#085B#) := x"4E72";
+		result(16#085C#) := x"2700";
 		return result;
 	end function;
 
@@ -286,6 +292,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal fpsr_result_write_count : natural range 0 to 2 := 0;
 	signal binary_result_write_count : natural range 0 to 8 := 0;
 	signal single_result_write_count : natural range 0 to 4 := 0;
+	signal constant_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -428,8 +435,11 @@ begin
 						addr_out = x"00000B4C" or addr_out = x"00000B4E" then
 					single_result_write_count <= single_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B50" or addr_out = x"00000B52" then
+					constant_result_write_count <= constant_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000010AA" then
+			if busstate = "00" and addr_out = x"000010B6" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -455,7 +465,8 @@ begin
 				remainder_result_write_count = 4 and
 				fpsr_result_write_count = 2 and
 				binary_result_write_count = 8 and
-				single_result_write_count = 4 and post_fpu_fetch = '1';
+				single_result_write_count = 4 and
+				constant_result_write_count = 2 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -572,7 +583,13 @@ begin
 				to_hstring(memory(16#05A6#)) &
 				to_hstring(memory(16#05A7#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
+		assert constant_result_write_count = 2 and
+			memory(16#05A8#) = x"4049" and memory(16#05A9#) = x"0FDB"
+			report "TG68K FMOVECR instruction stream mismatch: " &
+				to_hstring(memory(16#05A8#)) &
+				to_hstring(memory(16#05A9#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, constants, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
