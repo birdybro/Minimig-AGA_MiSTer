@@ -125,6 +125,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_latched : std_logic := '0';
 	signal exponential_base_latched : fpu_exponential_base_t :=
 		FPU_EXP_BASE_TWO;
+	signal exponential_minus_one_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -351,6 +352,7 @@ begin
 			start => exponential_start,
 			source => source_latched,
 			exponential_base => exponential_base_latched,
+			subtract_one => exponential_minus_one_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -493,6 +495,7 @@ begin
 				ieee_remainder_latched <= '0';
 				exponential_latched <= '0';
 				exponential_base_latched <= FPU_EXP_BASE_TWO;
+				exponential_minus_one_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -577,17 +580,24 @@ begin
 							end if;
 							if operation = FPU_OP_TWOTOX or
 									operation = FPU_OP_ETOX or
-									operation = FPU_OP_TENTOX then
+									operation = FPU_OP_TENTOX or
+									operation = FPU_OP_ETOXM1 then
 								exponential_latched <= '1';
 							else
 								exponential_latched <= '0';
 							end if;
-							if operation = FPU_OP_ETOX then
+							if operation = FPU_OP_ETOX or
+									operation = FPU_OP_ETOXM1 then
 								exponential_base_latched <= FPU_EXP_BASE_E;
 							elsif operation = FPU_OP_TENTOX then
 								exponential_base_latched <= FPU_EXP_BASE_TEN;
 							else
 								exponential_base_latched <= FPU_EXP_BASE_TWO;
+							end if;
+							if operation = FPU_OP_ETOXM1 then
+								exponential_minus_one_latched <= '1';
+							else
+								exponential_minus_one_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;

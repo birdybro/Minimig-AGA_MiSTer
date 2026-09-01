@@ -1079,6 +1079,32 @@ begin
 		command_word <= x"0000";
 		wait_done;
 		clear_observations;
+		start_instruction(x"F200", x"0E08", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(4) = x"3FFFDBF0A8B145769535" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "register FETOXM1 system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4608", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"BFFEC6E0F11B6947C537" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02"
+			report "memory single FETOXM1 system result mismatch" severity failure;
+
+		integer_register_data <= x"00000001";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
 		start_instruction(x"F200", x"0E12", '1');
 		command_word <= x"0000";
 		wait_done;

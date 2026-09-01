@@ -24,6 +24,7 @@ entity TG68K_FPU_Exponential is
 		start : in std_logic;
 		source : in fpu_extended_t;
 		exponential_base : in fpu_exponential_base_t;
+		subtract_one : in std_logic;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -41,9 +42,18 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant FRACTION_BITS : natural := 96;
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant FIXED_WIDTH : natural := FRACTION_BITS + 16;
+	constant SERIES_WIDTH : natural := 197;
+	constant SERIES_NORMAL_BIT : natural := 195;
+	constant SERIES_CUBIC_MAX_EXPONENT : integer := -26;
+	constant SERIES_CUBIC_MIN_EXPONENT : integer := -32;
+	constant CUBE_SQUARE_LOW_BIT : natural := 112;
+	constant CUBE_ALIGNMENT_BASE : integer := 118;
+	constant NEGATIVE_REMAINDER_BOUND_BIT : natural := 118;
 	type exponential_state_t is
-		(IDLE, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO, MULTIPLY_LOG2,
-			LOAD_CORDIC_ANGLE, CORDIC, COMPLETE);
+		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
+			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
+			MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC, ALIGN_SUBTRACTION,
+			NORMALIZE_SUBTRACTION, WRITE_PENDING_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
@@ -124,6 +134,26 @@ architecture rtl of TG68K_FPU_Exponential is
 		(others => '0');
 	signal scale_index : natural range 0 to FIXED_WIDTH - 1 := 0;
 	signal source_sign_latched : std_logic := '0';
+	signal subtract_one_latched : std_logic := '0';
+	signal series_source_significand : unsigned(63 downto 0) :=
+		(others => '0');
+	signal series_exponent : signed(16 downto 0) := (others => '0');
+	signal series_multiplier : unsigned(63 downto 0) := (others => '0');
+	signal series_multiplicand : unsigned(127 downto 0) := (others => '0');
+	signal series_product : unsigned(127 downto 0) := (others => '0');
+	signal series_index : natural range 0 to 79 := 0;
+	signal cube_accumulator : unsigned(79 downto 0) := (others => '0');
+	signal cube_remainder : natural range 0 to 5 := 0;
+	signal subtraction_value : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
+	signal subtraction_one : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
+	signal subtraction_exponent : signed(16 downto 0) := (others => '0');
+	signal subtraction_shift_count : natural range 0 to FRACTION_BITS := 0;
+	signal subtraction_sticky : std_logic := '0';
+	signal pending_sign : std_logic := '0';
+	signal pending_exponent : signed(16 downto 0) := (others => '0');
+	signal pending_significand : fpu_significand_grs_t := (others => '0');
 	signal result_exponent : signed(16 downto 0) := (others => '0');
 	signal cordic_x : cordic_value_t := (others => '0');
 	signal cordic_y : cordic_value_t := (others => '0');
@@ -201,12 +231,116 @@ begin
 	end process;
 
 	exponential_sequence : process(clk)
+		procedure complete_subtraction(
+				constant difference : in unsigned(CORDIC_WIDTH downto 0);
+				constant difference_exponent : in signed(16 downto 0);
+				constant difference_sign : in std_logic;
+				constant prior_sticky : in std_logic) is
+			variable final_significand : fpu_significand_grs_t;
+		begin
+			final_significand := (others => '0');
+			final_significand(66 downto 3) := difference(
+				FRACTION_BITS downto FRACTION_BITS - 63);
+			final_significand(2) := difference(FRACTION_BITS - 64);
+			final_significand(1) := difference(FRACTION_BITS - 65);
+			final_significand(0) := prior_sticky or or_reduce(difference(
+				FRACTION_BITS - 66 downto 0));
+			pending_sign <= difference_sign;
+			pending_exponent <= difference_exponent;
+			pending_significand <= final_significand;
+			state <= WRITE_PENDING_RESULT;
+		end procedure;
+
+		procedure complete_exponential(
+			constant exponential_significand : in unsigned(CORDIC_WIDTH downto 0);
+			constant exponential_exponent : in signed(16 downto 0);
+			constant minus_one : in std_logic) is
+			variable normalized_value : unsigned(CORDIC_WIDTH downto 0);
+			variable normalized_exponent : signed(16 downto 0);
+			variable one_value : unsigned(CORDIC_WIDTH downto 0);
+			variable difference_value : unsigned(CORDIC_WIDTH downto 0);
+			variable final_significand : fpu_significand_grs_t;
+			variable exponent_integer : integer range -65536 to 65535;
+		begin
+			normalized_value := exponential_significand;
+			normalized_exponent := exponential_exponent;
+			if normalized_value(FRACTION_BITS + 1) = '1' then
+				normalized_value := shift_right(normalized_value, 1);
+				normalized_exponent := exponential_exponent + 1;
+			elsif normalized_value(FRACTION_BITS) = '0' then
+				normalized_value := shift_left(normalized_value, 1);
+				normalized_exponent := exponential_exponent - 1;
+			end if;
+
+			if minus_one = '0' then
+				final_significand := (others => '0');
+				final_significand(66 downto 3) := normalized_value(
+					FRACTION_BITS downto FRACTION_BITS - 63);
+				final_significand(2) := normalized_value(FRACTION_BITS - 64);
+				final_significand(1) := normalized_value(FRACTION_BITS - 65);
+				final_significand(0) := or_reduce(normalized_value(
+					FRACTION_BITS - 66 downto 0));
+				intermediate_class <= FPU_CLASS_NORMAL;
+				intermediate_sign <= '0';
+				intermediate_exponent <= normalized_exponent;
+				intermediate_significand <= final_significand;
+				state <= COMPLETE;
+				return;
+			end if;
+
+			one_value := (others => '0');
+			one_value(FRACTION_BITS) := '1';
+			exponent_integer := to_integer(normalized_exponent);
+			if exponent_integer < 0 then
+				intermediate_sign <= '1';
+				if -exponent_integer > FRACTION_BITS then
+					pending_sign <= '1';
+					pending_exponent <= to_signed(-1, 17);
+					pending_significand <= (others => '1');
+					state <= WRITE_PENDING_RESULT;
+				else
+					subtraction_value <= normalized_value;
+					subtraction_one <= one_value;
+					subtraction_exponent <= (others => '0');
+					subtraction_shift_count <= -exponent_integer;
+					subtraction_sticky <= '0';
+					state <= ALIGN_SUBTRACTION;
+				end if;
+			else
+				intermediate_sign <= '0';
+				if exponent_integer > FRACTION_BITS then
+					complete_subtraction(normalized_value,
+						normalized_exponent, '0', '1');
+				elsif exponent_integer = 0 then
+					difference_value := normalized_value - one_value;
+					if difference_value(FRACTION_BITS) = '1' then
+						complete_subtraction(difference_value,
+							normalized_exponent, '0', '0');
+					else
+						subtraction_value <= difference_value;
+						subtraction_exponent <= normalized_exponent;
+						subtraction_sticky <= '0';
+						state <= NORMALIZE_SUBTRACTION;
+					end if;
+				else
+					subtraction_value <= normalized_value;
+					subtraction_one <= one_value;
+					subtraction_exponent <= normalized_exponent;
+					subtraction_shift_count <= exponent_integer;
+					subtraction_sticky <= '0';
+					state <= ALIGN_SUBTRACTION;
+				end if;
+			end if;
+		end procedure;
+
 		procedure begin_reduced_exponential(
 			constant magnitude : in unsigned(FIXED_WIDTH - 1 downto 0);
-			constant sign_value : in std_logic) is
+			constant sign_value : in std_logic;
+			constant minus_one : in std_logic) is
 			variable integer_magnitude : natural range 0 to 65535;
 			variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 			variable exponent_value : integer range -65536 to 65535;
+			variable unit_value : unsigned(CORDIC_WIDTH downto 0);
 		begin
 			integer_magnitude := to_integer(magnitude(
 				FIXED_WIDTH - 1 downto FRACTION_BITS));
@@ -224,16 +358,44 @@ begin
 			result_exponent <= to_signed(exponent_value, 17);
 			base_status(1) <= '1';
 			if fraction_value = 0 then
-				intermediate_class <= FPU_CLASS_NORMAL;
-				intermediate_exponent <= to_signed(exponent_value, 17);
-				intermediate_significand(66) <= '1';
-				state <= COMPLETE;
+				unit_value := (others => '0');
+				unit_value(FRACTION_BITS) := '1';
+				complete_exponential(unit_value,
+					to_signed(exponent_value, 17), minus_one);
 			else
 				fraction_register <= fraction_value;
 				product_accumulator <= (others => '0');
 				multiply_index <= 0;
 				state <= MULTIPLY_LOG2;
 			end if;
+		end procedure;
+
+		procedure complete_small_series(
+				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
+			variable final_significand : fpu_significand_grs_t;
+		begin
+			final_significand := (others => '0');
+			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
+				final_significand(66 downto 1) := series_result(
+					SERIES_NORMAL_BIT + 1 downto SERIES_NORMAL_BIT - 64);
+			elsif series_result(SERIES_NORMAL_BIT) = '1' then
+				final_significand(66 downto 1) := series_result(
+					SERIES_NORMAL_BIT downto SERIES_NORMAL_BIT - 65);
+			else
+				final_significand(66 downto 1) := series_result(
+					SERIES_NORMAL_BIT - 1 downto SERIES_NORMAL_BIT - 66);
+			end if;
+			final_significand(0) := '1';
+			pending_sign <= source_sign_latched;
+			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
+				pending_exponent <= series_exponent + 1;
+			elsif series_result(SERIES_NORMAL_BIT) = '1' then
+				pending_exponent <= series_exponent;
+			else
+				pending_exponent <= series_exponent - 1;
+			end if;
+			pending_significand <= final_significand;
+			state <= WRITE_PENDING_RESULT;
 		end procedure;
 
 		variable source_class : fpu_data_class_t;
@@ -253,9 +415,25 @@ begin
 		variable next_z : cordic_value_t;
 		variable next_angle : cordic_value_t;
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
-		variable normalized_sum : unsigned(CORDIC_WIDTH downto 0);
-		variable final_exponent : signed(16 downto 0);
-		variable final_significand : fpu_significand_grs_t;
+		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
+		variable square_sum : unsigned(127 downto 0);
+		variable next_square : unsigned(127 downto 0);
+		variable cube_sum : unsigned(79 downto 0);
+		variable next_cube : unsigned(79 downto 0);
+		variable next_cube_quotient : unsigned(79 downto 0);
+		variable division_trial : natural range 0 to 11;
+		variable next_subtraction : unsigned(CORDIC_WIDTH downto 0);
+		variable next_subtraction_one : unsigned(CORDIC_WIDTH downto 0);
+		variable subtraction_difference : unsigned(CORDIC_WIDTH downto 0);
+		variable next_subtraction_sticky : std_logic;
+		variable next_subtraction_exponent : signed(16 downto 0);
+		variable series_base : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable tiny_significand : fpu_significand_grs_t;
+		variable series_shift : natural range 1 to 42;
+		variable cube_alignment_shift : natural range 54 to 66;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -267,6 +445,23 @@ begin
 				scale_accumulator <= (others => '0');
 				scale_index <= 0;
 				source_sign_latched <= '0';
+				subtract_one_latched <= '0';
+				series_source_significand <= (others => '0');
+				series_exponent <= (others => '0');
+				series_multiplier <= (others => '0');
+				series_multiplicand <= (others => '0');
+				series_product <= (others => '0');
+				series_index <= 0;
+				cube_accumulator <= (others => '0');
+				cube_remainder <= 0;
+				subtraction_value <= (others => '0');
+				subtraction_one <= (others => '0');
+				subtraction_exponent <= (others => '0');
+				subtraction_shift_count <= 0;
+				subtraction_sticky <= '0';
+				pending_sign <= '0';
+				pending_exponent <= (others => '0');
+				pending_significand <= (others => '0');
 				result_exponent <= (others => '0');
 				cordic_x <= (others => '0');
 				cordic_y <= (others => '0');
@@ -296,6 +491,23 @@ begin
 							scale_accumulator <= (others => '0');
 							scale_index <= 0;
 							source_sign_latched <= source(79);
+							subtract_one_latched <= subtract_one;
+							series_source_significand <= (others => '0');
+							series_exponent <= (others => '0');
+							series_multiplier <= (others => '0');
+							series_multiplicand <= (others => '0');
+							series_product <= (others => '0');
+							series_index <= 0;
+							cube_accumulator <= (others => '0');
+							cube_remainder <= 0;
+							subtraction_value <= (others => '0');
+							subtraction_one <= (others => '0');
+							subtraction_exponent <= (others => '0');
+							subtraction_shift_count <= 0;
+							subtraction_sticky <= '0';
+							pending_sign <= '0';
+							pending_exponent <= (others => '0');
+							pending_significand <= (others => '0');
 							result_exponent <= (others => '0');
 							cordic_x <= (others => '0');
 							cordic_y <= (others => '0');
@@ -322,11 +534,20 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								intermediate_class <= FPU_CLASS_NORMAL;
-								intermediate_significand(66) <= '1';
+								if subtract_one = '1' then
+									intermediate_class <= FPU_CLASS_ZERO;
+									intermediate_sign <= source(79);
+								else
+									intermediate_class <= FPU_CLASS_NORMAL;
+									intermediate_significand(66) <= '1';
+								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
-								if source(79) = '1' then
+								if subtract_one = '1' and source(79) = '1' then
+									intermediate_class <= FPU_CLASS_NORMAL;
+									intermediate_sign <= '1';
+									intermediate_significand(66) <= '1';
+								elsif source(79) = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 								else
 									intermediate_class <= FPU_CLASS_INFINITY;
@@ -340,61 +561,203 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
-								magnitude_fixed := (others => '0');
-								shift_amount := source_exponent + FRACTION_BITS - 63;
-								if (exponential_base = FPU_EXP_BASE_TWO and
-										source_exponent > 15) or
-										(exponential_base = FPU_EXP_BASE_E and
-										source_exponent > 13) or
-										(exponential_base = FPU_EXP_BASE_TEN and
-										source_exponent > 12) then
-									if source(79) = '1' then
-										exponent_value := -65536;
-									else
-										exponent_value := 65535;
-									end if;
-									intermediate_class <= FPU_CLASS_NORMAL;
-									intermediate_exponent <= to_signed(exponent_value, 17);
-									intermediate_significand(66) <= '1';
+								if subtract_one = '1' and
+										source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
 									base_status(1) <= '1';
-									state <= COMPLETE;
-								else
-									if shift_amount >= 0 then
-										magnitude_fixed := shift_left(resize(
-											source_significand, FIXED_WIDTH), shift_amount);
-									elsif -shift_amount < FIXED_WIDTH then
-										magnitude_fixed := shift_right(resize(
-											source_significand, FIXED_WIDTH), -shift_amount);
-									end if;
-									if magnitude_fixed = 0 then
-										intermediate_class <= FPU_CLASS_NORMAL;
-										base_status(1) <= '1';
+									if source_exponent < -67 then
+										tiny_significand := shift_left(resize(
+											source_significand, 67), 3);
 										if source(79) = '0' then
-											intermediate_significand(66) <= '1';
-											intermediate_significand(0) <= '1';
+											tiny_significand := tiny_significand + 1;
 										else
-											intermediate_exponent <= to_signed(-1, 17);
-											intermediate_significand <= (others => '1');
+											tiny_significand := tiny_significand - 1;
+										end if;
+										intermediate_class <= FPU_CLASS_NORMAL;
+										intermediate_sign <= source(79);
+										if tiny_significand(66) = '0' then
+											intermediate_exponent <= to_signed(
+												source_exponent - 1, 17);
+											intermediate_significand <= shift_left(
+												tiny_significand, 1);
+										else
+											intermediate_exponent <= to_signed(
+												source_exponent, 17);
+											intermediate_significand <= tiny_significand;
 										end if;
 										state <= COMPLETE;
 									else
-										if exponential_base = FPU_EXP_BASE_E then
-											scale_magnitude_register <= magnitude_fixed;
-											scale_accumulator <= (others => '0');
-											scale_index <= 0;
-											state <= SCALE_E_TO_BASE_TWO;
-										elsif exponential_base = FPU_EXP_BASE_TEN then
-											scale_magnitude_register <= magnitude_fixed;
-											scale_accumulator <= (others => '0');
-											scale_index <= 0;
-											state <= SCALE_TEN_TO_BASE_TWO;
+										series_source_significand <= source_significand;
+										series_exponent <= to_signed(source_exponent, 17);
+										series_multiplier <= source_significand;
+										series_multiplicand <= resize(source_significand, 128);
+										series_product <= (others => '0');
+										series_index <= 0;
+										state <= SQUARE_SMALL_ARGUMENT;
+									end if;
+								else
+									magnitude_fixed := (others => '0');
+									shift_amount := source_exponent + FRACTION_BITS - 63;
+									if (exponential_base = FPU_EXP_BASE_TWO and
+											source_exponent > 15) or
+											(exponential_base = FPU_EXP_BASE_E and
+											source_exponent > 13) or
+											(exponential_base = FPU_EXP_BASE_TEN and
+											source_exponent > 12) then
+										intermediate_class <= FPU_CLASS_NORMAL;
+										base_status(1) <= '1';
+										if subtract_one = '1' and source(79) = '1' then
+											intermediate_sign <= '1';
+											intermediate_exponent <= to_signed(-1, 17);
+											intermediate_significand <= (others => '1');
 										else
-											begin_reduced_exponential(
-												magnitude_fixed, source(79));
+											if source(79) = '1' then
+												exponent_value := -65536;
+											else
+												exponent_value := 65535;
+											end if;
+											intermediate_exponent <= to_signed(
+												exponent_value, 17);
+											intermediate_significand(66) <= '1';
+										end if;
+										state <= COMPLETE;
+									else
+										if shift_amount >= 0 then
+											magnitude_fixed := shift_left(resize(
+												source_significand, FIXED_WIDTH), shift_amount);
+										elsif -shift_amount < FIXED_WIDTH then
+											magnitude_fixed := shift_right(resize(
+												source_significand, FIXED_WIDTH), -shift_amount);
+										end if;
+										if magnitude_fixed = 0 then
+											intermediate_class <= FPU_CLASS_NORMAL;
+											base_status(1) <= '1';
+											if source(79) = '0' then
+												intermediate_significand(66) <= '1';
+												intermediate_significand(0) <= '1';
+											else
+												intermediate_exponent <= to_signed(-1, 17);
+												intermediate_significand <= (others => '1');
+											end if;
+											state <= COMPLETE;
+										else
+											if exponential_base = FPU_EXP_BASE_E then
+												scale_magnitude_register <= magnitude_fixed;
+												scale_accumulator <= (others => '0');
+												scale_index <= 0;
+												state <= SCALE_E_TO_BASE_TWO;
+											elsif exponential_base = FPU_EXP_BASE_TEN then
+												scale_magnitude_register <= magnitude_fixed;
+												scale_accumulator <= (others => '0');
+												scale_index <= 0;
+												state <= SCALE_TEN_TO_BASE_TWO;
+											else
+												begin_reduced_exponential(
+													magnitude_fixed, source(79), subtract_one);
+											end if;
 										end if;
 									end if;
 								end if;
 							end if;
+						end if;
+
+					when SQUARE_SMALL_ARGUMENT =>
+						square_sum := series_product;
+						if series_multiplier(0) = '1' then
+							square_sum := square_sum + series_multiplicand;
+						end if;
+						next_square := square_sum;
+						if series_index = 63 then
+							series_product <= next_square;
+							series_base := shift_left(resize(
+								series_source_significand, SERIES_WIDTH),
+								SERIES_NORMAL_BIT - 63);
+							series_shift := to_integer(series_exponent) + 68;
+							series_correction := shift_left(resize(
+								next_square, SERIES_WIDTH), series_shift);
+							if to_integer(series_exponent) <
+									SERIES_CUBIC_MIN_EXPONENT then
+								if source_sign_latched = '0' then
+									series_value := series_base + series_correction;
+								else
+									series_value := series_base - series_correction;
+								end if;
+								complete_small_series(series_value);
+							else
+								series_multiplier <= series_source_significand;
+								-- The discarded square bits are below sticky throughout
+								-- the bounded cubic range.
+								series_multiplicand <= resize(next_square(
+									127 downto CUBE_SQUARE_LOW_BIT), 128);
+								cube_accumulator <= (others => '0');
+								series_index <= 0;
+								state <= CUBE_SMALL_ARGUMENT;
+							end if;
+						else
+							series_product <= next_square;
+							series_multiplier <= shift_right(series_multiplier, 1);
+							series_multiplicand <= shift_left(
+								series_multiplicand, 1);
+							series_index <= series_index + 1;
+						end if;
+
+					when CUBE_SMALL_ARGUMENT =>
+						cube_sum := cube_accumulator;
+						if series_multiplier(0) = '1' then
+							cube_sum := cube_sum + series_multiplicand(79 downto 0);
+						end if;
+						next_cube := cube_sum;
+						if series_index = 63 then
+							series_multiplicand <= resize(next_cube, 128);
+							cube_accumulator <= (others => '0');
+							cube_remainder <= 0;
+							series_index <= 0;
+							state <= DIVIDE_CUBE_TERM;
+						else
+							cube_accumulator <= next_cube;
+							series_multiplier <= shift_right(series_multiplier, 1);
+							series_multiplicand <= shift_left(
+								series_multiplicand, 1);
+							series_index <= series_index + 1;
+						end if;
+
+					when DIVIDE_CUBE_TERM =>
+						division_trial := cube_remainder * 2;
+						if series_multiplicand(79 - series_index) = '1' then
+							division_trial := division_trial + 1;
+						end if;
+						next_cube_quotient := cube_accumulator;
+						if division_trial >= 6 then
+							next_cube_quotient(79 - series_index) := '1';
+							division_trial := division_trial - 6;
+						end if;
+						if series_index = 79 then
+							series_base := shift_left(resize(
+								series_source_significand, SERIES_WIDTH),
+								SERIES_NORMAL_BIT - 63);
+							series_shift := to_integer(series_exponent) + 68;
+							series_correction := shift_left(resize(
+								series_product, SERIES_WIDTH), series_shift);
+							cube_alignment_shift := 2 *
+								to_integer(series_exponent) + CUBE_ALIGNMENT_BASE;
+							series_cube_correction := shift_left(resize(
+								next_cube_quotient, SERIES_WIDTH),
+								cube_alignment_shift);
+							if source_sign_latched = '0' then
+								series_value := series_base + series_correction +
+									series_cube_correction;
+							else
+								-- Bias below the alternating fourth-order remainder;
+								-- sticky then represents the exact negative magnitude.
+								series_value := series_base - series_correction +
+									series_cube_correction -
+									shift_left(to_unsigned(1, SERIES_WIDTH),
+										NEGATIVE_REMAINDER_BOUND_BIT);
+							end if;
+							complete_small_series(series_value);
+						else
+							cube_accumulator <= next_cube_quotient;
+							cube_remainder <= division_trial;
+							series_index <= series_index + 1;
 						end if;
 
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
@@ -412,7 +775,8 @@ begin
 						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
 							begin_reduced_exponential(next_scale(
-								FIXED_WIDTH - 1 downto 0), source_sign_latched);
+								FIXED_WIDTH - 1 downto 0), source_sign_latched,
+								subtract_one_latched);
 						else
 							scale_index <= scale_index + 1;
 						end if;
@@ -427,11 +791,13 @@ begin
 						product_accumulator <= next_accumulator;
 						if multiply_index = FRACTION_BITS - 1 then
 							if next_accumulator = 0 then
-								intermediate_class <= FPU_CLASS_NORMAL;
-								intermediate_exponent <= result_exponent;
-								intermediate_significand(66) <= '1';
-								intermediate_significand(0) <= '1';
-								state <= COMPLETE;
+								unit_result := (others => '0');
+								unit_result(FRACTION_BITS) := '1';
+								if subtract_one_latched = '0' then
+									unit_result(0) := '1';
+								end if;
+								complete_exponential(unit_result, result_exponent,
+									subtract_one_latched);
 							else
 								cordic_x <= CORDIC_INVERSE_GAIN;
 								cordic_y <= (others => '0');
@@ -478,28 +844,8 @@ begin
 						elsif cordic_iteration = FRACTION_BITS then
 							cordic_sum := resize(next_x, CORDIC_WIDTH + 1) +
 								resize(next_y, CORDIC_WIDTH + 1);
-							normalized_sum := unsigned(cordic_sum);
-							final_exponent := result_exponent;
-							if normalized_sum(FRACTION_BITS + 1) = '1' then
-								normalized_sum := shift_right(normalized_sum, 1);
-								final_exponent := result_exponent + 1;
-							elsif normalized_sum(FRACTION_BITS) = '0' then
-								normalized_sum := shift_left(normalized_sum, 1);
-								final_exponent := result_exponent - 1;
-							end if;
-							final_significand := (others => '0');
-							final_significand(66 downto 3) := normalized_sum(
-								FRACTION_BITS downto FRACTION_BITS - 63);
-							final_significand(2) :=
-								normalized_sum(FRACTION_BITS - 64);
-							final_significand(1) :=
-								normalized_sum(FRACTION_BITS - 65);
-							final_significand(0) := or_reduce(normalized_sum(
-								FRACTION_BITS - 66 downto 0));
-							intermediate_class <= FPU_CLASS_NORMAL;
-							intermediate_exponent <= final_exponent;
-							intermediate_significand <= final_significand;
-							state <= COMPLETE;
+							complete_exponential(unsigned(cordic_sum), result_exponent,
+								subtract_one_latched);
 						else
 							repeat_iteration <= '0';
 							cordic_iteration <= cordic_iteration + 1;
@@ -515,6 +861,65 @@ begin
 									shift_right(cordic_shift_angle, 1);
 							end if;
 						end if;
+
+					when ALIGN_SUBTRACTION =>
+						next_subtraction := subtraction_value;
+						next_subtraction_one := subtraction_one;
+						next_subtraction_sticky := subtraction_sticky;
+						if intermediate_sign = '1' then
+							next_subtraction_sticky := subtraction_sticky or
+								subtraction_value(0);
+							next_subtraction := shift_right(subtraction_value, 1);
+						else
+							next_subtraction_one := shift_right(subtraction_one, 1);
+						end if;
+						if subtraction_shift_count = 1 then
+							if intermediate_sign = '1' then
+								if next_subtraction_sticky = '1' then
+									subtraction_difference := subtraction_one -
+										next_subtraction - 1;
+								else
+									subtraction_difference := subtraction_one -
+										next_subtraction;
+								end if;
+							else
+								subtraction_difference := subtraction_value -
+									next_subtraction_one;
+							end if;
+							subtraction_value <= subtraction_difference;
+							subtraction_sticky <= next_subtraction_sticky;
+							subtraction_shift_count <= 0;
+							if subtraction_difference(FRACTION_BITS) = '1' then
+								complete_subtraction(subtraction_difference,
+									subtraction_exponent, intermediate_sign,
+									next_subtraction_sticky);
+							else
+								state <= NORMALIZE_SUBTRACTION;
+							end if;
+						else
+							subtraction_value <= next_subtraction;
+							subtraction_one <= next_subtraction_one;
+							subtraction_sticky <= next_subtraction_sticky;
+							subtraction_shift_count <= subtraction_shift_count - 1;
+						end if;
+
+					when NORMALIZE_SUBTRACTION =>
+						next_subtraction := shift_left(subtraction_value, 1);
+						next_subtraction_exponent := subtraction_exponent - 1;
+						subtraction_value <= next_subtraction;
+						subtraction_exponent <= next_subtraction_exponent;
+						if next_subtraction(FRACTION_BITS) = '1' then
+							complete_subtraction(next_subtraction,
+								next_subtraction_exponent, intermediate_sign,
+								subtraction_sticky);
+						end if;
+
+					when WRITE_PENDING_RESULT =>
+						intermediate_class <= FPU_CLASS_NORMAL;
+						intermediate_sign <= pending_sign;
+						intermediate_exponent <= pending_exponent;
+						intermediate_significand <= pending_significand;
+						state <= COMPLETE;
 
 					when COMPLETE => state <= IDLE;
 				end case;

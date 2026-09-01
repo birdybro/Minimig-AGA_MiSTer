@@ -291,6 +291,16 @@ begin
 			report "register FETOX controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_ETOXM1;
+		run_register_operation(x"3FFF8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFFDBF0A8B145769535" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FETOXM1 controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_TENTOX;
 		run_register_operation(x"3FFF8000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");

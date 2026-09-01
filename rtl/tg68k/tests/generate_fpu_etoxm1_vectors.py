@@ -15,7 +15,7 @@ from fpu_exact_reference import (
 )
 
 
-SEED = 0x68881212
+SEED = 0x68880808
 
 
 def encode_fraction(value: Fraction) -> int:
@@ -30,36 +30,43 @@ def source_values() -> list[int]:
         encode_fraction(value) for value in (
             Fraction(1, 2), Fraction(-1, 2), Fraction(1, 4),
             Fraction(-1, 4), Fraction(3, 4), Fraction(-3, 4),
-            Fraction(3, 2), Fraction(-3, 2), Fraction(13, 4),
-            Fraction(-43, 4), Fraction(4931), Fraction(-4931),
-            Fraction(4932), Fraction(-4932), Fraction(5000),
-            Fraction(-5000), Fraction(4095), Fraction(-4095),
+            Fraction(3, 2), Fraction(-3, 2),
+            Fraction(1, 1 << 26), Fraction(-1, 1 << 26),
+            Fraction(1, 1 << 27), Fraction(-1, 1 << 27),
+            Fraction(1, 1 << 28), Fraction(-1, 1 << 28),
+            Fraction(1, 1 << 29), Fraction(-1, 1 << 29),
+            Fraction(1, 1 << 30), Fraction(-1, 1 << 30),
+            Fraction(1, 1 << 31), Fraction(-1, 1 << 31),
+            Fraction(1, 1 << 32), Fraction(-1, 1 << 32),
+            Fraction(1, 1 << 33), Fraction(-1, 1 << 33),
+            Fraction(1, 1 << 67), Fraction(-1, 1 << 67),
+            Fraction(1, 1 << 68), Fraction(-1, 1 << 68),
         )
     ]
     rng = random.Random(SEED)
-    for _ in range(78):
+    for _ in range(68):
         sign = rng.randrange(2)
-        exponent = rng.randrange(-120, 5)
+        exponent = rng.randrange(-180, 5)
         significand = (1 << 63) | rng.getrandbits(63)
         values.append(encode_extended(sign, exponent, significand))
     return values
 
 
 @lru_cache(maxsize=None)
-def exact_tentox(source: int) -> Fraction:
+def exact_etoxm1(source: int) -> Fraction:
     source_value = extended_bits_value(source)
     with localcontext() as context:
-        context.prec = 220
+        context.prec = 350
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
-        result_decimal = (source_decimal * Decimal(10).ln()).exp()
+        result_decimal = source_decimal.exp() - 1
     return Fraction(result_decimal)
 
 
-def reference_tentox(source: int, precision_bits: int,
+def reference_etoxm1(source: int, precision_bits: int,
                      mode: int) -> tuple[int, int, int]:
     result, condition_codes, status = round_binary_precision(
-        exact_tentox(source), precision_bits, mode)
+        exact_etoxm1(source), precision_bits, mode)
     return result, condition_codes, status | 0x02
 
 
@@ -69,7 +76,7 @@ def make_vectors():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
-                result, condition_codes, status = reference_tentox(
+                result, condition_codes, status = reference_etoxm1(
                     source, precision_bits, mode)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
@@ -83,10 +90,10 @@ use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_tentox_differential is
+entity tb_tg68k_fpu_etoxm1_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_tentox_differential is
+architecture test of tb_tg68k_fpu_etoxm1_differential is
     constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
@@ -124,8 +131,8 @@ begin
             nReset => nReset,
             start => start,
             source => source,
-            exponential_base => FPU_EXP_BASE_TEN,
-            subtract_one => '0',
+            exponential_base => FPU_EXP_BASE_E,
+            subtract_one => '1',
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,
@@ -159,12 +166,12 @@ begin
                 wait for 1 ns;
                 cycles := cycles + 1;
                 assert cycles < 370
-                    report "differential FTENTOX timeout" severity failure;
+                    report "differential FETOXM1 timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FTENTOX vector " & integer'image(index) &
+                report "differential FETOXM1 vector " & integer'image(index) &
                     " mismatch: result=" & to_hstring(result) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
@@ -172,7 +179,7 @@ begin
             wait until rising_edge(clk);
             wait for 1 ns;
         end loop;
-        report "PASS: 1152 high-precision FTENTOX vectors" severity note;
+        report "PASS: 1152 high-precision FETOXM1 vectors" severity note;
         stop;
     end process;
 end architecture;

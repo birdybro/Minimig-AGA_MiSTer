@@ -14,6 +14,7 @@ architecture test of tb_tg68k_fpu_exponential is
 	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal exponential_base : fpu_exponential_base_t := FPU_EXP_BASE_TWO;
+	signal subtract_one : std_logic := '0';
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
@@ -32,6 +33,7 @@ begin
 			start => start,
 			source => source,
 			exponential_base => exponential_base,
+			subtract_one => subtract_one,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			result => result,
@@ -52,12 +54,14 @@ begin
 			constant expected_status : std_logic_vector(7 downto 0);
 			constant expected_iterations : natural;
 			constant base_value : fpu_exponential_base_t :=
-				FPU_EXP_BASE_TWO) is
+				FPU_EXP_BASE_TWO;
+			constant subtract_one_value : std_logic := '0') is
 			variable iteration_count : natural := 0;
 		begin
 			wait until falling_edge(clk);
 			source <= source_value;
 			exponential_base <= base_value;
+			subtract_one <= subtract_one_value;
 			rounding_precision <= precision_value;
 			rounding_mode <= mode_value;
 			start <= '1';
@@ -69,10 +73,10 @@ begin
 				wait for 1 ns;
 				iteration_count := iteration_count + 1;
 				assert iteration_count < 370
-					report "FTWOTOX did not complete" severity failure;
+					report "exponential operation did not complete" severity failure;
 			end loop;
 			assert iteration_count = expected_iterations
-				report "FTWOTOX iteration count mismatch: " &
+				report "exponential iteration count mismatch: " &
 					integer'image(iteration_count)
 				severity failure;
 			assert result = expected_result and
@@ -175,7 +179,53 @@ begin
 			FPU_ROUND_NEAREST, x"00000000000000000000", x"0A", 0,
 			FPU_EXP_BASE_TEN);
 
-		report "PASS: MC68882 FETOX/FTENTOX/FTWOTOX range reduction and CORDIC"
+		execute(x"3FFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFFDBF0A8B145769535", x"02", 341,
+			FPU_EXP_BASE_E, '1');
+		execute(x"BFFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFFEA1D2A7274C4320E5", x"02", 342,
+			FPU_EXP_BASE_E, '1');
+		execute(x"00000000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"00000000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"80000000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"80000000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"7FFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"7FFF8000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"FFFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFFF8000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"3FE38000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FE38000000400000015", x"02", 209,
+			FPU_EXP_BASE_E, '1');
+		execute(x"BFE38000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFE2FFFFFFF80000002B", x"02", 209,
+			FPU_EXP_BASE_E, '1');
+		execute(x"3FD78000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FD78000000000400000", x"02", 65,
+			FPU_EXP_BASE_E, '1');
+		execute(x"BFD78000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFD6FFFFFFFFFF800000", x"02", 65,
+			FPU_EXP_BASE_E, '1');
+		execute(x"3F9B8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3F9B8000000000000000", x"02", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"3F9B8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_PLUS_INFINITY, x"3F9B8000000000000001", x"02", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"BF9B8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_ZERO, x"BF9AFFFFFFFFFFFFFFFF", x"02", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"BF9B8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_MINUS_INFINITY, x"BF9B8000000000000000", x"02", 0,
+			FPU_EXP_BASE_E, '1');
+		execute(x"C00E8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFFF8000000000000000", x"02", 0,
+			FPU_EXP_BASE_E, '1');
+
+		report "PASS: MC68882 exponential range reduction and cancellation"
 			severity note;
 		stop;
 	end process;

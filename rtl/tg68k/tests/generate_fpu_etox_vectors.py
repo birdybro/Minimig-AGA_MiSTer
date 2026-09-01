@@ -116,6 +116,7 @@ begin
             start => start,
             source => source,
             exponential_base => FPU_EXP_BASE_E,
+            subtract_one => '0',
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,

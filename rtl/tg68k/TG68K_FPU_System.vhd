@@ -342,6 +342,7 @@ begin
 		decoded_operation = FPU_OP_SGLDIV or
 		decoded_operation = FPU_OP_MOD or decoded_operation = FPU_OP_REM or
 		decoded_operation = FPU_OP_SCALE or
+		decoded_operation = FPU_OP_ETOXM1 or
 		decoded_operation = FPU_OP_ETOX or
 		decoded_operation = FPU_OP_TWOTOX or
 		decoded_operation = FPU_OP_TENTOX or
