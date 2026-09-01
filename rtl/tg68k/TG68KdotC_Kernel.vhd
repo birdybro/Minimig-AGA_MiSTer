@@ -170,12 +170,15 @@ entity TG68KdotC_Kernel is
 		FPU_instruction_requires_ea : in std_logic := '0';
 		FPU_instruction_operand_format : in fpu_operand_format_t :=
 			FPU_FORMAT_EXTENDED;
+		FPU_instruction_family : in fpu_instruction_family_t := FPU_FAMILY_NONE;
 		FPU_instruction_busy	: in std_logic := '0';
 		FPU_instruction_done	: in std_logic := '0';
 		FPU_unimplemented_exception : in std_logic := '0';
 		FPU_bus_error_exception	: in std_logic := '0';
 		FPU_floating_point_exception : in std_logic := '0';
 		FPU_exception_class		: in fpu_exception_t := FPU_EXCEPTION_NONE;
+		FPU_conditional_branch_taken : in std_logic := '0';
+		FPU_conditional_trap_taken : in std_logic := '0';
 		FPU_integer_register_select : in std_logic_vector(2 downto 0) := "000";
 		FPU_integer_register_write : in std_logic := '0';
 		FPU_integer_register_write_data : in std_logic_vector(31 downto 0) :=
@@ -351,6 +354,14 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_fpu			: bit;
 	signal fpu_effective_address_latched : std_logic_vector(31 downto 0) :=
 		(others => '0');
+	signal fpu_displacement_latched : std_logic_vector(31 downto 0) :=
+		(others => '0');
+	signal fpu_conditional_trap_pending : std_logic := '0';
+	signal fpu_conditional_trap_pc : std_logic_vector(31 downto 0) :=
+		(others => '0');
+	signal fpu_bsun_trap_pending : std_logic := '0';
+	signal fpu_bsun_trap_pc : std_logic_vector(31 downto 0) :=
+		(others => '0');
 	signal trap_format			: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
@@ -481,9 +492,37 @@ BEGIN
 		if rising_edge(clk) then
 			if nReset = '0' then
 				fpu_effective_address_latched <= (others => '0');
+				fpu_displacement_latched <= (others => '0');
+				fpu_conditional_trap_pending <= '0';
+				fpu_conditional_trap_pc <= (others => '0');
+				fpu_bsun_trap_pending <= '0';
+				fpu_bsun_trap_pc <= (others => '0');
+			elsif clkena_lw = '1' and FPU_instruction_done = '1' and
+					FPU_conditional_trap_taken = '1' then
+				fpu_conditional_trap_pending <= '1';
+				if opcode(2 downto 0) = "011" then
+					fpu_conditional_trap_pc <= tmp_TG68_PC + 4;
+				elsif opcode(2 downto 0) = "010" then
+					fpu_conditional_trap_pc <= tmp_TG68_PC + 2;
+				else
+					fpu_conditional_trap_pc <= tmp_TG68_PC;
+				end if;
+			elsif clkena_lw = '1' and FPU_instruction_done = '1' and
+					FPU_floating_point_exception = '1' and
+					FPU_exception_class = FPU_EXCEPTION_BSUN then
+				fpu_bsun_trap_pending <= '1';
+				fpu_bsun_trap_pc <= exe_pc;
+			elsif clkena_lw = '1' and micro_state = trap3 then
+				fpu_conditional_trap_pending <= '0';
+				fpu_bsun_trap_pending <= '0';
 			elsif clkena_lw = '1' and exec(get_ea_now) = '1' and
 					FPU_instruction_match = '1' then
 				fpu_effective_address_latched <= addr;
+			elsif clkena_lw = '1' and micro_state = fpu_issue and
+					(FPU_instruction_family = FPU_FAMILY_BCC_WORD or
+					 FPU_instruction_family = FPU_FAMILY_BCC_LONG or
+					 FPU_instruction_family = FPU_FAMILY_DBCC) then
+				fpu_displacement_latched <= last_data_read;
 			end if;
 		end if;
 	end process;
@@ -1081,6 +1120,11 @@ PROCESS (clk)
 				IF micro_state = rte_format_trap or
 						(rte_format_recovery = '1' and micro_state = trap1) THEN
 					data_write_tmp <= rte_saved_program_counter;
+				ELSIF micro_state = trap1 and
+						fpu_conditional_trap_pending = '1' THEN
+					data_write_tmp <= fpu_conditional_trap_pc;
+				ELSIF micro_state = trap1 and fpu_bsun_trap_pending = '1' THEN
+					data_write_tmp <= fpu_bsun_trap_pc;
 				ELSIF writePC='1' THEN
 					data_write_tmp <= TG68_PC;
 				ELSIF exec(writePC_add)='1' THEN
@@ -1312,7 +1356,10 @@ PROCESS (clk, setdisp, memaddr_a, briefdata, memaddr_delta, setdispbyte, datatyp
 -- PC Calc + fetch opcode
 -----------------------------------------------------------------------------
 PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data, next_micro_state, stop, make_trace, make_berr, IPL_nr, FlagsSR, set_rot_cnt, opcode, writePCbig, set_exec, exec,
-        PC_dataa, PC_datab, setnextpass, last_data_read, TG68_PC_brw, TG68_PC_word, Z_error, trap_trap, trap_trapv, interrupt, tmp_TG68_PC, TG68_PC, use_VBR_Stackframe, writePCnext)
+		PC_dataa, PC_datab, setnextpass, last_data_read, TG68_PC_brw, TG68_PC_word,
+		FPU_instruction_family, fpu_displacement_latched, Z_error, trap_trap,
+		trap_trapv, interrupt, tmp_TG68_PC, TG68_PC, use_VBR_Stackframe,
+		writePCnext)
 	BEGIN
 	
 		PC_dataa <= TG68_PC;
@@ -1342,7 +1389,11 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 			PC_datab(1) <= '1';
 		END IF;	
 		IF TG68_PC_brw = '1' THEN	
-			IF TG68_PC_word='1' THEN
+			IF FPU_instruction_family = FPU_FAMILY_BCC_WORD or
+					FPU_instruction_family = FPU_FAMILY_BCC_LONG or
+					FPU_instruction_family = FPU_FAMILY_DBCC then
+				PC_datab <= fpu_displacement_latched;
+			ELSIF TG68_PC_word='1' THEN
 				PC_datab <= last_data_read;
 			ELSE
 				PC_datab(7 downto 0) <= opcode(7 downto 0);
@@ -1753,8 +1804,10 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 		 mmu_fault_word_index, rte_fault_longwords_remaining,
 		 FPU_enable, FPU_instruction_match, FPU_instruction_valid,
 		 FPU_instruction_requires_command_word, FPU_instruction_requires_ea,
+		 FPU_instruction_family,
 		 FPU_instruction_done, FPU_unimplemented_exception,
-		 FPU_floating_point_exception)
+		 FPU_floating_point_exception,
+		 FPU_conditional_branch_taken, FPU_conditional_trap_taken)
 	BEGIN
 		TG68_PC_brw <= '0';	
 		setstate <= "00";
@@ -3465,6 +3518,16 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						ELSIF FPU_instruction_requires_ea = '1' THEN
 							set(ea_build) <= '1';
 							next_micro_state <= nop;
+						ELSIF FPU_instruction_family = FPU_FAMILY_BCC_WORD or
+								FPU_instruction_family = FPU_FAMILY_BCC_LONG then
+							data_is_source <= '1';
+							if FPU_instruction_family = FPU_FAMILY_BCC_LONG then
+								set(longaktion) <= '1';
+							end if;
+							next_micro_state <= fpu_issue;
+						ELSIF FPU_instruction_family = FPU_FAMILY_DBCC or
+								FPU_instruction_family = FPU_FAMILY_TRAPCC then
+							next_micro_state <= fpu_stream_extension;
 						ELSE
 							next_micro_state <= fpu_issue;
 						END IF;
@@ -4101,6 +4164,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					setstackaddr <='1';
 					setstate <= "11";
 					datatype <= "10";
+					set_datatype <= "10";
 ------------------------------------
 				WHEN trap0 =>		-- TRAP
 					set(presub) <= '1';
@@ -4109,6 +4173,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					IF use_VBR_Stackframe='1' THEN	--68010
 						set(writePC_add) <= '1';
 						datatype <= "01";
+						set_datatype <= "01";
 --						set_datatype <= "10";
 						next_micro_state <= trap1;
 					ELSE
@@ -4116,6 +4181,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 							writePC <= '1';
 						END IF;
 						datatype <= "10";
+						set_datatype <= "10";
 						next_micro_state <= trap2;
 					END IF;
 
@@ -4127,12 +4193,14 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					setstackaddr <='1';
 					setstate <= "11";
 					datatype <= "10";
+					set_datatype <= "10";
 					next_micro_state <= trap2;
 				WHEN trap2 =>		-- TRAP
 					set(presub) <= '1';
 					setstackaddr <='1';
 					setstate <= "11";
 					datatype <= "01";
+					set_datatype <= "01";
 					writeSR <= '1';
 					IF trap_berr='1' THEN
 						next_micro_state <= trap4;
@@ -4142,6 +4210,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 				WHEN trap3 =>		-- TRAP
 					set_vectoraddr <= '1';
 					datatype <= "10";
+					set_datatype <= "10";
 					set(direct_delta) <= '1';	
 					set(directPC) <= '1';
 					setstate <= "10";
@@ -4455,6 +4524,28 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 				WHEN pmmu_retire =>
 					NULL;
 
+				WHEN fpu_stream_extension =>
+					setstate <= "01";
+					if FPU_instruction_family = FPU_FAMILY_DBCC or
+							(FPU_instruction_family = FPU_FAMILY_TRAPCC and
+							opcode(2 downto 0) /= "100") then
+						data_is_source <= '1';
+						if FPU_instruction_family = FPU_FAMILY_TRAPCC and
+								opcode(2 downto 0) = "011" then
+							setstate <= "00";
+							set(longaktion) <= '1';
+							next_micro_state <= fpu_stream_long_extension;
+						else
+							next_micro_state <= fpu_issue;
+						end if;
+					else
+						next_micro_state <= fpu_issue;
+					end if;
+
+				WHEN fpu_stream_long_extension =>
+					setstate <= "01";
+					next_micro_state <= fpu_issue;
+
 				WHEN fpu_issue =>
 					FPU_instruction_start <= '1';
 					setstate <= "01";
@@ -4470,7 +4561,22 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 					ELSIF FPU_floating_point_exception = '1' THEN
 						trap_fpu <= '1';
 						trapmake <= '1';
+					ELSIF FPU_conditional_trap_taken = '1' THEN
+						trap_trapv <= '1';
+						trapmake <= '1';
 					ELSE
+						IF FPU_instruction_family = FPU_FAMILY_DBCC or
+								(FPU_conditional_branch_taken = '1' and
+								 (FPU_instruction_family = FPU_FAMILY_BCC_WORD or
+								  FPU_instruction_family = FPU_FAMILY_BCC_LONG)) then
+							setstate <= "00";
+						END IF;
+						IF FPU_conditional_branch_taken = '1' THEN
+							TG68_PC_brw <= '1';
+							IF FPU_instruction_family /= FPU_FAMILY_BCC_LONG THEN
+								skipFetch <= '1';
+							END IF;
+						END IF;
 						next_micro_state <= fpu_retire;
 					END IF;
 

@@ -30,6 +30,8 @@ architecture test of tb_tg68k_fpu_state is
 	signal operation_quotient : std_logic_vector(7 downto 0) := (others => '0');
 	signal operation_exception_status : std_logic_vector(7 downto 0) :=
 		(others => '0');
+	signal conditional_status_write : std_logic := '0';
+	signal conditional_bsun : std_logic := '0';
 	signal fp_registers : fpu_register_array_t;
 	signal fpcr : std_logic_vector(31 downto 0);
 	signal fpsr : std_logic_vector(31 downto 0);
@@ -60,6 +62,8 @@ begin
 			quotient_write => quotient_write,
 			operation_quotient => operation_quotient,
 			operation_exception_status => operation_exception_status,
+			conditional_status_write => conditional_status_write,
+			conditional_bsun => conditional_bsun,
 			fp_registers_out => fp_registers,
 			fpcr_out => fpcr,
 			fpsr_out => fpsr,
@@ -190,6 +194,38 @@ begin
 		write_operation_status('0', "0000", '0', x"00", x"0A");
 		assert fpsr = x"A0850AE8"
 			report "inexact underflow did not accrue" severity failure;
+
+		write_control_register(FPU_REG_FPCR, x"00000000");
+		write_control_register(FPU_REG_FPSR, x"A58554C0");
+		wait until falling_edge(clk);
+		conditional_bsun <= '1';
+		conditional_status_write <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		conditional_status_write <= '0';
+		assert fpsr = x"A585D4C0" and exception_trap = '0'
+			report "masked conditional BSUN state update mismatch"
+			severity failure;
+		write_control_register(FPU_REG_FPCR, x"00008000");
+		wait until falling_edge(clk);
+		conditional_status_write <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		conditional_status_write <= '0';
+		assert fpsr = x"A585D4C0" and exception_trap = '1' and
+			exception_class = FPU_EXCEPTION_BSUN
+			report "enabled conditional BSUN exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		conditional_bsun <= '0';
+		conditional_status_write <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		conditional_status_write <= '0';
+		assert fpsr = x"A58554C0" and exception_trap = '0'
+			report "conditional BSUN clear disturbed FPSR state"
+			severity failure;
 
 		wait until falling_edge(clk);
 		null_restore <= '1';

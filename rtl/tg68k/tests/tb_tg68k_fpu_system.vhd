@@ -32,6 +32,7 @@ architecture test of tb_tg68k_fpu_system is
 	signal instruction_requires_command_word : std_logic;
 	signal instruction_requires_effective_address : std_logic;
 	signal instruction_operand_format : fpu_operand_format_t;
+	signal instruction_family : fpu_instruction_family_t;
 	signal integer_register_select : std_logic_vector(2 downto 0);
 	signal address_register_select : std_logic_vector(2 downto 0);
 	signal instruction_busy : std_logic;
@@ -41,6 +42,8 @@ architecture test of tb_tg68k_fpu_system is
 	signal bus_error_exception : std_logic;
 	signal floating_point_exception : std_logic;
 	signal floating_point_exception_class : fpu_exception_t;
+	signal conditional_branch_taken : std_logic;
+	signal conditional_trap_taken : std_logic;
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal memory_read_data : std_logic_vector(15 downto 0);
@@ -74,6 +77,8 @@ architecture test of tb_tg68k_fpu_system is
 	signal observed_address_select : std_logic_vector(2 downto 0) := "000";
 	signal observed_address_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
+	signal observed_conditional_branch : std_logic := '0';
+	signal observed_conditional_trap : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 	memory_ready <= memory_request and not memory_error;
@@ -164,6 +169,7 @@ begin
 			instruction_requires_effective_address =>
 				instruction_requires_effective_address,
 			instruction_operand_format => instruction_operand_format,
+			instruction_family => instruction_family,
 			integer_register_select => integer_register_select,
 			address_register_select => address_register_select,
 			instruction_busy => instruction_busy,
@@ -173,6 +179,8 @@ begin
 			bus_error_exception => bus_error_exception,
 			floating_point_exception => floating_point_exception,
 			floating_point_exception_class => floating_point_exception_class,
+			conditional_branch_taken => conditional_branch_taken,
+			conditional_trap_taken => conditional_trap_taken,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			memory_read_data => memory_read_data,
@@ -201,6 +209,8 @@ begin
 				trace_count <= 0;
 				integer_write_count <= 0;
 				address_write_count <= 0;
+				observed_conditional_branch <= '0';
+				observed_conditional_trap <= '0';
 			else
 				if memory_ready = '1' then
 					trace_address(trace_count) <= memory_address;
@@ -218,6 +228,12 @@ begin
 					address_write_count <= address_write_count + 1;
 					observed_address_select <= address_register_select;
 					observed_address_data <= address_register_write_data;
+				end if;
+				if conditional_branch_taken = '1' then
+					observed_conditional_branch <= '1';
+				end if;
+				if conditional_trap_taken = '1' then
+					observed_conditional_trap <= '1';
 				end if;
 			end if;
 		end if;
@@ -1580,6 +1596,110 @@ begin
 			fp_registers(5) = x"3FFB90DEAA7E2FCD3A20" and
 			fpsr(15 downto 8) = x"02"
 			report "packed FSINCOS system result mismatch" severity failure;
+
+		integer_register_data <= x"40000000";
+		start_instruction(x"F202", x"8800", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		start_instruction(x"F243", x"0001", '1');
+		assert instruction_family = FPU_FAMILY_SCC and
+			instruction_requires_effective_address = '0' and
+			instruction_operand_format = FPU_FORMAT_BYTE_INTEGER and
+			integer_register_select = "011"
+			report "register FScc dispatch mismatch" severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert integer_write_count = 1 and
+			observed_integer_data(7 downto 0) = x"FF" and
+			observed_integer_format = FPU_FORMAT_BYTE_INTEGER and
+			fpsr = x"40000000" and observed_conditional_branch = '0' and
+			observed_conditional_trap = '0'
+			report "register FScc system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"0000D001";
+		function_code <= "101";
+		start_instruction(x"F250", x"0000", '1');
+		assert instruction_requires_effective_address = '1'
+			report "memory FScc omitted effective-address evaluation"
+			severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 1 and trace_write(0) = '1' and
+			trace_address(0) = x"0000D001" and trace_data(0) = x"0000" and
+			trace_fc(0) = "101"
+			report "memory FScc system write mismatch" severity failure;
+
+		clear_observations;
+		integer_register_data <= x"CAFE0002";
+		start_instruction(x"F24D", x"0001", '1');
+		assert instruction_family = FPU_FAMILY_DBCC and
+			integer_register_select = "101"
+			report "FDBcc dispatch mismatch" severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert integer_write_count = 0 and observed_conditional_branch = '0'
+			report "true FDBcc changed its counter or branched" severity failure;
+
+		integer_register_data <= x"00000000";
+		start_instruction(x"F202", x"8800", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		integer_register_data <= x"CAFE0002";
+		start_instruction(x"F24D", x"0001", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert integer_write_count = 1 and
+			observed_integer_data(15 downto 0) = x"0001" and
+			observed_integer_format = FPU_FORMAT_WORD_INTEGER and
+			observed_conditional_branch = '1'
+			report "false FDBcc system result mismatch: writes=" &
+				integer'image(integer_write_count) & " data=" &
+				to_hstring(observed_integer_data) & " format=" &
+				fpu_operand_format_t'image(observed_integer_format) & " branch=" &
+				std_logic'image(observed_conditional_branch)
+			severity failure;
+
+		clear_observations;
+		start_instruction(x"F28F", x"0000", '1');
+		assert instruction_family = FPU_FAMILY_BCC_WORD
+			report "FBcc dispatch mismatch" severity failure;
+		wait_done;
+		assert observed_conditional_branch = '1'
+			report "FBcc condition result mismatch" severity failure;
+
+		start_instruction(x"F27C", x"000F", '1');
+		assert instruction_family = FPU_FAMILY_TRAPCC
+			report "FTRAPcc dispatch mismatch" severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert observed_conditional_trap = '1'
+			report "FTRAPcc condition result mismatch" severity failure;
+
+		integer_register_data <= x"10000000";
+		start_instruction(x"F202", x"8800", '1');
+		command_word <= x"0000";
+		wait_done;
+		integer_register_data <= x"00008000";
+		start_instruction(x"F202", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		start_instruction(x"F243", x"001F", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_BSUN and
+			integer_write_count = 0 and fpsr = x"10008080"
+			report "enabled FScc BSUN system exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
 
 		wait until falling_edge(clk);
 		null_restore <= '1';

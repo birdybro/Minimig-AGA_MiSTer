@@ -36,6 +36,7 @@ entity TG68K_FPU_System is
 		instruction_requires_command_word : out std_logic;
 		instruction_requires_effective_address : out std_logic;
 		instruction_operand_format : out fpu_operand_format_t;
+		instruction_family : out fpu_instruction_family_t;
 		integer_register_select : out std_logic_vector(2 downto 0);
 		address_register_select : out std_logic_vector(2 downto 0);
 		instruction_busy : out std_logic;
@@ -45,6 +46,8 @@ entity TG68K_FPU_System is
 		bus_error_exception : out std_logic;
 		floating_point_exception : out std_logic;
 		floating_point_exception_class : out fpu_exception_t;
+		conditional_branch_taken : out std_logic;
+		conditional_trap_taken : out std_logic;
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -128,12 +131,14 @@ architecture rtl of TG68K_FPU_System is
 	signal decoded_destination_register : std_logic_vector(2 downto 0);
 	signal decoded_control_registers : std_logic_vector(2 downto 0);
 	signal decoded_register_list : std_logic_vector(7 downto 0);
+	signal decoded_predicate : std_logic_vector(5 downto 0);
 
 	signal move_implemented : std_logic;
 	signal control_implemented : std_logic;
 	signal movem_implemented : std_logic;
 	signal unary_implemented : std_logic;
 	signal binary_implemented : std_logic;
+	signal conditional_implemented : std_logic;
 	signal operation_implemented : std_logic;
 	signal operation_busy : std_logic;
 	signal operation_done : std_logic;
@@ -270,6 +275,23 @@ architecture rtl of TG68K_FPU_System is
 	signal constant_start : std_logic;
 	signal constant_fp_write : std_logic;
 	signal constant_fp_write_data : fpu_extended_t;
+	signal conditional_start : std_logic;
+	signal conditional_data_register : std_logic;
+	signal conditional_busy : std_logic;
+	signal conditional_done : std_logic;
+	signal conditional_bus_error : std_logic;
+	signal conditional_memory_request : std_logic;
+	signal conditional_memory_write : std_logic;
+	signal conditional_memory_address : std_logic_vector(31 downto 0);
+	signal conditional_memory_write_data : std_logic_vector(15 downto 0);
+	signal conditional_memory_nuds : std_logic;
+	signal conditional_memory_nlds : std_logic;
+	signal conditional_memory_fc : std_logic_vector(2 downto 0);
+	signal conditional_integer_write : std_logic;
+	signal conditional_integer_write_data : std_logic_vector(31 downto 0);
+	signal conditional_integer_write_format : fpu_operand_format_t;
+	signal conditional_status_write : std_logic;
+	signal conditional_bsun : std_logic;
 	signal constant_status_write : std_logic;
 	signal constant_condition_codes_write : std_logic;
 	signal constant_condition_codes : std_logic_vector(3 downto 0);
@@ -288,6 +310,7 @@ architecture rtl of TG68K_FPU_System is
 	signal rounding_precision : fpu_rounding_precision_t;
 	signal rounding_mode : fpu_rounding_mode_t;
 	signal fpcr : std_logic_vector(31 downto 0);
+	signal fpsr : std_logic_vector(31 downto 0);
 	signal unsupported_done : std_logic := '0';
 	signal unsupported_exception : std_logic := '0';
 	signal fpiar_write : std_logic;
@@ -336,7 +359,7 @@ begin
 			destination_register => decoded_destination_register,
 			control_register_list => decoded_control_registers,
 			register_list => decoded_register_list,
-			conditional_predicate => open
+			conditional_predicate => decoded_predicate
 		);
 
 	move_implemented <= '1' when
@@ -395,13 +418,19 @@ begin
 		decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) else '0';
+	conditional_implemented <= '1' when
+		decoded_family = FPU_FAMILY_SCC or
+		decoded_family = FPU_FAMILY_DBCC or
+		decoded_family = FPU_FAMILY_TRAPCC or
+		decoded_family = FPU_FAMILY_BCC_WORD or
+		decoded_family = FPU_FAMILY_BCC_LONG else '0';
 	operation_implemented <= move_implemented or control_implemented or
 		movem_implemented or constant_implemented or unary_implemented or
-		binary_implemented;
+		binary_implemented or conditional_implemented;
 	operation_busy <= move_busy or control_busy or movem_busy or unary_busy or
-		binary_busy or constant_busy;
+		binary_busy or constant_busy or conditional_busy;
 	operation_done <= move_done or control_done or movem_done or unary_done or
-		binary_done or constant_done;
+		binary_done or constant_done or conditional_done;
 	subsystem_reset <= nReset and not null_restore;
 
 	move_start <= instruction_start and decoded_match and decoded_valid and
@@ -416,6 +445,8 @@ begin
 		unary_implemented and not operation_busy;
 	binary_start <= instruction_start and decoded_match and decoded_valid and
 		binary_implemented and not operation_busy;
+	conditional_start <= instruction_start and decoded_match and decoded_valid and
+		conditional_implemented and not operation_busy;
 	unary_external_source <= '1' when
 		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION else '0';
 	unary_external_data_register <= '1' when
@@ -455,12 +486,14 @@ begin
 		destination_select_latched when unary_fp_write = '1' else
 		destination_select_latched when move_fp_write = '1' else
 		source_select_latched;
-	fpiar_write <= move_start or unary_start or binary_start or constant_start when
+	fpiar_write <= move_start or unary_start or binary_start or constant_start or
+		conditional_start when
 		fpcr(15 downto 8) /= x"00" else '0';
 
 	movem_register_mask <= integer_register_data(7 downto 0) when
 		command_word(11) = '1' else decoded_register_list;
-	operation_byte_count <= 0 when constant_implemented = '1' else
+	operation_byte_count <= 1 when decoded_family = FPU_FAMILY_SCC else
+		0 when conditional_implemented = '1' or constant_implemented = '1' else
 		movem_byte_count(movem_register_mask) when
 		movem_implemented = '1' else
 		control_byte_count(decoded_control_registers) when
@@ -478,6 +511,7 @@ begin
 		(decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL and
 		decoded_format = FPU_FORMAT_DYNAMIC_PACKED) else
 		opcode(2 downto 0);
+	conditional_data_register <= '1' when opcode(5 downto 3) = "000" else '0';
 
 	instruction_match <= decoded_match;
 	instruction_valid <= decoded_valid;
@@ -490,7 +524,10 @@ begin
 	instruction_operand_format <= FPU_FORMAT_EXTENDED when
 		constant_implemented = '1' else FPU_FORMAT_LONG_INTEGER when
 		control_implemented = '1' else FPU_FORMAT_EXTENDED when
-		movem_implemented = '1' else decoded_format;
+		movem_implemented = '1' else FPU_FORMAT_BYTE_INTEGER when
+		decoded_family = FPU_FAMILY_SCC else FPU_FORMAT_WORD_INTEGER when
+		decoded_family = FPU_FAMILY_DBCC else decoded_format;
+	instruction_family <= decoded_family;
 	integer_register_select <= integer_operand_select when operation_busy = '0' else
 		integer_select_latched;
 	address_register_select <= opcode(2 downto 0) when operation_busy = '0' else
@@ -500,47 +537,60 @@ begin
 	fline_exception <= decoded_fline;
 	unimplemented_exception <= unsupported_exception;
 	bus_error_exception <= move_bus_error or control_bus_error or
-		movem_bus_error or unary_bus_error or binary_bus_error;
+		movem_bus_error or unary_bus_error or binary_bus_error or
+		conditional_bus_error;
 	fpcr_out <= fpcr;
+	fpsr_out <= fpsr;
 
-	memory_request <= binary_memory_request when binary_busy = '1' else
+	memory_request <= conditional_memory_request when conditional_busy = '1' else
+		binary_memory_request when binary_busy = '1' else
 		unary_memory_request when unary_busy = '1' else
 		movem_memory_request when movem_busy = '1' else
 		control_memory_request when control_busy = '1' else
 		move_memory_request;
-	memory_write <= binary_memory_write when binary_busy = '1' else
+	memory_write <= conditional_memory_write when conditional_busy = '1' else
+		binary_memory_write when binary_busy = '1' else
 		unary_memory_write when unary_busy = '1' else
 		movem_memory_write when movem_busy = '1' else
 		control_memory_write when control_busy = '1' else
 		move_memory_write;
-	memory_address <= binary_memory_address when binary_busy = '1' else
+	memory_address <= conditional_memory_address when conditional_busy = '1' else
+		binary_memory_address when binary_busy = '1' else
 		unary_memory_address when unary_busy = '1' else
 		movem_memory_address when movem_busy = '1' else
 		control_memory_address when control_busy = '1' else
 		move_memory_address;
-	memory_write_data <= binary_memory_write_data when binary_busy = '1' else
+	memory_write_data <= conditional_memory_write_data when
+		conditional_busy = '1' else
+		binary_memory_write_data when binary_busy = '1' else
 		unary_memory_write_data when unary_busy = '1' else
 		movem_memory_write_data when movem_busy = '1' else
 		control_memory_write_data when control_busy = '1' else
 		move_memory_write_data;
-	memory_nuds <= binary_memory_nuds when binary_busy = '1' else
+	memory_nuds <= conditional_memory_nuds when conditional_busy = '1' else
+		binary_memory_nuds when binary_busy = '1' else
 		unary_memory_nuds when unary_busy = '1' else
 		'0' when movem_busy = '1' or control_busy = '1' else
 		move_memory_nuds;
-	memory_nlds <= binary_memory_nlds when binary_busy = '1' else
+	memory_nlds <= conditional_memory_nlds when conditional_busy = '1' else
+		binary_memory_nlds when binary_busy = '1' else
 		unary_memory_nlds when unary_busy = '1' else
 		'0' when movem_busy = '1' or control_busy = '1' else
 		move_memory_nlds;
-	memory_function_code <= binary_memory_fc when binary_busy = '1' else
+	memory_function_code <= conditional_memory_fc when conditional_busy = '1' else
+		binary_memory_fc when binary_busy = '1' else
 		unary_memory_fc when unary_busy = '1' else
 		movem_memory_fc when movem_busy = '1' else
 		control_memory_fc when control_busy = '1' else
 		move_memory_fc;
 
-	integer_register_write <= control_integer_write or move_integer_write;
-	integer_register_write_data <= control_integer_write_data when
+	integer_register_write <= control_integer_write or move_integer_write or
+		conditional_integer_write;
+	integer_register_write_data <= conditional_integer_write_data when
+		conditional_integer_write = '1' else control_integer_write_data when
 		control_integer_write = '1' else move_integer_write_data;
-	integer_register_write_format <= FPU_FORMAT_LONG_INTEGER when
+	integer_register_write_format <= conditional_integer_write_format when
+		conditional_integer_write = '1' else FPU_FORMAT_LONG_INTEGER when
 		control_integer_write = '1' else move_integer_write_format;
 	address_register_write <= '1' when control_address_write = '1' or
 		(operation_done = '1' and (address_mode_latched = "011" or
@@ -826,6 +876,42 @@ begin
 			bus_error_exception => binary_bus_error
 		);
 
+	conditional_controller : entity work.TG68K_FPU_Conditional_Controller
+		port map(
+			clk => clk,
+			nReset => subsystem_reset,
+			start => conditional_start,
+			family => decoded_family,
+			predicate => decoded_predicate,
+			condition_codes => fpsr(31 downto 28),
+			bsun_enable => fpcr(FPU_FPSR_BSUN_BIT),
+			data_register_direct => conditional_data_register,
+			integer_register_data => integer_register_data,
+			effective_address => operation_effective_address,
+			function_code => function_code,
+			memory_ready => memory_ready,
+			memory_error => memory_error,
+			retry => retry,
+			memory_request => conditional_memory_request,
+			memory_write => conditional_memory_write,
+			memory_address => conditional_memory_address,
+			memory_write_data => conditional_memory_write_data,
+			memory_nuds => conditional_memory_nuds,
+			memory_nlds => conditional_memory_nlds,
+			memory_function_code => conditional_memory_fc,
+			integer_register_write => conditional_integer_write,
+			integer_register_write_data => conditional_integer_write_data,
+			integer_register_write_format => conditional_integer_write_format,
+			conditional_status_write => conditional_status_write,
+			conditional_bsun => conditional_bsun,
+			condition_result => open,
+			branch_taken => conditional_branch_taken,
+			trap_taken => conditional_trap_taken,
+			busy => conditional_busy,
+			done => conditional_done,
+			bus_error_exception => conditional_bus_error
+		);
+
 	state : entity work.TG68K_FPU
 		port map(
 			clk => clk,
@@ -845,9 +931,11 @@ begin
 			quotient_write => binary_quotient_write,
 			operation_quotient => binary_quotient,
 			operation_exception_status => state_exception_status,
+			conditional_status_write => conditional_status_write,
+			conditional_bsun => conditional_bsun,
 			fp_registers_out => fp_registers_out,
 			fpcr_out => fpcr,
-			fpsr_out => fpsr_out,
+			fpsr_out => fpsr,
 			fpiar_out => fpiar_out,
 			rounding_precision_out => rounding_precision,
 			rounding_mode_out => rounding_mode,

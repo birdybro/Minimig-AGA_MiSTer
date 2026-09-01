@@ -35,6 +35,8 @@ entity TG68K_FPU is
 		quotient_write : in std_logic;
 		operation_quotient : in std_logic_vector(7 downto 0);
 		operation_exception_status : in std_logic_vector(7 downto 0);
+		conditional_status_write : in std_logic;
+		conditional_bsun : in std_logic;
 
 		fp_registers_out : out fpu_register_array_t;
 		fpcr_out : out std_logic_vector(31 downto 0);
@@ -155,6 +157,16 @@ begin
 							exception_class_register <= FPU_EXCEPTION_INEX2;
 						else
 							exception_class_register <= FPU_EXCEPTION_INEX1;
+						end if;
+					end if;
+				end if;
+				if conditional_status_write = '1' then
+					fpsr(FPU_FPSR_BSUN_BIT) <= conditional_bsun;
+					if conditional_bsun = '1' then
+						fpsr(FPU_FPSR_AEXC_IOP_BIT) <= '1';
+						if fpcr(FPU_FPSR_BSUN_BIT) = '1' then
+							exception_trap <= '1';
+							exception_class_register <= FPU_EXCEPTION_BSUN;
 						end if;
 					end if;
 				end if;

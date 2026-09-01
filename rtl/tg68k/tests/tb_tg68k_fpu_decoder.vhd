@@ -174,6 +174,13 @@ begin
 			FPU_FAMILY_NONE);
 		check_decode(x"F27A", x"0002", '1', '1', '1', '0',
 			FPU_FAMILY_TRAPCC);
+		check_decode(x"F27A", x"FFC2", '1', '1', '1', '0',
+			FPU_FAMILY_TRAPCC);
+		assert conditional_predicate = "000010"
+			report "FTRAPcc command reserved fields affected predicate"
+			severity failure;
+		check_decode(x"F27F", x"0002", '1', '0', '1', '0',
+			FPU_FAMILY_NONE);
 
 		check_decode(x"F280", x"0000", '1', '1', '0', '0',
 			FPU_FAMILY_BCC_WORD);

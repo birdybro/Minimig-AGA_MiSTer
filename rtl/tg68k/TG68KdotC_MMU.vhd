@@ -113,6 +113,7 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_instruction_requires_command : std_logic;
 	signal fpu_instruction_requires_ea : std_logic;
 	signal fpu_instruction_operand_format : fpu_operand_format_t;
+	signal fpu_instruction_family : fpu_instruction_family_t;
 	signal fpu_integer_register_select : std_logic_vector(2 downto 0);
 	signal fpu_instruction_busy : std_logic;
 	signal fpu_instruction_done : std_logic;
@@ -120,6 +121,8 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_bus_error_exception : std_logic;
 	signal fpu_floating_point_exception : std_logic;
 	signal fpu_exception_class : fpu_exception_t;
+	signal fpu_conditional_branch_taken : std_logic;
+	signal fpu_conditional_trap_taken : std_logic;
 	signal fpu_integer_register_write : std_logic;
 	signal fpu_integer_register_write_data : std_logic_vector(31 downto 0);
 	signal fpu_integer_register_write_format : fpu_operand_format_t;
@@ -494,12 +497,15 @@ begin
 				fpu_instruction_requires_command,
 			FPU_instruction_requires_ea => fpu_instruction_requires_ea,
 			FPU_instruction_operand_format => fpu_instruction_operand_format,
+			FPU_instruction_family => fpu_instruction_family,
 			FPU_instruction_busy => fpu_instruction_busy,
 			FPU_instruction_done => fpu_instruction_done,
 			FPU_unimplemented_exception => fpu_unimplemented_exception,
 			FPU_bus_error_exception => fpu_bus_error_exception,
 			FPU_floating_point_exception => fpu_floating_point_exception,
 			FPU_exception_class => fpu_exception_class,
+			FPU_conditional_branch_taken => fpu_conditional_branch_taken,
+			FPU_conditional_trap_taken => fpu_conditional_trap_taken,
 			FPU_integer_register_select => fpu_integer_register_select,
 			FPU_integer_register_write => fpu_integer_register_write,
 			FPU_integer_register_write_data => fpu_integer_register_write_data,
@@ -618,6 +624,7 @@ begin
 			instruction_requires_effective_address =>
 				fpu_instruction_requires_ea,
 			instruction_operand_format => fpu_instruction_operand_format,
+			instruction_family => fpu_instruction_family,
 			integer_register_select => fpu_integer_register_select,
 			address_register_select => fpu_address_register_select,
 			instruction_busy => fpu_instruction_busy,
@@ -627,6 +634,8 @@ begin
 			bus_error_exception => fpu_bus_error_exception,
 			floating_point_exception => fpu_floating_point_exception,
 			floating_point_exception_class => fpu_exception_class,
+			conditional_branch_taken => fpu_conditional_branch_taken,
+			conditional_trap_taken => fpu_conditional_trap_taken,
 			memory_ready => fpu_memory_ready,
 			memory_error => fpu_memory_error,
 			memory_read_data => data_in,
