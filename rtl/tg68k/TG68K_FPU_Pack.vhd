@@ -101,6 +101,7 @@ package TG68K_FPU_Pack is
 		value : std_logic_vector(6 downto 0)) return fpu_operation_t;
 	function fpu_operation_encoding_valid(
 		value : std_logic_vector(6 downto 0)) return boolean;
+	function fpu_unbiased_exponent(value : fpu_extended_t) return integer;
 	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t;
 	function fpu_condition_codes(
 		value : fpu_extended_t) return std_logic_vector;
@@ -180,6 +181,14 @@ package body TG68K_FPU_Pack is
 		value : std_logic_vector(6 downto 0)) return boolean is
 	begin
 		return value(6) = '0';
+	end function;
+
+	function fpu_unbiased_exponent(value : fpu_extended_t) return integer is
+	begin
+		-- Extended precision retains -16383 at exponent zero because its
+		-- integer bit is explicit and may still identify a normalized value.
+		return to_integer(unsigned(value(78 downto 64))) -
+			FPU_EXTENDED_EXPONENT_BIAS;
 	end function;
 
 	function fpu_classify(value : fpu_extended_t) return fpu_data_class_t is

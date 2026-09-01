@@ -316,7 +316,8 @@ begin
 								result(62) := '1';
 							elsif operand_class = FPU_CLASS_NORMAL and
 									operand_latched(78 downto 64) =
-									"000000000000000" then
+									"000000000000000" and
+									operand_latched(63) = '0' then
 								status(3) := '1';
 							end if;
 							if test_latched = '1' then

@@ -71,11 +71,7 @@ begin
 		source_class := fpu_classify(source);
 		source_significand := unsigned(source(63 downto 0));
 		normalized_significand := source_significand;
-		source_exponent := to_integer(unsigned(source(78 downto 64))) -
-			FPU_EXTENDED_EXPONENT_BIAS;
-		if source(78 downto 64) = "000000000000000" then
-			source_exponent := 1 - FPU_EXTENDED_EXPONENT_BIAS;
-		end if;
+		source_exponent := fpu_unbiased_exponent(source);
 		normalization_shift := 0;
 		extracted := (others => '0');
 		status := (others => '0');

@@ -125,11 +125,7 @@ begin
 		extended_sum := (others => '0');
 		fractional_value := (others => '0');
 		half_value := (others => '0');
-		source_exponent := to_integer(unsigned(source(78 downto 64))) -
-			FPU_EXTENDED_EXPONENT_BIAS;
-		if source(78 downto 64) = "000000000000000" then
-			source_exponent := 1 - FPU_EXTENDED_EXPONENT_BIAS;
-		end if;
+		source_exponent := fpu_unbiased_exponent(source);
 		result_exponent := source_exponent;
 		normalization_shift := 0;
 		fractional_bits := 1;

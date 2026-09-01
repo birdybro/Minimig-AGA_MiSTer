@@ -145,12 +145,7 @@ begin
 					when IDLE =>
 						if start = '1' then
 							source_class := fpu_classify(source);
-							source_exponent :=
-								to_integer(unsigned(source(78 downto 64))) -
-								FPU_EXTENDED_EXPONENT_BIAS;
-							if source(78 downto 64) = "000000000000000" then
-								source_exponent := 1 - FPU_EXTENDED_EXPONENT_BIAS;
-							end if;
+							source_exponent := fpu_unbiased_exponent(source);
 							source_significand := unsigned(source(63 downto 0));
 							normalization_shift := 0;
 							selected_nan := source;

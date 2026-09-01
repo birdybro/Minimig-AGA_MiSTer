@@ -4,6 +4,7 @@ import random
 
 from fpu_exact_reference import (
     encode_extended,
+    extended_bits_value,
     extended_value,
     mode_name,
     precision_name,
@@ -34,6 +35,11 @@ def make_vectors() -> list[tuple[int, str, str, int, int, int]]:
 
         source_bits = encode_extended(0, exponent, significand)
         source_value = extended_value(0, exponent, significand)
+        if index % 64 == 5:
+            source_bits = 0x00004000000000000000
+            source_value = extended_bits_value(source_bits)
+            precision_index = 0
+            mode = 0
         precision_enum, precision_bits = precision_name(precision_index)
         result, condition_codes, status = round_square_root(
             source_value, precision_bits, mode)

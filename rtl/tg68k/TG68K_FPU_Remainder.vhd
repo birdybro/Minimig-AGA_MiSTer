@@ -171,19 +171,9 @@ begin
 						if start = '1' then
 							source_class := fpu_classify(source);
 							destination_class := fpu_classify(destination);
-							source_exponent :=
-								to_integer(unsigned(source(78 downto 64))) -
-								FPU_EXTENDED_EXPONENT_BIAS;
+							source_exponent := fpu_unbiased_exponent(source);
 							destination_exponent :=
-								to_integer(unsigned(destination(78 downto 64))) -
-								FPU_EXTENDED_EXPONENT_BIAS;
-							if source(78 downto 64) = "000000000000000" then
-								source_exponent := -FPU_EXTENDED_EXPONENT_BIAS;
-							end if;
-							if destination(78 downto 64) = "000000000000000" then
-								destination_exponent :=
-									-FPU_EXTENDED_EXPONENT_BIAS;
-							end if;
+								fpu_unbiased_exponent(destination);
 							source_significand := unsigned(source(63 downto 0));
 							destination_significand :=
 								unsigned(destination(63 downto 0));

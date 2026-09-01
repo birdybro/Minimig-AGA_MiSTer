@@ -20,6 +20,13 @@ def encode_extended(sign: int, exponent: int, significand: int) -> int:
     return (sign << 79) | ((exponent + EXPONENT_BIAS) << 64) | significand
 
 
+def extended_bits_value(value: int) -> Fraction:
+    sign = (value >> 79) & 1
+    exponent = ((value >> 64) & 0x7FFF) - EXPONENT_BIAS
+    significand = value & ((1 << 64) - 1)
+    return extended_value(sign, exponent, significand)
+
+
 def extended_condition_codes(value: int) -> int:
     sign = (value >> 79) & 1
     exponent = (value >> 64) & 0x7FFF
@@ -51,10 +58,8 @@ def extract_extended(source: int, get_exponent: bool) -> tuple[int, int, int]:
     else:
         leading_position = significand.bit_length() - 1
         normalized = significand << (63 - leading_position)
-        unbiased_exponent = (
-            1 - EXPONENT_BIAS if exponent_field == 0
-            else exponent_field - EXPONENT_BIAS
-        ) - (63 - leading_position)
+        unbiased_exponent = exponent_field - EXPONENT_BIAS - (
+            63 - leading_position)
         if get_exponent:
             if unbiased_exponent == 0:
                 result = 0

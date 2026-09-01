@@ -112,6 +112,11 @@ begin
 
 		rounding_precision <= FPU_PRECISION_EXTENDED;
 		subtract <= '0';
+		source <= x"00008000000000000000";
+		destination <= x"00008000000000000000";
+		check(x"00018000000000000000", "0000", x"00",
+			"extended minimum-exponent FADD mismatch");
+
 		source <= x"FFFF8000000000000123";
 		destination <= x"7FFFC000000000004567";
 		check(x"7FFFC000000000004567", "0001", x"40",

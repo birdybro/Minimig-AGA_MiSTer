@@ -244,6 +244,15 @@ begin
 			report "register FMOVE rounding or status mismatch" severity failure;
 
 		clear_observations;
+		fp_register_data <= x"00008000000000000000";
+		rounding_precision <= FPU_PRECISION_EXTENDED;
+		launch_move;
+		assert fp_write_count = 1 and
+			observed_fp_data = x"00008000000000000000" and
+			observed_status = x"00" and observed_cc = "0000"
+			report "minimum-exponent register FMOVE mismatch" severity failure;
+
+		clear_observations;
 		direction <= FPU_MOVE_EXTERNAL_TO_REGISTER;
 		operand_format <= FPU_FORMAT_LONG_INTEGER;
 		external_data_register <= '1';

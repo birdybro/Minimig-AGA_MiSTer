@@ -77,6 +77,11 @@ begin
 			"single-precision FMUL overflow mismatch");
 
 		rounding_precision <= FPU_PRECISION_EXTENDED;
+		source <= x"00008000000000000000";
+		destination <= x"7FFE8000000000000000";
+		check(x"3FFF8000000000000000", "0000", x"00",
+			"extended minimum-exponent FMUL mismatch");
+
 		source <= x"80000000000000000000";
 		destination <= x"4000C000000000000000";
 		check(x"80000000000000000000", "1100", x"00",

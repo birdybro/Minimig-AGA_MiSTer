@@ -113,6 +113,9 @@ begin
 			"single-precision FDIV overflow mismatch");
 
 		rounding_precision <= FPU_PRECISION_EXTENDED;
+		check(x"00018000000000000000", x"00008000000000000000",
+			x"3FFE8000000000000000", "0000", x"00", 65,
+			"extended minimum-exponent FDIV mismatch");
 		check(x"00000000000000000001", x"00000000000000000001",
 			x"3FFF8000000000000000", "0000", x"00", 65,
 			"extended-denormal FDIV normalization mismatch");

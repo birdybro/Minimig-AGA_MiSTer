@@ -103,7 +103,7 @@ begin
 			"0000", x"02", 66, "double-precision FSQRT mismatch");
 
 		rounding_precision <= FPU_PRECISION_EXTENDED;
-		check(x"00002000000000000000", x"1FFF8000000000000000",
+		check(x"00004000000000000000", x"1FFF8000000000000000",
 			"0000", x"00", 66, "denormal exact FSQRT mismatch");
 
 		check(x"00000000000000000000", x"00000000000000000000",

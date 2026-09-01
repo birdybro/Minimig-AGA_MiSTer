@@ -320,6 +320,13 @@ begin
 			report "FABS incorrectly rounded an exact sign result" severity failure;
 
 		clear_observations;
+		fp_register_data <= x"80008000000000000000";
+		run_operation;
+		assert observed_fp_data = x"00008000000000000000" and
+			observed_status = x"00" and observed_cc = "0000"
+			report "FABS minimum-exponent normalized mismatch" severity failure;
+
+		clear_observations;
 		fp_register_data <= x"80000000000000000001";
 		run_operation;
 		assert observed_fp_data = x"00000000000000000001" and

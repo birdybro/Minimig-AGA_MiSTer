@@ -51,9 +51,9 @@ begin
 			"1000", x"00", "FGETEXP negative exponent mismatch");
 		check(x"C001C000000000000000", '1', x"40008000000000000000",
 			"0000", x"00", "FGETEXP ignored source sign mismatch");
-		check(x"00000000000000000001", '1', x"C00D807A000000000000",
+		check(x"00000000000000000001", '1', x"C00D807C000000000000",
 			"1000", x"00", "FGETEXP denormal mismatch");
-		check(x"00008000000000000000", '1', x"C00CFFF8000000000000",
+		check(x"00008000000000000000", '1', x"C00CFFFC000000000000",
 			"1000", x"00", "FGETEXP minimum normal exponent mismatch");
 		check(x"40004000000000000000", '1', x"00000000000000000000",
 			"0100", x"00", "FGETEXP unnormalized operand mismatch");

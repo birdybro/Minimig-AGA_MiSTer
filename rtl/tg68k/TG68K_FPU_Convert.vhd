@@ -168,12 +168,12 @@ begin
 					else
 						leading_position := highest_set_bit(significand);
 						shift_count := 63 - leading_position;
-						if source_exponent > shift_count then
+						if source_exponent >= shift_count then
 							significand := shift_left(significand, shift_count);
 							exponent_value := source_exponent - shift_count;
 						else
 							significand := shift_left(significand,
-								source_exponent - 1);
+								source_exponent);
 							exponent_value := 0;
 						end if;
 						result(78 downto 64) := std_logic_vector(

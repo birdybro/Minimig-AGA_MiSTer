@@ -144,16 +144,8 @@ begin
 		destination_sign := destination(79);
 		source_significand := unsigned(source(63 downto 0));
 		destination_significand := unsigned(destination(63 downto 0));
-		source_exponent := to_integer(unsigned(source(78 downto 64))) -
-			FPU_EXTENDED_EXPONENT_BIAS;
-		destination_exponent := to_integer(unsigned(destination(78 downto 64))) -
-			FPU_EXTENDED_EXPONENT_BIAS;
-		if source(78 downto 64) = "000000000000000" then
-			source_exponent := 1 - FPU_EXTENDED_EXPONENT_BIAS;
-		end if;
-		if destination(78 downto 64) = "000000000000000" then
-			destination_exponent := 1 - FPU_EXTENDED_EXPONENT_BIAS;
-		end if;
+		source_exponent := fpu_unbiased_exponent(source);
+		destination_exponent := fpu_unbiased_exponent(destination);
 		source_shift := 0;
 		destination_shift := 0;
 		if source_class = FPU_CLASS_NORMAL and source_significand /= 0 then

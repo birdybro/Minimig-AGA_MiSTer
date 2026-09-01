@@ -62,6 +62,9 @@ begin
 		check(x"40014000000000000000", x"40016000000000000000",
 			x"4002C000000000000000", "0000", x"00",
 			"FSCALE unnormalized operand mismatch");
+		check(x"3FFF8000000000000000", x"00008000000000000000",
+			x"00018000000000000000", "0000", x"00",
+			"FSCALE minimum extended exponent mismatch");
 
 		rounding_precision <= FPU_PRECISION_SINGLE;
 		check(x"00000000000000000000", x"3FFF8000008000000000",
