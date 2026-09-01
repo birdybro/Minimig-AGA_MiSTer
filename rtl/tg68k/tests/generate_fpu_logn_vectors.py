@@ -15,7 +15,7 @@ from fpu_exact_reference import (
 )
 
 
-SEED = 0x68880606
+SEED = 0x68881414
 
 
 def encode_fraction(value: Fraction) -> int:
@@ -28,53 +28,48 @@ def encode_fraction(value: Fraction) -> int:
 def source_values() -> list[int]:
     values = [
         encode_fraction(value) for value in (
-            Fraction(1, 2), Fraction(-1, 2), Fraction(1, 4),
-            Fraction(-1, 4), Fraction(3, 4), Fraction(-3, 4),
-            Fraction(1), Fraction(3), Fraction(7), Fraction(31),
-            Fraction(1, 1 << 25), Fraction(-1, 1 << 25),
-            Fraction(1, 1 << 26), Fraction(-1, 1 << 26),
-            Fraction(1, 1 << 27), Fraction(-1, 1 << 27),
-            Fraction(1, 1 << 28), Fraction(-1, 1 << 28),
-            Fraction(1, 1 << 31), Fraction(-1, 1 << 31),
-            Fraction(1, 1 << 32), Fraction(-1, 1 << 32),
-            Fraction(1, 1 << 33), Fraction(-1, 1 << 33),
-            Fraction(1, 1 << 67), Fraction(-1, 1 << 67),
-            Fraction(1, 1 << 68), Fraction(-1, 1 << 68),
-            Fraction(-(1 << 64) + 1, 1 << 64),
+            Fraction(1, 2), Fraction(3, 4), Fraction(1),
+            Fraction(5, 4), Fraction(3, 2), Fraction(2),
+            Fraction(3), Fraction(4), Fraction(7), Fraction(31),
+            Fraction((1 << 20) - 1, 1 << 20),
+            Fraction((1 << 20) + 1, 1 << 20),
+            Fraction((1 << 30) - 1, 1 << 30),
+            Fraction((1 << 30) + 1, 1 << 30),
+            Fraction((1 << 62) - 1, 1 << 62),
+            Fraction((1 << 62) + 1, 1 << 62),
+            Fraction((1 << 64) - 1, 1 << 64),
         )
     ]
-    for exponent in (63, 64, 95, 96, 97, 1000, 16383):
+    for exponent in (-16382, -1000, -97, -96, -95, -64, -1,
+                     1, 63, 64, 95, 96, 97, 1000, 16383):
         values.append(encode_extended(0, exponent, 1 << 63))
 
     rng = random.Random(SEED)
     while len(values) < 96:
-        sign = rng.randrange(2)
-        exponent = rng.randrange(-220, 8)
-        if sign and exponent >= 0:
-            exponent = -rng.randrange(1, 66)
+        exponent = rng.randrange(-16382, 16384)
         significand = (1 << 63) | rng.getrandbits(63)
-        value = encode_extended(sign, exponent, significand)
-        if extended_bits_value(value) > -1:
-            values.append(value)
+        values.append(encode_extended(0, exponent, significand))
     return values
 
 
 @lru_cache(maxsize=None)
-def exact_lognp1(source: int) -> Fraction:
+def high_precision_logn(source: int) -> Fraction:
     source_value = extended_bits_value(source)
     with localcontext() as context:
         context.prec = 450
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
-        result_decimal = (Decimal(1) + source_decimal).ln()
+        result_decimal = source_decimal.ln()
     return Fraction(result_decimal)
 
 
-def reference_lognp1(source: int, precision_bits: int,
-                     mode: int) -> tuple[int, int, int]:
+def reference_logn(source: int, precision_bits: int,
+                   mode: int) -> tuple[int, int, int]:
     result, condition_codes, status = round_binary_precision(
-        exact_lognp1(source), precision_bits, mode)
-    return result, condition_codes, status | 0x02
+        high_precision_logn(source), precision_bits, mode)
+    if extended_bits_value(result) != 0:
+        status |= 0x02
+    return result, condition_codes, status
 
 
 def make_vectors():
@@ -83,7 +78,7 @@ def make_vectors():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
-                result, condition_codes, status = reference_lognp1(
+                result, condition_codes, status = reference_logn(
                     source, precision_bits, mode)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
@@ -97,10 +92,10 @@ use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_lognp1_differential is
+entity tb_tg68k_fpu_logn_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_lognp1_differential is
+architecture test of tb_tg68k_fpu_logn_differential is
     constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
@@ -138,7 +133,7 @@ begin
             nReset => nReset,
             start => start,
             source => source,
-            add_one => '1',
+            add_one => '0',
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,
@@ -172,12 +167,12 @@ begin
                 wait for 1 ns;
                 cycles := cycles + 1;
                 assert cycles < 400
-                    report "differential FLOGNP1 timeout" severity failure;
+                    report "differential FLOGN timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FLOGNP1 vector " & integer'image(index) &
+                report "differential FLOGN vector " & integer'image(index) &
                     " mismatch: result=" & to_hstring(result) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
@@ -185,7 +180,7 @@ begin
             wait until rising_edge(clk);
             wait for 1 ns;
         end loop;
-        report "PASS: 1152 high-precision FLOGNP1 vectors" severity note;
+        report "PASS: 1152 high-precision FLOGN vectors" severity note;
         stop;
     end process;
 end architecture;

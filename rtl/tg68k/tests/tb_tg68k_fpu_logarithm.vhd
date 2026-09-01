@@ -12,6 +12,7 @@ architecture test of tb_tg68k_fpu_logarithm is
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
+	signal add_one : std_logic := '1';
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
@@ -26,6 +27,7 @@ begin
 			nReset => nReset,
 			start => start,
 			source => source,
+			add_one => add_one,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
 			result => result,
@@ -39,6 +41,7 @@ begin
 
 	stimulus : process
 		procedure execute(
+			constant add_one_value : in std_logic;
 			constant source_value : in fpu_extended_t;
 			constant expected_result : in fpu_extended_t;
 			constant expected_codes : in std_logic_vector(3 downto 0);
@@ -46,6 +49,7 @@ begin
 			variable cycles : natural := 0;
 		begin
 			wait until falling_edge(clk);
+			add_one <= add_one_value;
 			source <= source_value;
 			start <= '1';
 			wait until rising_edge(clk);
@@ -76,22 +80,30 @@ begin
 		nReset <= '1';
 		wait until rising_edge(clk);
 
-		execute(x"00000000000000000000", x"00000000000000000000", x"4", x"00");
-		execute(x"80000000000000000000", x"80000000000000000000", x"C", x"00");
-		execute(x"7FFF8000000000000000", x"7FFF8000000000000000", x"2", x"00");
-		execute(x"FFFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
-		execute(x"BFFF8000000000000000", x"FFFF8000000000000000", x"A", x"04");
-		execute(x"BFFF8000000000000001", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
-		execute(x"7FFFC000000000000001", x"7FFFC000000000000001", x"1", x"00");
-		execute(x"FFFFA000000000000001", x"FFFFE000000000000001", x"9", x"40");
-		execute(x"3FFF8000000000000000", x"3FFEB17217F7D1CF79AC", x"0", x"02");
-		execute(x"4000C000000000000000", x"3FFFB17217F7D1CF79AC", x"0", x"02");
-		execute(x"BFFE8000000000000000", x"BFFEB17217F7D1CF79AC", x"8", x"02");
-		execute(x"BFFEC000000000000000", x"BFFFB17217F7D1CF79AC", x"8", x"02");
-		execute(x"3FE58000000000000000", x"3FE4FFFFFFE000000555", x"0", x"02");
-		execute(x"BFE58000000000000000", x"BFE580000010000002AB", x"8", x"02");
+		execute('1', x"00000000000000000000", x"00000000000000000000", x"4", x"00");
+		execute('1', x"80000000000000000000", x"80000000000000000000", x"C", x"00");
+		execute('1', x"7FFF8000000000000000", x"7FFF8000000000000000", x"2", x"00");
+		execute('1', x"FFFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
+		execute('1', x"BFFF8000000000000000", x"FFFF8000000000000000", x"A", x"04");
+		execute('1', x"BFFF8000000000000001", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
+		execute('1', x"7FFFC000000000000001", x"7FFFC000000000000001", x"1", x"00");
+		execute('1', x"FFFFA000000000000001", x"FFFFE000000000000001", x"9", x"40");
+		execute('1', x"3FFF8000000000000000", x"3FFEB17217F7D1CF79AC", x"0", x"02");
+		execute('1', x"4000C000000000000000", x"3FFFB17217F7D1CF79AC", x"0", x"02");
+		execute('1', x"BFFE8000000000000000", x"BFFEB17217F7D1CF79AC", x"8", x"02");
+		execute('1', x"BFFEC000000000000000", x"BFFFB17217F7D1CF79AC", x"8", x"02");
+		execute('1', x"3FE58000000000000000", x"3FE4FFFFFFE000000555", x"0", x"02");
+		execute('1', x"BFE58000000000000000", x"BFE580000010000002AB", x"8", x"02");
 
-		report "PASS: FLOGNP1 datapath, domains, special values, and status"
+		execute('0', x"00000000000000000000", x"FFFF8000000000000000", x"A", x"04");
+		execute('0', x"80000000000000000000", x"FFFF8000000000000000", x"A", x"04");
+		execute('0', x"BFFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
+		execute('0', x"FFFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
+		execute('0', x"3FFF8000000000000000", x"00000000000000000000", x"4", x"00");
+		execute('0', x"40008000000000000000", x"3FFEB17217F7D1CF79AC", x"0", x"02");
+		execute('0', x"3FFE8000000000000000", x"BFFEB17217F7D1CF79AC", x"8", x"02");
+
+		report "PASS: FLOGNP1/FLOGN datapath, domains, special values, and status"
 			severity note;
 		stop;
 	end process;

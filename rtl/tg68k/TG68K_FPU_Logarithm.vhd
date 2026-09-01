@@ -23,6 +23,7 @@ entity TG68K_FPU_Logarithm is
 		nReset : in std_logic;
 		start : in std_logic;
 		source : in fpu_extended_t;
+		add_one : in std_logic;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -48,7 +49,8 @@ architecture rtl of TG68K_FPU_Logarithm is
 	constant CUBE_SQUARE_LOW_BIT : natural := 112;
 	constant POSITIVE_REMAINDER_BOUND_BIT : natural := 9;
 	type logarithm_state_t is
-		(IDLE, SQUARE_SMALL_ARGUMENT, ALIGN_SQUARE_TERM,
+		(IDLE, NORMALIZE_SERIES_ARGUMENT, SQUARE_SMALL_ARGUMENT,
+			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_INPUT, LOAD_CORDIC_ANGLE, CORDIC, MULTIPLY_LN2,
 			NORMALIZE_RESULT, WRITE_PENDING_RESULT, COMPLETE);
@@ -327,6 +329,8 @@ begin
 		variable source_significand : unsigned(63 downto 0);
 		variable source_exponent : integer range -65536 to 65535;
 		variable normalization_shift : natural range 0 to 63;
+		variable delta_significand : unsigned(63 downto 0);
+		variable next_series_source : unsigned(63 downto 0);
 		variable initial_mantissa : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable aligned_source : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable aligned_unit : unsigned(CORDIC_WIDTH - 1 downto 0);
@@ -456,8 +460,14 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								intermediate_class <= FPU_CLASS_ZERO;
-								intermediate_sign <= source(79);
+								if add_one = '1' then
+									intermediate_class <= FPU_CLASS_ZERO;
+									intermediate_sign <= source(79);
+								else
+									intermediate_class <= FPU_CLASS_INFINITY;
+									intermediate_sign <= '1';
+									base_status(2) <= '1';
+								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
 								if source(79) = '1' then
@@ -475,7 +485,46 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
-								if source(79) = '1' and source_exponent >= 0 then
+								if add_one = '0' and source(79) = '1' then
+									intermediate_class <= FPU_CLASS_QUIET_NAN;
+									intermediate_special <= FPU_RESET_NAN;
+									base_status(5) <= '1';
+									state <= COMPLETE;
+								elsif add_one = '0' then
+									if source_exponent = 0 and
+											source_significand = x"8000000000000000" then
+										intermediate_class <= FPU_CLASS_ZERO;
+										state <= COMPLETE;
+									else
+										base_status(1) <= '1';
+										if source_exponent = 0 then
+											delta_significand := source_significand -
+												x"8000000000000000";
+										elsif source_exponent = -1 then
+											delta_significand := not source_significand;
+											delta_significand := delta_significand + 1;
+										else
+											delta_significand := (others => '0');
+										end if;
+										if (source_exponent = 0 and
+												delta_significand(63 downto 38) = 0) or
+												(source_exponent = -1 and
+												delta_significand(63 downto 39) = 0) then
+											source_sign_latched <= '0';
+											if source_exponent = -1 then
+												source_sign_latched <= '1';
+											end if;
+											series_source_significand <= delta_significand;
+											series_exponent <= to_signed(source_exponent, 17);
+											state <= NORMALIZE_SERIES_ARGUMENT;
+										else
+											initial_mantissa := shift_left(resize(
+												source_significand, CORDIC_WIDTH), 33);
+											begin_cordic(initial_mantissa,
+												to_signed(source_exponent, 17));
+										end if;
+									end if;
+								elsif source(79) = '1' and source_exponent >= 0 then
 									if source_exponent = 0 and
 											source_significand = x"8000000000000000" then
 										intermediate_class <= FPU_CLASS_INFINITY;
@@ -560,6 +609,19 @@ begin
 							end if;
 						end if;
 
+					when NORMALIZE_SERIES_ARGUMENT =>
+						next_series_source := shift_left(
+							series_source_significand, 1);
+						series_source_significand <= next_series_source;
+						series_exponent <= series_exponent - 1;
+						if next_series_source(63) = '1' then
+							series_multiplier <= next_series_source;
+							series_multiplicand <= resize(next_series_source, 128);
+							series_product <= (others => '0');
+							series_index <= 0;
+							state <= SQUARE_SMALL_ARGUMENT;
+						end if;
+
 					when SQUARE_SMALL_ARGUMENT =>
 						square_sum := series_product;
 						if series_multiplier(0) = '1' then
@@ -594,7 +656,7 @@ begin
 									series_source_significand, SERIES_WIDTH),
 									SERIES_NORMAL_BIT - 63);
 								if source_sign_latched = '0' then
-									series_value := series_base - series_correction - 1;
+									series_value := series_base - series_correction;
 								else
 									series_value := series_base + series_correction;
 								end if;
