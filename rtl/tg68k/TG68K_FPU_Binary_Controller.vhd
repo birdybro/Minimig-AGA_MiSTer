@@ -127,6 +127,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_base_latched : fpu_exponential_base_t :=
 		FPU_EXP_BASE_TWO;
 	signal exponential_minus_one_latched : std_logic := '0';
+	signal hyperbolic_sine_latched : std_logic := '0';
 	signal logarithm_latched : std_logic := '0';
 	signal logarithm_add_one_latched : std_logic := '0';
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
@@ -370,6 +371,7 @@ begin
 			source => source_latched,
 			exponential_base => exponential_base_latched,
 			subtract_one => exponential_minus_one_latched,
+			hyperbolic_sine => hyperbolic_sine_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -561,6 +563,7 @@ begin
 				exponential_latched <= '0';
 				exponential_base_latched <= FPU_EXP_BASE_TWO;
 				exponential_minus_one_latched <= '0';
+				hyperbolic_sine_latched <= '0';
 				logarithm_latched <= '0';
 				logarithm_add_one_latched <= '0';
 				logarithm_base_latched <= FPU_LOG_BASE_E;
@@ -650,13 +653,15 @@ begin
 							if operation = FPU_OP_TWOTOX or
 									operation = FPU_OP_ETOX or
 									operation = FPU_OP_TENTOX or
-									operation = FPU_OP_ETOXM1 then
+									operation = FPU_OP_ETOXM1 or
+									operation = FPU_OP_SINH then
 								exponential_latched <= '1';
 							else
 								exponential_latched <= '0';
 							end if;
 							if operation = FPU_OP_ETOX or
-									operation = FPU_OP_ETOXM1 then
+									operation = FPU_OP_ETOXM1 or
+									operation = FPU_OP_SINH then
 								exponential_base_latched <= FPU_EXP_BASE_E;
 							elsif operation = FPU_OP_TENTOX then
 								exponential_base_latched <= FPU_EXP_BASE_TEN;
@@ -667,6 +672,11 @@ begin
 								exponential_minus_one_latched <= '1';
 							else
 								exponential_minus_one_latched <= '0';
+							end if;
+							if operation = FPU_OP_SINH then
+								hyperbolic_sine_latched <= '1';
+							else
+								hyperbolic_sine_latched <= '0';
 							end if;
 							if operation = FPU_OP_LOGNP1 or
 									operation = FPU_OP_LOGN or

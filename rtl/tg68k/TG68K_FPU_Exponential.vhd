@@ -25,6 +25,7 @@ entity TG68K_FPU_Exponential is
 		source : in fpu_extended_t;
 		exponential_base : in fpu_exponential_base_t;
 		subtract_one : in std_logic;
+		hyperbolic_sine : in std_logic := '0';
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -46,14 +47,16 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant SERIES_NORMAL_BIT : natural := 195;
 	constant SERIES_CUBIC_MAX_EXPONENT : integer := -26;
 	constant SERIES_CUBIC_MIN_EXPONENT : integer := -32;
+	constant SINH_TINY_MAX_EXPONENT : integer := -33;
 	constant CUBE_SQUARE_LOW_BIT : natural := 112;
 	constant CUBE_ALIGNMENT_BASE : integer := 118;
 	constant NEGATIVE_REMAINDER_BOUND_BIT : natural := 118;
 	type exponential_state_t is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
 			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
-			MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC, ALIGN_SUBTRACTION,
-			NORMALIZE_SUBTRACTION, WRITE_PENDING_RESULT, COMPLETE);
+			MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC,
+			ALIGN_HYPERBOLIC_SINE, ALIGN_SUBTRACTION, NORMALIZE_SUBTRACTION,
+			WRITE_PENDING_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
@@ -135,6 +138,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal scale_index : natural range 0 to FIXED_WIDTH - 1 := 0;
 	signal source_sign_latched : std_logic := '0';
 	signal subtract_one_latched : std_logic := '0';
+	signal hyperbolic_sine_latched : std_logic := '0';
 	signal series_source_significand : unsigned(63 downto 0) :=
 		(others => '0');
 	signal series_exponent : signed(16 downto 0) := (others => '0');
@@ -149,7 +153,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal subtraction_one : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
 	signal subtraction_exponent : signed(16 downto 0) := (others => '0');
-	signal subtraction_shift_count : natural range 0 to FRACTION_BITS := 0;
+	signal subtraction_shift_count : natural range 0 to CORDIC_WIDTH := 0;
 	signal subtraction_sticky : std_logic := '0';
 	signal pending_sign : std_logic := '0';
 	signal pending_exponent : signed(16 downto 0) := (others => '0');
@@ -249,6 +253,44 @@ begin
 			pending_exponent <= difference_exponent;
 			pending_significand <= final_significand;
 			state <= WRITE_PENDING_RESULT;
+		end procedure;
+
+		procedure complete_hyperbolic_sine(
+				constant positive_exponential : in unsigned(CORDIC_WIDTH downto 0);
+				constant reciprocal_exponential : in unsigned(CORDIC_WIDTH downto 0);
+				constant binary_exponent : in signed(16 downto 0);
+				constant prior_sticky : in std_logic) is
+			variable difference : unsigned(CORDIC_WIDTH downto 0);
+			variable result_exponent_value : signed(16 downto 0);
+			variable exponent_integer : integer range 0 to 65535;
+		begin
+			exponent_integer := to_integer(binary_exponent);
+			if exponent_integer > CORDIC_WIDTH / 2 then
+				difference := positive_exponential - 1;
+				complete_subtraction(difference, binary_exponent - 1,
+					source_sign_latched, '1');
+			elsif exponent_integer = 0 then
+				difference := positive_exponential - reciprocal_exponential;
+				result_exponent_value := binary_exponent - 1;
+				if difference(FRACTION_BITS) = '1' then
+					complete_subtraction(difference, result_exponent_value,
+						source_sign_latched, prior_sticky);
+				else
+					subtraction_value <= difference;
+					subtraction_exponent <= result_exponent_value;
+					subtraction_sticky <= prior_sticky;
+					intermediate_sign <= source_sign_latched;
+					state <= NORMALIZE_SUBTRACTION;
+				end if;
+			else
+				subtraction_value <= positive_exponential;
+				subtraction_one <= reciprocal_exponential;
+				subtraction_exponent <= binary_exponent - 1;
+				subtraction_shift_count <= 2 * exponent_integer;
+				subtraction_sticky <= prior_sticky;
+				intermediate_sign <= source_sign_latched;
+				state <= ALIGN_HYPERBOLIC_SINE;
+			end if;
 		end procedure;
 
 		procedure complete_exponential(
@@ -360,8 +402,13 @@ begin
 			if fraction_value = 0 then
 				unit_value := (others => '0');
 				unit_value(FRACTION_BITS) := '1';
-				complete_exponential(unit_value,
-					to_signed(exponent_value, 17), minus_one);
+				if hyperbolic_sine_latched = '1' then
+					complete_hyperbolic_sine(unit_value, unit_value,
+						to_signed(exponent_value, 17), '0');
+				else
+					complete_exponential(unit_value,
+						to_signed(exponent_value, 17), minus_one);
+				end if;
 			else
 				fraction_register <= fraction_value;
 				product_accumulator <= (others => '0');
@@ -415,6 +462,7 @@ begin
 		variable next_z : cordic_value_t;
 		variable next_angle : cordic_value_t;
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
+		variable cordic_difference : signed(CORDIC_WIDTH downto 0);
 		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
 		variable square_sum : unsigned(127 downto 0);
 		variable next_square : unsigned(127 downto 0);
@@ -446,6 +494,7 @@ begin
 				scale_index <= 0;
 				source_sign_latched <= '0';
 				subtract_one_latched <= '0';
+				hyperbolic_sine_latched <= '0';
 				series_source_significand <= (others => '0');
 				series_exponent <= (others => '0');
 				series_multiplier <= (others => '0');
@@ -492,6 +541,7 @@ begin
 							scale_index <= 0;
 							source_sign_latched <= source(79);
 							subtract_one_latched <= subtract_one;
+							hyperbolic_sine_latched <= hyperbolic_sine;
 							series_source_significand <= (others => '0');
 							series_exponent <= (others => '0');
 							series_multiplier <= (others => '0');
@@ -534,7 +584,7 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								if subtract_one = '1' then
+								if subtract_one = '1' or hyperbolic_sine = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 									intermediate_sign <= source(79);
 								else
@@ -543,7 +593,10 @@ begin
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
-								if subtract_one = '1' and source(79) = '1' then
+								if hyperbolic_sine = '1' then
+									intermediate_class <= FPU_CLASS_INFINITY;
+									intermediate_sign <= source(79);
+								elsif subtract_one = '1' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= '1';
 									intermediate_significand(66) <= '1';
@@ -561,10 +614,20 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
-								if subtract_one = '1' and
+								if (subtract_one = '1' or hyperbolic_sine = '1') and
 										source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
 									base_status(1) <= '1';
-									if source_exponent < -67 then
+									if hyperbolic_sine = '1' and
+											source_exponent <= SINH_TINY_MAX_EXPONENT then
+										tiny_significand := shift_left(resize(
+											source_significand, 67), 3) + 1;
+										intermediate_class <= FPU_CLASS_NORMAL;
+										intermediate_sign <= source(79);
+										intermediate_exponent <= to_signed(
+											source_exponent, 17);
+										intermediate_significand <= tiny_significand;
+										state <= COMPLETE;
+									elsif hyperbolic_sine = '0' and source_exponent < -67 then
 										tiny_significand := shift_left(resize(
 											source_significand, 67), 3);
 										if source(79) = '0' then
@@ -605,7 +668,13 @@ begin
 											source_exponent > 12) then
 										intermediate_class <= FPU_CLASS_NORMAL;
 										base_status(1) <= '1';
-										if subtract_one = '1' and source(79) = '1' then
+										if hyperbolic_sine = '1' then
+											intermediate_sign <= source(79);
+											exponent_value := 65535;
+											intermediate_exponent <= to_signed(
+												exponent_value, 17);
+											intermediate_significand(66) <= '1';
+										elsif subtract_one = '1' and source(79) = '1' then
 											intermediate_sign <= '1';
 											intermediate_exponent <= to_signed(-1, 17);
 											intermediate_significand <= (others => '1');
@@ -640,7 +709,8 @@ begin
 											end if;
 											state <= COMPLETE;
 										else
-											if exponential_base = FPU_EXP_BASE_E then
+											if hyperbolic_sine = '1' or
+													exponential_base = FPU_EXP_BASE_E then
 												scale_magnitude_register <= magnitude_fixed;
 												scale_accumulator <= (others => '0');
 												scale_index <= 0;
@@ -742,7 +812,9 @@ begin
 							series_cube_correction := shift_left(resize(
 								next_cube_quotient, SERIES_WIDTH),
 								cube_alignment_shift);
-							if source_sign_latched = '0' then
+							if hyperbolic_sine_latched = '1' then
+								series_value := series_base + series_cube_correction;
+							elsif source_sign_latched = '0' then
 								series_value := series_base + series_correction +
 									series_cube_correction;
 							else
@@ -774,9 +846,14 @@ begin
 						next_scale := shift_right(scale_sum, 1);
 						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
-							begin_reduced_exponential(next_scale(
-								FIXED_WIDTH - 1 downto 0), source_sign_latched,
-								subtract_one_latched);
+							if hyperbolic_sine_latched = '1' then
+								begin_reduced_exponential(next_scale(
+									FIXED_WIDTH - 1 downto 0), '0', '0');
+							else
+								begin_reduced_exponential(next_scale(
+									FIXED_WIDTH - 1 downto 0), source_sign_latched,
+									subtract_one_latched);
+							end if;
 						else
 							scale_index <= scale_index + 1;
 						end if;
@@ -793,11 +870,16 @@ begin
 							if next_accumulator = 0 then
 								unit_result := (others => '0');
 								unit_result(FRACTION_BITS) := '1';
-								if subtract_one_latched = '0' then
-									unit_result(0) := '1';
+								if hyperbolic_sine_latched = '1' then
+									complete_hyperbolic_sine(unit_result, unit_result,
+										result_exponent, '1');
+								else
+									if subtract_one_latched = '0' then
+										unit_result(0) := '1';
+									end if;
+									complete_exponential(unit_result, result_exponent,
+										subtract_one_latched);
 								end if;
-								complete_exponential(unit_result, result_exponent,
-									subtract_one_latched);
 							else
 								cordic_x <= CORDIC_INVERSE_GAIN;
 								cordic_y <= (others => '0');
@@ -844,8 +926,15 @@ begin
 						elsif cordic_iteration = FRACTION_BITS then
 							cordic_sum := resize(next_x, CORDIC_WIDTH + 1) +
 								resize(next_y, CORDIC_WIDTH + 1);
-							complete_exponential(unsigned(cordic_sum), result_exponent,
-								subtract_one_latched);
+							if hyperbolic_sine_latched = '1' then
+								cordic_difference := resize(next_x, CORDIC_WIDTH + 1) -
+									resize(next_y, CORDIC_WIDTH + 1);
+								complete_hyperbolic_sine(unsigned(cordic_sum),
+									unsigned(cordic_difference), result_exponent, '0');
+							else
+								complete_exponential(unsigned(cordic_sum), result_exponent,
+									subtract_one_latched);
+							end if;
 						else
 							repeat_iteration <= '0';
 							cordic_iteration <= cordic_iteration + 1;
@@ -860,6 +949,31 @@ begin
 								cordic_shift_angle <=
 									shift_right(cordic_shift_angle, 1);
 							end if;
+						end if;
+
+					when ALIGN_HYPERBOLIC_SINE =>
+						next_subtraction_one := shift_right(subtraction_one, 1);
+						next_subtraction_sticky := subtraction_sticky or
+							subtraction_one(0);
+						if subtraction_shift_count = 1 then
+							if next_subtraction_sticky = '1' then
+								next_subtraction_one := next_subtraction_one + 1;
+							end if;
+							subtraction_difference := subtraction_value -
+								next_subtraction_one;
+							if subtraction_difference(FRACTION_BITS) = '1' then
+								complete_subtraction(subtraction_difference,
+									subtraction_exponent, intermediate_sign,
+									next_subtraction_sticky);
+							else
+								subtraction_value <= subtraction_difference;
+								subtraction_sticky <= next_subtraction_sticky;
+								state <= NORMALIZE_SUBTRACTION;
+							end if;
+						else
+							subtraction_one <= next_subtraction_one;
+							subtraction_shift_count <= subtraction_shift_count - 1;
+							subtraction_sticky <= next_subtraction_sticky;
 						end if;
 
 					when ALIGN_SUBTRACTION =>

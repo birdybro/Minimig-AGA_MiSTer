@@ -361,6 +361,16 @@ begin
 			report "register FATAN controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_SINH;
+		run_register_operation(x"3FFF8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFF966CFE2275CC12D4" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FSINH controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_INT;
 		run_register_operation(x"3FFFC000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");

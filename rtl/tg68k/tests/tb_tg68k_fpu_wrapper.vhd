@@ -316,8 +316,15 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0892#) := x"6580";
 		result(16#0893#) := x"0000";
 		result(16#0894#) := x"0B74";
-		result(16#0895#) := x"4E72";
-		result(16#0896#) := x"2700";
+		result(16#0895#) := x"7401";
+		result(16#0896#) := x"F202";
+		result(16#0897#) := x"4182";
+		result(16#0898#) := x"F239";
+		result(16#0899#) := x"6580";
+		result(16#089A#) := x"0000";
+		result(16#089B#) := x"0B78";
+		result(16#089C#) := x"4E72";
+		result(16#089D#) := x"2700";
 		return result;
 	end function;
 
@@ -354,6 +361,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal exponential_result_write_count : natural range 0 to 8 := 0;
 	signal logarithm_result_write_count : natural range 0 to 8 := 0;
 	signal arc_tangent_result_write_count : natural range 0 to 2 := 0;
+	signal hyperbolic_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -517,8 +525,12 @@ begin
 					arc_tangent_result_write_count <=
 						arc_tangent_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B78" or addr_out = x"00000B7A" then
+					hyperbolic_result_write_count <=
+						hyperbolic_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"0000112A" then
+			if busstate = "00" and addr_out = x"00001138" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -529,7 +541,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 5000 loop
+		for cycle in 0 to 5500 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
@@ -548,7 +560,8 @@ begin
 				constant_result_write_count = 2 and
 				exponential_result_write_count = 8 and
 				logarithm_result_write_count = 8 and
-				arc_tangent_result_write_count = 2 and post_fpu_fetch = '1';
+				arc_tangent_result_write_count = 2 and
+				hyperbolic_result_write_count = 2 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -713,7 +726,13 @@ begin
 				to_hstring(memory(16#05BA#)) &
 				to_hstring(memory(16#05BB#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
+		assert hyperbolic_result_write_count = 2 and
+			memory(16#05BC#) = x"3F96" and memory(16#05BD#) = x"6CFE"
+			report "TG68K FSINH instruction stream mismatch: " &
+				to_hstring(memory(16#05BC#)) &
+				to_hstring(memory(16#05BD#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, hyperbolic sine, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
