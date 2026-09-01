@@ -757,6 +757,41 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
+		clear_observations;
+		effective_address <= x"00009000";
+		start_instruction(x"F210", x"4681", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and fp_registers(5) = x"C0008000000000000000" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02"
+			report "memory single FINT system result mismatch" severity failure;
+
+		start_instruction(x"F210", x"4683", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(5) = x"BFFF8000000000000000" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02"
+			report "memory single FINTRZ system result mismatch" severity failure;
+
+		integer_register_data <= x"00000200";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F210", x"4681", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_INEX2 and
+			fp_registers(5) = x"C0008000000000000000" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02" and
+			fpiar = x"00000400"
+			report "enabled FINT inexact exception mismatch" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
 		integer_register_data <= x"00000000";
 		start_instruction(x"F202", x"4180", '1');
 		command_word <= x"0000";

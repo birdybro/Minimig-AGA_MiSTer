@@ -238,6 +238,38 @@ begin
 			report "register FSQRT controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_INT;
+		run_register_operation(x"3FFFC000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"40008000000000000000" and
+			observed_status = x"02" and observed_cc = "0000"
+			report "register FINT controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_INTRZ;
+		rounding_mode <= FPU_ROUND_PLUS_INFINITY;
+		run_register_operation(x"3FFFC000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFF8000000000000000" and
+			observed_status = x"02" and observed_cc = "0000"
+			report "register FINTRZ controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_INT;
+		rounding_mode <= FPU_ROUND_NEAREST;
+		exception_enable <= x"02";
+		run_register_operation(x"3FFFC000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"40008000000000000000" and
+			observed_status = x"02"
+			report "enabled FINT inexact incorrectly suppressed destination"
+			severity failure;
+		exception_enable <= x"00";
+
+		clear_observations;
 		operation <= FPU_OP_CMP;
 		run_register_operation(x"4000C000000000000000",
 			x"40008000000000000000");
@@ -302,6 +334,16 @@ begin
 			observed_fp_data = x"3FFF9CC470A0490973E8" and
 			observed_status = x"02"
 			report "memory single FSQRT controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_INT;
+		start_operation;
+		finish_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"40008000000000000000" and
+			observed_status = x"02"
+			report "memory single FINT controller mismatch" severity failure;
 
 		clear_observations;
 		operation <= FPU_OP_ADD;
@@ -406,7 +448,7 @@ begin
 			trace_address(0) = x"00004000" and status_write_count = 1
 			report "binary bus-error retry mismatch" severity failure;
 
-		report "PASS: MC68882 FSQRT and fundamental binary controller"
+		report "PASS: MC68882 fundamental arithmetic controller"
 			severity note;
 		stop;
 	end process;

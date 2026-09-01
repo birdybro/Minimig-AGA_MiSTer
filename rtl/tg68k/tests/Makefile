@@ -20,13 +20,14 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU_Unary_Controller.vhd \
 	../TG68K_FPU_Add_Subtract.vhd ../TG68K_FPU_Multiply.vhd \
 	../TG68K_FPU_Divide.vhd ../TG68K_FPU_Square_Root.vhd \
+	../TG68K_FPU_Integer.vhd \
 	../TG68K_FPU_Binary_Controller.vhd \
 	../TG68K_FPU.vhd ../TG68K_FPU_System.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
+.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -50,6 +51,7 @@ analyze:
 		tb_tg68k_fpu_movem_controller.vhd \
 		tb_tg68k_fpu_extract.vhd \
 		tb_tg68k_fpu_unary_controller.vhd \
+		tb_tg68k_fpu_integer.vhd \
 		tb_tg68k_fpu_add_subtract.vhd tb_tg68k_fpu_multiply.vhd \
 		tb_tg68k_fpu_divide.vhd tb_tg68k_fpu_square_root.vhd \
 		tb_tg68k_fpu_binary_controller.vhd \
@@ -81,6 +83,7 @@ analyze:
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_movem_controller
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_extract
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_unary_controller
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_integer
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_add_subtract
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_multiply
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_divide
@@ -190,6 +193,15 @@ fpu_extract_differential: analyze generate_fpu_extract_vectors.py fpu_exact_refe
 fpu_unary_controller: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_unary_controller $(GHDL_RUN_FLAGS)
 
+fpu_integer: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_integer $(GHDL_RUN_FLAGS)
+
+fpu_integer_differential: analyze generate_fpu_integer_vectors.py fpu_exact_reference.py
+	$(PYTHON) generate_fpu_integer_vectors.py > $(BUILD_DIR)/tb_tg68k_fpu_integer_differential.vhd
+	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(BUILD_DIR)/tb_tg68k_fpu_integer_differential.vhd
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_integer_differential
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_integer_differential $(GHDL_RUN_FLAGS)
+
 fpu_add_subtract: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_add_subtract $(GHDL_RUN_FLAGS)
 
@@ -259,6 +271,7 @@ synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Multiply > $(BUILD_DIR)/TG68K_FPU_Multiply_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Divide > $(BUILD_DIR)/TG68K_FPU_Divide_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Square_Root > $(BUILD_DIR)/TG68K_FPU_Square_Root_synth.vhd
+	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Integer > $(BUILD_DIR)/TG68K_FPU_Integer_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Binary_Controller > $(BUILD_DIR)/TG68K_FPU_Binary_Controller_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU > $(BUILD_DIR)/TG68K_FPU_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_System > $(BUILD_DIR)/TG68K_FPU_System_synth.vhd

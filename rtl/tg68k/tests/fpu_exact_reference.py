@@ -150,6 +150,26 @@ def round_square_root(value: Fraction, precision: int,
     return encoded, 0, 0x02 if inexact else 0
 
 
+def round_integral(value: Fraction, precision: int, mode: int,
+                   force_round_zero: bool) -> tuple[int, int, int]:
+    effective_mode = 1 if force_round_zero else mode
+    sign = int(value < 0)
+    magnitude = abs(value)
+    quotient, remainder = divmod(magnitude.numerator, magnitude.denominator)
+    inexact = remainder != 0
+    if rounding_increment(effective_mode, sign, quotient, remainder,
+                          magnitude.denominator):
+        quotient += 1
+    integral = -quotient if sign else quotient
+    if integral == 0:
+        return sign << 79, (sign << 3) | 4, 0x02 if inexact else 0
+    result, condition_codes, status = round_binary(
+        Fraction(integral), precision, effective_mode)
+    if inexact:
+        status |= 0x02
+    return result, condition_codes, status
+
+
 def precision_name(index: int) -> tuple[str, int]:
     return (
         ("FPU_PRECISION_EXTENDED", 64),
