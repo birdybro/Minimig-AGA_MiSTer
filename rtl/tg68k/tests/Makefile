@@ -15,6 +15,8 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU_Convert.vhd ../TG68K_FPU_Round.vhd \
 	../TG68K_FPU_Packed_Power_ROM.vhd \
 	../TG68K_FPU_Packed_To_Extended.vhd \
+	../TG68K_FPU_Packed_Output_Power_ROM.vhd \
+	../TG68K_FPU_Extended_To_Packed.vhd \
 	../TG68K_FPU_Store_Convert.vhd ../TG68K_FPU_Move_Controller.vhd \
 	../TG68K_FPU_Control_Controller.vhd \
 	../TG68K_FPU_Movem_Controller.vhd \
@@ -31,9 +33,9 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU.vhd ../TG68K_FPU_System.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
+.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_packed_output_power_rom_check fpu_extended_to_packed_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_packed_output_power_rom_check fpu_extended_to_packed_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -197,6 +199,17 @@ fpu_packed_to_extended_differential: analyze generate_fpu_packed_to_extended_vec
 	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(BUILD_DIR)/tb_tg68k_fpu_packed_to_extended_differential.vhd
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_packed_to_extended_differential
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_packed_to_extended_differential $(GHDL_RUN_FLAGS)
+
+fpu_packed_output_power_rom_check: generate_fpu_packed_output_power_rom.py
+	mkdir -p $(BUILD_DIR)
+	$(PYTHON) generate_fpu_packed_output_power_rom.py > $(BUILD_DIR)/TG68K_FPU_Packed_Output_Power_ROM.vhd
+	cmp ../TG68K_FPU_Packed_Output_Power_ROM.vhd $(BUILD_DIR)/TG68K_FPU_Packed_Output_Power_ROM.vhd
+
+fpu_extended_to_packed_differential: analyze generate_fpu_extended_to_packed_vectors.py fpu_exact_reference.py
+	$(PYTHON) generate_fpu_extended_to_packed_vectors.py > $(BUILD_DIR)/tb_tg68k_fpu_extended_to_packed_differential.vhd
+	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(BUILD_DIR)/tb_tg68k_fpu_extended_to_packed_differential.vhd
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_extended_to_packed_differential
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_extended_to_packed_differential $(GHDL_RUN_FLAGS)
 
 fpu_store_convert: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_store_convert $(GHDL_RUN_FLAGS)
@@ -451,6 +464,8 @@ synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Round > $(BUILD_DIR)/TG68K_FPU_Round_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Packed_Power_ROM > $(BUILD_DIR)/TG68K_FPU_Packed_Power_ROM_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Packed_To_Extended > $(BUILD_DIR)/TG68K_FPU_Packed_To_Extended_synth.vhd
+	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Packed_Output_Power_ROM > $(BUILD_DIR)/TG68K_FPU_Packed_Output_Power_ROM_synth.vhd
+	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Extended_To_Packed > $(BUILD_DIR)/TG68K_FPU_Extended_To_Packed_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Store_Convert > $(BUILD_DIR)/TG68K_FPU_Store_Convert_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Move_Controller > $(BUILD_DIR)/TG68K_FPU_Move_Controller_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Control_Controller > $(BUILD_DIR)/TG68K_FPU_Control_Controller_synth.vhd

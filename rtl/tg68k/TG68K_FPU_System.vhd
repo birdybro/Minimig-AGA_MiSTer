@@ -174,6 +174,7 @@ architecture rtl of TG68K_FPU_System is
 	signal move_integer_write_format : fpu_operand_format_t;
 	signal move_packed_start : std_logic;
 	signal move_packed_source : std_logic_vector(95 downto 0);
+	signal move_k_factor : std_logic_vector(6 downto 0);
 
 	signal control_start : std_logic;
 	signal control_external_to_control : std_logic;
@@ -344,9 +345,7 @@ begin
 		(decoded_family = FPU_FAMILY_EXTERNAL_OPERATION and
 		decoded_operation = FPU_OP_MOVE and
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) or
-		(decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL and
-		decoded_format /= FPU_FORMAT_PACKED and
-		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) else '0';
+		decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL else '0';
 	control_implemented <= '1' when
 		decoded_family = FPU_FAMILY_MOVE_TO_CONTROL or
 		decoded_family = FPU_FAMILY_MOVE_FROM_CONTROL else '0';
@@ -443,6 +442,8 @@ begin
 	move_source_select <= decoded_destination_register when
 		decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL else
 		decoded_source_register;
+	move_k_factor <= integer_register_data(6 downto 0) when
+		decoded_format = FPU_FORMAT_DYNAMIC_PACKED else command_word(6 downto 0);
 	fp_data_select <= movem_fp_select when movem_busy = '1' else
 		decoded_source_register when binary_start = '1' else
 		decoded_source_register when unary_start = '1' else
@@ -473,7 +474,9 @@ begin
 		to_unsigned(operation_byte_count, 32)) when
 		opcode(5 downto 3) = "100" else effective_address;
 	integer_operand_select <= command_word(6 downto 4) when
-		movem_implemented = '1' and command_word(11) = '1' else
+		(movem_implemented = '1' and command_word(11) = '1') or
+		(decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL and
+		decoded_format = FPU_FORMAT_DYNAMIC_PACKED) else
 		opcode(2 downto 0);
 
 	instruction_match <= decoded_match;
@@ -622,6 +625,7 @@ begin
 			fp_register_data => fp_data_read,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			k_factor => move_k_factor,
 			packed_conversion_start => move_packed_start,
 			packed_conversion_source => move_packed_source,
 			packed_conversion_done => packed_conversion_done,

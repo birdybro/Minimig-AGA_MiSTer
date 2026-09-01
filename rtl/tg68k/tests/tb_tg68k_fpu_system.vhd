@@ -663,6 +663,53 @@ begin
 			report "packed FMOVE system conversion mismatch" severity failure;
 
 		clear_observations;
+		effective_address <= x"0000C020";
+		start_instruction(x"F210", x"6C7D", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 6 and trace_write(0) = '1' and
+			trace_address(0) = x"0000C020" and
+			trace_address(5) = x"0000C02A" and trace_fc(5) = "101" and
+			trace_data(0) = x"4001" and trace_data(1) = x"0001" and
+			trace_data(2) = x"0000" and trace_data(3) = x"0000" and
+			trace_data(4) = x"0000" and trace_data(5) = x"0000" and
+			fpsr(15 downto 8) = x"02"
+			report "static-K packed output FMOVE system mismatch" severity failure;
+
+		clear_observations;
+		integer_register_data <= x"00002000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fpcr = x"00002000"
+			report "packed output OPERR enable setup mismatch" severity failure;
+
+		clear_observations;
+		integer_register_data <= x"00000012";
+		effective_address <= x"0000C030";
+		start_instruction(x"F210", x"7C40", '1');
+		assert integer_register_select = "100"
+			report "dynamic packed output selected the wrong K-factor register"
+			severity failure;
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert trace_count = 6 and trace_write(0) = '1' and
+			trace_address(5) = x"0000C03A" and
+			trace_data(0) = x"4001" and trace_data(1) = x"0001" and
+			trace_data(2) = x"0000" and trace_data(3) = x"0000" and
+			trace_data(4) = x"0000" and trace_data(5) = x"0000" and
+			fpsr(15 downto 8) = x"22" and
+			floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fpiar = x"00000400"
+			report "dynamic-K packed output FMOVE system mismatch" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
+		clear_observations;
 		integer_register_data <= x"00000000";
 		start_instruction(x"F203", x"9000", '1');
 		command_word <= x"0000";

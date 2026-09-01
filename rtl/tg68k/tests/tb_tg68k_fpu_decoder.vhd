@@ -113,6 +113,20 @@ begin
 
 		check_decode(x"F200", x"6400", '1', '1', '1', '1',
 			FPU_FAMILY_MOVE_TO_EXTERNAL);
+		check_decode(x"F220", x"6C52", '1', '1', '1', '1',
+			FPU_FAMILY_MOVE_TO_EXTERNAL);
+		assert operand_format = FPU_FORMAT_PACKED
+			report "static packed destination format was not decoded"
+			severity failure;
+		check_decode(x"F220", x"7C30", '1', '1', '1', '1',
+			FPU_FAMILY_MOVE_TO_EXTERNAL);
+		assert operand_format = FPU_FORMAT_DYNAMIC_PACKED
+			report "dynamic packed destination format was not decoded"
+			severity failure;
+		check_decode(x"F220", x"7C31", '1', '1', '1', '1',
+			FPU_FAMILY_MOVE_TO_EXTERNAL);
+		check_decode(x"F220", x"6401", '1', '1', '1', '1',
+			FPU_FAMILY_MOVE_TO_EXTERNAL);
 		check_decode(x"F200", x"6800", '1', '0', '1', '1',
 			FPU_FAMILY_MOVE_TO_EXTERNAL);
 		check_decode(x"F220", x"6800", '1', '1', '1', '1',

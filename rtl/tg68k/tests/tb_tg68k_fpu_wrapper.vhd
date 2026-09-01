@@ -411,8 +411,12 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08E9#) := x"6400";
 		result(16#08EA#) := x"0000";
 		result(16#08EB#) := x"0BA4";
-		result(16#08EC#) := x"4E72";
-		result(16#08ED#) := x"2700";
+		result(16#08EC#) := x"F239";
+		result(16#08ED#) := x"6C7D";
+		result(16#08EE#) := x"0000";
+		result(16#08EF#) := x"0BA8";
+		result(16#08F0#) := x"4E72";
+		result(16#08F1#) := x"2700";
 		return result;
 	end function;
 
@@ -462,6 +466,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal sincos_cosine_result_write_count : natural range 0 to 2 := 0;
 	signal packed_input_transfer_count : natural range 0 to 6 := 0;
 	signal packed_result_write_count : natural range 0 to 2 := 0;
+	signal packed_output_transfer_count : natural range 0 to 6 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -547,6 +552,10 @@ begin
 			if busstate /= "01" and unsigned(addr_out) >= unsigned'(x"00001804") and
 					unsigned(addr_out) <= unsigned'(x"0000180E") then
 				packed_input_transfer_count <= packed_input_transfer_count + 1;
+			end if;
+			if busstate = "11" and unsigned(addr_out) >= unsigned'(x"00000BA8") and
+					unsigned(addr_out) <= unsigned'(x"00000BB2") then
+				packed_output_transfer_count <= packed_output_transfer_count + 1;
 			end if;
 			if busstate = "11" and not is_x(addr_out) then
 				word_address := to_integer(unsigned(addr_out(13 downto 1)));
@@ -672,7 +681,7 @@ begin
 					packed_result_write_count <= packed_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000011DA" then
+			if busstate = "00" and addr_out = x"000011E2" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -683,7 +692,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 7000 loop
+		for cycle in 0 to 9000 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
@@ -716,6 +725,7 @@ begin
 				sincos_cosine_result_write_count = 2 and
 				packed_input_transfer_count = 6 and
 				packed_result_write_count = 2 and
+				packed_output_transfer_count = 6 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -953,6 +963,18 @@ begin
 			report "TG68K packed FMOVE instruction stream mismatch: " &
 				to_hstring(memory(16#05D2#)) &
 				to_hstring(memory(16#05D3#))
+			severity failure;
+		assert packed_output_transfer_count = 6 and
+			memory(16#05D4#) = x"4001" and memory(16#05D5#) = x"0001" and
+			memory(16#05D6#) = x"0000" and memory(16#05D7#) = x"0000" and
+			memory(16#05D8#) = x"0000" and memory(16#05D9#) = x"0000"
+			report "TG68K packed-output FMOVE instruction stream mismatch: " &
+				to_hstring(memory(16#05D4#)) &
+				to_hstring(memory(16#05D5#)) &
+				to_hstring(memory(16#05D6#)) &
+				to_hstring(memory(16#05D7#)) &
+				to_hstring(memory(16#05D8#)) &
+				to_hstring(memory(16#05D9#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, trigonometric and hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

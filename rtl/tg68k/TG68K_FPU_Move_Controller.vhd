@@ -28,6 +28,7 @@ entity TG68K_FPU_Move_Controller is
 		fp_register_data : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		k_factor : in std_logic_vector(6 downto 0);
 		packed_conversion_start : out std_logic;
 		packed_conversion_source : out std_logic_vector(95 downto 0);
 		packed_conversion_done : in std_logic;
@@ -66,6 +67,7 @@ architecture rtl of TG68K_FPU_Move_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, LOAD_UNPACK,
 		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION,
 		REGISTER_ROUND, REGISTER_REPACK, REGISTER_COMMIT, STORE_PREPARE,
+		START_PACKED_OUTPUT, WAIT_PACKED_OUTPUT,
 		STORE_MEMORY, STORE_DATA_REGISTER, STORE_STATUS, BUS_ERROR_WAIT,
 		COMPLETE);
 
@@ -158,6 +160,7 @@ architecture rtl of TG68K_FPU_Move_Controller is
 		(others => '0');
 	signal precision_latched : fpu_rounding_precision_t := FPU_PRECISION_EXTENDED;
 	signal mode_latched : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
+	signal k_factor_latched : std_logic_vector(6 downto 0) := (others => '0');
 	signal source_latched : fpu_extended_t := (others => '0');
 	signal external_buffer : std_logic_vector(95 downto 0) := (others => '0');
 	signal rounded_external_latched : std_logic_vector(95 downto 0) :=
@@ -176,7 +179,12 @@ architecture rtl of TG68K_FPU_Move_Controller is
 	signal store_data : std_logic_vector(95 downto 0);
 	signal store_valid : std_logic;
 	signal converted_status : std_logic_vector(7 downto 0);
+	signal packed_output_result : std_logic_vector(95 downto 0);
+	signal packed_output_status : std_logic_vector(7 downto 0);
+	signal packed_output_done : std_logic;
+	signal packed_output_start : std_logic;
 begin
+	packed_output_start <= '1' when state = START_PACKED_OUTPUT else '0';
 	with precision_latched select precision_format <=
 		FPU_FORMAT_SINGLE when FPU_PRECISION_SINGLE,
 		FPU_FORMAT_DOUBLE when FPU_PRECISION_DOUBLE,
@@ -206,6 +214,20 @@ begin
 			destination_data => store_data,
 			conversion_valid => store_valid,
 			exception_status => converted_status
+		);
+
+	packed_output_converter : entity work.TG68K_FPU_Extended_To_Packed
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => packed_output_start,
+			source => source_latched,
+			k_factor => k_factor_latched,
+			rounding_mode => mode_latched,
+			result => packed_output_result,
+			exception_status => packed_output_status,
+			busy => open,
+			done => packed_output_done
 		);
 
 	outputs : process(state, format_latched, address_latched,
@@ -299,6 +321,7 @@ begin
 				function_code_latched <= (others => '0');
 				precision_latched <= FPU_PRECISION_EXTENDED;
 				mode_latched <= FPU_ROUND_NEAREST;
+				k_factor_latched <= (others => '0');
 				source_latched <= (others => '0');
 				external_buffer <= (others => '0');
 				rounded_external_latched <= (others => '0');
@@ -317,6 +340,7 @@ begin
 							function_code_latched <= function_code;
 							precision_latched <= rounding_precision;
 							mode_latched <= rounding_mode;
+							k_factor_latched <= k_factor;
 							external_buffer <= (others => '0');
 							status_latched <= (others => '0');
 							transfer_index <= 0;
@@ -333,7 +357,12 @@ begin
 								end if;
 							else
 								source_latched <= fp_register_data;
-								state <= STORE_PREPARE;
+								if operand_format = FPU_FORMAT_PACKED or
+										operand_format = FPU_FORMAT_DYNAMIC_PACKED then
+									state <= START_PACKED_OUTPUT;
+								else
+									state <= STORE_PREPARE;
+								end if;
 							end if;
 						end if;
 
@@ -399,6 +428,15 @@ begin
 						end if;
 
 					when REGISTER_COMMIT => state <= COMPLETE;
+
+					when START_PACKED_OUTPUT => state <= WAIT_PACKED_OUTPUT;
+
+					when WAIT_PACKED_OUTPUT =>
+						if packed_output_done = '1' then
+							external_buffer <= packed_output_result;
+							status_latched <= packed_output_status;
+							state <= STORE_MEMORY;
+						end if;
 
 					when STORE_PREPARE =>
 						if store_valid = '1' then

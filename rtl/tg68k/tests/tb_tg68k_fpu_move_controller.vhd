@@ -28,6 +28,7 @@ architecture test of tb_tg68k_fpu_move_controller is
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
+	signal k_factor : std_logic_vector(6 downto 0) := "0010001";
 	signal packed_conversion_start : std_logic;
 	signal packed_conversion_source : std_logic_vector(95 downto 0);
 	signal packed_conversion_result : fpu_extended_t;
@@ -114,6 +115,7 @@ begin
 			fp_register_data => fp_register_data,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			k_factor => k_factor,
 			packed_conversion_start => packed_conversion_start,
 			packed_conversion_source => packed_conversion_source,
 			packed_conversion_done => packed_conversion_done,
@@ -221,7 +223,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 700
+				assert cycle_count < 3000
 					report "FPU move controller did not complete" severity failure;
 			end loop;
 			assert busy = '1'
@@ -357,6 +359,34 @@ begin
 			fp_write_count = 0 and status_write_count = 1 and
 			observed_cc_write = '0'
 			report "FP to memory extended FMOVE ordering mismatch" severity failure;
+
+		clear_observations;
+		operand_format <= FPU_FORMAT_PACKED;
+		fp_register_data <= x"400CC0E6B70E2C12AD82";
+		k_factor <= "1111101";
+		effective_address <= x"00005200";
+		launch_move;
+		assert trace_count = 6 and trace_write(0) = '1' and
+			trace_address(0) = x"00005200" and
+			trace_address(5) = x"0000520A" and
+			trace_data(0) = x"0004" and trace_data(1) = x"0001" and
+			trace_data(2) = x"2345" and trace_data(3) = x"6790" and
+			trace_data(4) = x"0000" and trace_data(5) = x"0000" and
+			observed_status = x"02" and observed_cc_write = '0'
+			report "FP to packed memory static-K FMOVE mismatch" severity failure;
+
+		clear_observations;
+		operand_format <= FPU_FORMAT_DYNAMIC_PACKED;
+		k_factor <= "0010010";
+		effective_address <= x"00005300";
+		launch_move;
+		assert trace_count = 6 and trace_write(0) = '1' and
+			trace_address(5) = x"0000530A" and
+			trace_data(0) = x"0004" and trace_data(1) = x"0001" and
+			trace_data(2) = x"2345" and trace_data(3) = x"6787" and
+			trace_data(4) = x"6500" and trace_data(5) = x"0000" and
+			observed_status = x"22"
+			report "FP to packed memory dynamic-K OPERR mismatch" severity failure;
 
 		clear_observations;
 		external_data_register <= '1';
