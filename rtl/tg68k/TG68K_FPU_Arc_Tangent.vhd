@@ -24,6 +24,7 @@ entity TG68K_FPU_Arc_Tangent is
 		start : in std_logic;
 		source : in fpu_extended_t;
 		arc_sine : in std_logic := '0';
+		arc_cosine : in std_logic := '0';
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -46,10 +47,12 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 		SQUARE_ROOT_ARC_SINE_COMPLEMENT, LOAD_CORDIC_ANGLE, CORDIC,
 		NORMALIZE_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
-	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
+	type cordic_angle_rom_t is array(0 to 63) of cordic_value_t;
 
 	constant PI_BY_TWO_FIXED : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		unsigned'(x"1921FB54442D18469898CC51701B8");
+	constant PI_FIXED : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		shift_left(PI_BY_TWO_FIXED, 1);
 	signal cordic_angle_rom : cordic_angle_rom_t := (
 		0 => signed'(x"0C90FDAA22168C234C4C6628B80DC"),
 		1 => signed'(x"076B19C1586ED3DA2B7F222F65E1D"),
@@ -82,7 +85,24 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 		28 => signed'(x"00000000FFFFFFFFFFFFFFAAAAAAB"),
 		29 => signed'(x"000000007FFFFFFFFFFFFFF555555"),
 		30 => signed'(x"000000003FFFFFFFFFFFFFFEAAAAB"),
-		31 => signed'(x"000000001FFFFFFFFFFFFFFFD5555")
+		31 => signed'(x"000000001FFFFFFFFFFFFFFFD5555"),
+		32 => signed'(x"000000000FFFFFFFFFFFFFFFFAAAB"),
+		33 => signed'(x"0000000007FFFFFFFFFFFFFFFF555"),
+		34 => signed'(x"0000000003FFFFFFFFFFFFFFFFEAB"),
+		35 => signed'(x"0000000001FFFFFFFFFFFFFFFFFD5"),
+		36 => signed'(x"0000000000FFFFFFFFFFFFFFFFFFB"),
+		37 => signed'(x"00000000007FFFFFFFFFFFFFFFFFF"),
+		38 => signed'(x"00000000004000000000000000000"),
+		39 => signed'(x"00000000002000000000000000000"),
+		40 => signed'(x"00000000001000000000000000000"),
+		41 => signed'(x"00000000000800000000000000000"),
+		42 => signed'(x"00000000000400000000000000000"),
+		43 => signed'(x"00000000000200000000000000000"),
+		44 => signed'(x"00000000000100000000000000000"),
+		45 => signed'(x"00000000000080000000000000000"),
+		46 => signed'(x"00000000000040000000000000000"),
+		47 => signed'(x"00000000000020000000000000000"),
+		48 to 63 => (others => '0')
 	);
 	attribute ramstyle : string;
 	attribute ramstyle of cordic_angle_rom : signal is "M10K";
@@ -108,11 +128,12 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 
 	signal state : arc_tangent_state_t := IDLE;
 	signal result_sign : std_logic := '0';
+	signal arc_cosine_mode : std_logic := '0';
 	signal cordic_x : cordic_value_t := (others => '0');
 	signal cordic_y : cordic_value_t := (others => '0');
 	signal cordic_z : cordic_value_t := (others => '0');
 	signal cordic_iteration : natural range 0 to FRACTION_BITS := 0;
-	signal cordic_angle_address : natural range 0 to 31 := 0;
+	signal cordic_angle_address : natural range 0 to 47 := 0;
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
 	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
@@ -206,8 +227,13 @@ begin
 				constant sign_value : in std_logic) is
 		begin
 			result_sign <= sign_value;
-			normalization_value <= angle;
-			normalization_exponent <= to_signed(0, 17);
+			if angle(FRACTION_BITS + 1) = '1' then
+				normalization_value <= shift_right(angle, 1);
+				normalization_exponent <= to_signed(1, 17);
+			else
+				normalization_value <= angle;
+				normalization_exponent <= to_signed(0, 17);
+			end if;
 			state <= NORMALIZE_RESULT;
 		end procedure;
 
@@ -238,6 +264,7 @@ begin
 			if nReset = '0' then
 				state <= IDLE;
 				result_sign <= '0';
+				arc_cosine_mode <= '0';
 				cordic_x <= (others => '0');
 				cordic_y <= (others => '0');
 				cordic_z <= (others => '0');
@@ -271,6 +298,7 @@ begin
 							selected_nan := source;
 							selected_nan(62) := '1';
 							result_sign <= source(79);
+							arc_cosine_mode <= arc_cosine;
 							cordic_x <= (others => '0');
 							cordic_y <= (others => '0');
 							cordic_z <= (others => '0');
@@ -304,7 +332,7 @@ begin
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
-								if arc_sine = '1' then
+								if arc_sine = '1' or arc_cosine = '1' then
 									intermediate_class <= FPU_CLASS_QUIET_NAN;
 									intermediate_special <= FPU_RESET_NAN;
 									base_status(5) <= '1';
@@ -315,15 +343,20 @@ begin
 								end if;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								intermediate_class <= FPU_CLASS_ZERO;
-								state <= COMPLETE;
+								if arc_cosine = '1' then
+									base_status(1) <= '1';
+									begin_fixed_angle(PI_BY_TWO_FIXED, '0');
+								else
+									intermediate_class <= FPU_CLASS_ZERO;
+									state <= COMPLETE;
+								end if;
 							else
 								normalization_shift :=
 									63 - highest_set_bit(source_significand);
 								source_significand := shift_left(source_significand,
 									normalization_shift);
 								source_exponent := source_exponent - normalization_shift;
-								if arc_sine = '1' then
+								if arc_sine = '1' or arc_cosine = '1' then
 									if source_exponent > 0 or
 											(source_exponent = 0 and
 											source_significand > x"8000000000000000") then
@@ -332,9 +365,19 @@ begin
 										base_status(5) <= '1';
 										state <= COMPLETE;
 									elsif source_exponent = 0 then
-										base_status(1) <= '1';
-										begin_fixed_angle(PI_BY_TWO_FIXED, source(79));
-									elsif source_exponent <= ARC_SINE_TINY_EXPONENT then
+										if arc_cosine = '1' and source(79) = '0' then
+											intermediate_class <= FPU_CLASS_ZERO;
+											intermediate_sign <= '0';
+											state <= COMPLETE;
+										elsif arc_cosine = '1' then
+											base_status(1) <= '1';
+											begin_fixed_angle(PI_FIXED, '0');
+										else
+											base_status(1) <= '1';
+											begin_fixed_angle(PI_BY_TWO_FIXED, source(79));
+										end if;
+									elsif arc_cosine = '0' and
+											source_exponent <= ARC_SINE_TINY_EXPONENT then
 										base_status(1) <= '1';
 										tiny_significand := shift_left(resize(
 											source_significand, 67), 3) + 1;
@@ -459,7 +502,7 @@ begin
 						state <= CORDIC;
 
 					when CORDIC =>
-						if cordic_iteration <= 31 then
+						if cordic_iteration <= 47 then
 							next_angle := cordic_angle_rom_data;
 						else
 							next_angle := cordic_shift_angle;
@@ -484,15 +527,25 @@ begin
 						cordic_y <= next_y;
 						cordic_z <= next_z;
 						if cordic_iteration = FRACTION_BITS then
-							begin_fixed_angle(unsigned(next_z), result_sign);
+							if arc_cosine_mode = '1' then
+								if result_sign = '1' then
+									begin_fixed_angle(PI_BY_TWO_FIXED +
+										unsigned(next_z), '0');
+								else
+									begin_fixed_angle(PI_BY_TWO_FIXED -
+										unsigned(next_z), '0');
+								end if;
+							else
+								begin_fixed_angle(unsigned(next_z), result_sign);
+							end if;
 						else
 							cordic_iteration <= cordic_iteration + 1;
-							if cordic_iteration < 31 then
+							if cordic_iteration < 47 then
 								cordic_angle_address <= cordic_iteration + 1;
 								state <= LOAD_CORDIC_ANGLE;
-							elsif cordic_iteration = 31 then
+							elsif cordic_iteration = 47 then
 								next_angle := (others => '0');
-								next_angle(FRACTION_BITS - 32) := '1';
+								next_angle(FRACTION_BITS - 48) := '1';
 								cordic_shift_angle <= next_angle;
 							else
 								cordic_shift_angle <= shift_right(

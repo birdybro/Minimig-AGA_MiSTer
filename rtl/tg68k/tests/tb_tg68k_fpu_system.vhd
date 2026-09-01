@@ -1304,6 +1304,19 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FASIN system result mismatch" severity failure;
 
+		clear_observations;
+		effective_address <= x"00009004";
+		function_code <= "101";
+		start_instruction(x"F210", x"469C", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009004" and
+			trace_address(1) = x"00009006" and trace_fc(1) = "101" and
+			fp_registers(5) = x"3FFF860A91C16B9B2C23" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "memory single FACOS system result mismatch" severity failure;
+
 		integer_register_data <= x"00000001";
 		start_instruction(x"F202", x"4180", '1');
 		command_word <= x"0000";

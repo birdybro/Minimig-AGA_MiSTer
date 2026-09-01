@@ -371,6 +371,16 @@ begin
 			report "register FASIN controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_ACOS;
+		run_register_operation(x"3FFE8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFF860A91C16B9B2C23" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FACOS controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_ATANH;
 		run_register_operation(x"3FFE8000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");
