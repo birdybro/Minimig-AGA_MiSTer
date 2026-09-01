@@ -23,6 +23,7 @@ entity TG68K_FPU_Exponential is
 		nReset : in std_logic;
 		start : in std_logic;
 		source : in fpu_extended_t;
+		natural_base : in std_logic;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -41,12 +42,15 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant FIXED_WIDTH : natural := FRACTION_BITS + 16;
 	type exponential_state_t is
-		(IDLE, MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC, COMPLETE);
+		(IDLE, SCALE_TO_BASE_TWO, MULTIPLY_LOG2, LOAD_CORDIC_ANGLE,
+			CORDIC, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
 	constant LN2_FIXED : unsigned(FRACTION_BITS - 1 downto 0) :=
 		x"B17217F7D1CF79ABC9E3B398";
+	constant LOG2_E_FIXED : unsigned(FIXED_WIDTH downto 0) :=
+		unsigned'("1" & x"71547652B82FE1777D0FFDA0D23A");
 	constant CORDIC_INVERSE_GAIN : cordic_value_t :=
 		signed'(x"1351E87200EEC232964A4EC8F");
 	signal cordic_angle_rom : cordic_angle_rom_t := (
@@ -112,6 +116,12 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal product_accumulator : unsigned(FRACTION_BITS downto 0) :=
 		(others => '0');
 	signal multiply_index : natural range 0 to FRACTION_BITS - 1 := 0;
+	signal scale_magnitude_register : unsigned(FIXED_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal scale_accumulator : unsigned(FIXED_WIDTH + 1 downto 0) :=
+		(others => '0');
+	signal scale_index : natural range 0 to FIXED_WIDTH - 1 := 0;
+	signal source_sign_latched : std_logic := '0';
 	signal result_exponent : signed(16 downto 0) := (others => '0');
 	signal cordic_x : cordic_value_t := (others => '0');
 	signal cordic_y : cordic_value_t := (others => '0');
@@ -189,18 +199,53 @@ begin
 	end process;
 
 	exponential_sequence : process(clk)
+		procedure begin_reduced_exponential(
+			constant magnitude : in unsigned(FIXED_WIDTH - 1 downto 0);
+			constant sign_value : in std_logic) is
+			variable integer_magnitude : natural range 0 to 65535;
+			variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
+			variable exponent_value : integer range -65536 to 65535;
+		begin
+			integer_magnitude := to_integer(magnitude(
+				FIXED_WIDTH - 1 downto FRACTION_BITS));
+			fraction_value := magnitude(FRACTION_BITS - 1 downto 0);
+			if sign_value = '0' then
+				exponent_value := integer_magnitude;
+			else
+				if fraction_value = 0 then
+					exponent_value := -integer_magnitude;
+				else
+					exponent_value := -(integer_magnitude + 1);
+					fraction_value := (not fraction_value) + 1;
+				end if;
+			end if;
+			result_exponent <= to_signed(exponent_value, 17);
+			base_status(1) <= '1';
+			if fraction_value = 0 then
+				intermediate_class <= FPU_CLASS_NORMAL;
+				intermediate_exponent <= to_signed(exponent_value, 17);
+				intermediate_significand(66) <= '1';
+				state <= COMPLETE;
+			else
+				fraction_register <= fraction_value;
+				product_accumulator <= (others => '0');
+				multiply_index <= 0;
+				state <= MULTIPLY_LOG2;
+			end if;
+		end procedure;
+
 		variable source_class : fpu_data_class_t;
 		variable source_significand : unsigned(63 downto 0);
 		variable source_exponent : integer range -65536 to 65535;
 		variable normalization_shift : natural range 0 to 63;
 		variable shift_amount : integer range -65536 to 65535;
 		variable magnitude_fixed : unsigned(FIXED_WIDTH - 1 downto 0);
-		variable integer_magnitude : natural range 0 to 65535;
-		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable exponent_value : integer range -65536 to 65535;
 		variable selected_nan : fpu_extended_t;
 		variable multiply_sum : unsigned(FRACTION_BITS downto 0);
 		variable next_accumulator : unsigned(FRACTION_BITS downto 0);
+		variable scale_sum : unsigned(FIXED_WIDTH + 1 downto 0);
+		variable next_scale : unsigned(FIXED_WIDTH + 1 downto 0);
 		variable next_x : cordic_value_t;
 		variable next_y : cordic_value_t;
 		variable next_z : cordic_value_t;
@@ -216,6 +261,10 @@ begin
 				fraction_register <= (others => '0');
 				product_accumulator <= (others => '0');
 				multiply_index <= 0;
+				scale_magnitude_register <= (others => '0');
+				scale_accumulator <= (others => '0');
+				scale_index <= 0;
+				source_sign_latched <= '0';
 				result_exponent <= (others => '0');
 				cordic_x <= (others => '0');
 				cordic_y <= (others => '0');
@@ -241,6 +290,10 @@ begin
 							fraction_register <= (others => '0');
 							product_accumulator <= (others => '0');
 							multiply_index <= 0;
+							scale_magnitude_register <= (others => '0');
+							scale_accumulator <= (others => '0');
+							scale_index <= 0;
+							source_sign_latched <= source(79);
 							result_exponent <= (others => '0');
 							cordic_x <= (others => '0');
 							cordic_y <= (others => '0');
@@ -287,7 +340,8 @@ begin
 									normalization_shift;
 								magnitude_fixed := (others => '0');
 								shift_amount := source_exponent + FRACTION_BITS - 63;
-								if source_exponent > 15 then
+								if (natural_base = '0' and source_exponent > 15) or
+										(natural_base = '1' and source_exponent > 13) then
 									if source(79) = '1' then
 										exponent_value := -65536;
 									else
@@ -318,35 +372,33 @@ begin
 										end if;
 										state <= COMPLETE;
 									else
-										integer_magnitude := to_integer(magnitude_fixed(
-											FIXED_WIDTH - 1 downto FRACTION_BITS));
-										fraction_value := magnitude_fixed(
-											FRACTION_BITS - 1 downto 0);
-										if source(79) = '0' then
-											exponent_value := integer_magnitude;
+										if natural_base = '1' then
+											scale_magnitude_register <= magnitude_fixed;
+											scale_accumulator <= (others => '0');
+											scale_index <= 0;
+											state <= SCALE_TO_BASE_TWO;
 										else
-											if fraction_value = 0 then
-												exponent_value := -integer_magnitude;
-											else
-												exponent_value := -(integer_magnitude + 1);
-													fraction_value := (not fraction_value) + 1;
-											end if;
-										end if;
-										result_exponent <= to_signed(exponent_value, 17);
-										base_status(1) <= '1';
-										if fraction_value = 0 then
-											intermediate_class <= FPU_CLASS_NORMAL;
-											intermediate_exponent <=
-												to_signed(exponent_value, 17);
-											intermediate_significand(66) <= '1';
-											state <= COMPLETE;
-										else
-											fraction_register <= fraction_value;
-											state <= MULTIPLY_LOG2;
+											begin_reduced_exponential(
+												magnitude_fixed, source(79));
 										end if;
 									end if;
 								end if;
 							end if;
+						end if;
+
+					when SCALE_TO_BASE_TWO =>
+						scale_sum := scale_accumulator;
+						if scale_magnitude_register(scale_index) = '1' then
+							scale_sum := scale_sum + resize(LOG2_E_FIXED,
+								FIXED_WIDTH + 2);
+						end if;
+						next_scale := shift_right(scale_sum, 1);
+						scale_accumulator <= next_scale;
+						if scale_index = FIXED_WIDTH - 1 then
+							begin_reduced_exponential(next_scale(
+								FIXED_WIDTH - 1 downto 0), source_sign_latched);
+						else
+							scale_index <= scale_index + 1;
 						end if;
 
 					when MULTIPLY_LOG2 =>

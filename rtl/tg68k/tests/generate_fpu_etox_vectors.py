@@ -13,7 +13,7 @@ from fpu_exact_reference import (
 )
 
 
-SEED = 0x68882211
+SEED = 0x68881010
 
 
 def encode_fraction(value: Fraction) -> int:
@@ -41,14 +41,14 @@ def source_values() -> list[int]:
     return values
 
 
-def reference_twotox(source: int, precision_bits: int,
-                     mode: int) -> tuple[int, int, int]:
+def reference_etox(source: int, precision_bits: int,
+                   mode: int) -> tuple[int, int, int]:
     source_value = extended_bits_value(source)
     with localcontext() as context:
         context.prec = 220
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
-        result_decimal = (source_decimal * Decimal(2).ln()).exp()
+        result_decimal = source_decimal.exp()
     result, condition_codes, status = round_binary(
         Fraction(result_decimal), precision_bits, mode)
     return result, condition_codes, status | 0x02
@@ -60,7 +60,7 @@ def make_vectors():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
-                result, condition_codes, status = reference_twotox(
+                result, condition_codes, status = reference_etox(
                     source, precision_bits, mode)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
@@ -74,10 +74,10 @@ use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_twotox_differential is
+entity tb_tg68k_fpu_etox_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_twotox_differential is
+architecture test of tb_tg68k_fpu_etox_differential is
     constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
@@ -115,7 +115,7 @@ begin
             nReset => nReset,
             start => start,
             source => source,
-            natural_base => '0',
+            natural_base => '1',
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,
@@ -148,13 +148,13 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 250
-                    report "differential FTWOTOX timeout" severity failure;
+                assert cycles < 370
+                    report "differential FETOX timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FTWOTOX vector " & integer'image(index) &
+                report "differential FETOX vector " & integer'image(index) &
                     " mismatch: result=" & to_hstring(result) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
@@ -162,7 +162,7 @@ begin
             wait until rising_edge(clk);
             wait for 1 ns;
         end loop;
-        report "PASS: 1152 high-precision FTWOTOX vectors" severity note;
+        report "PASS: 1152 high-precision FETOX vectors" severity note;
         stop;
     end process;
 end architecture;

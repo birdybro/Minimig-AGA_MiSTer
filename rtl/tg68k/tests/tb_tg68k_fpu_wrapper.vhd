@@ -264,8 +264,14 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#085E#) := x"6580";
 		result(16#085F#) := x"0000";
 		result(16#0860#) := x"0B54";
-		result(16#0861#) := x"4E72";
-		result(16#0862#) := x"2700";
+		result(16#0861#) := x"F202";
+		result(16#0862#) := x"4190";
+		result(16#0863#) := x"F239";
+		result(16#0864#) := x"6580";
+		result(16#0865#) := x"0000";
+		result(16#0866#) := x"0B58";
+		result(16#0867#) := x"4E72";
+		result(16#0868#) := x"2700";
 		return result;
 	end function;
 
@@ -299,7 +305,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal binary_result_write_count : natural range 0 to 8 := 0;
 	signal single_result_write_count : natural range 0 to 4 := 0;
 	signal constant_result_write_count : natural range 0 to 2 := 0;
-	signal exponential_result_write_count : natural range 0 to 2 := 0;
+	signal exponential_result_write_count : natural range 0 to 4 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -445,12 +451,13 @@ begin
 				if addr_out = x"00000B50" or addr_out = x"00000B52" then
 					constant_result_write_count <= constant_result_write_count + 1;
 				end if;
-				if addr_out = x"00000B54" or addr_out = x"00000B56" then
+				if addr_out = x"00000B54" or addr_out = x"00000B56" or
+						addr_out = x"00000B58" or addr_out = x"00000B5A" then
 					exponential_result_write_count <=
 						exponential_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000010C2" then
+			if busstate = "00" and addr_out = x"000010CE" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -478,7 +485,7 @@ begin
 				binary_result_write_count = 8 and
 				single_result_write_count = 4 and
 				constant_result_write_count = 2 and
-				exponential_result_write_count = 2 and post_fpu_fetch = '1';
+				exponential_result_write_count = 4 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -601,11 +608,14 @@ begin
 				to_hstring(memory(16#05A8#)) &
 				to_hstring(memory(16#05A9#))
 			severity failure;
-		assert exponential_result_write_count = 2 and
-			memory(16#05AA#) = x"4000" and memory(16#05AB#) = x"0000"
-			report "TG68K FTWOTOX instruction stream mismatch: " &
+		assert exponential_result_write_count = 4 and
+			memory(16#05AA#) = x"4000" and memory(16#05AB#) = x"0000" and
+			memory(16#05AC#) = x"402D" and memory(16#05AD#) = x"F854"
+			report "TG68K exponential instruction stream mismatch: " &
 				to_hstring(memory(16#05AA#)) &
-				to_hstring(memory(16#05AB#))
+				to_hstring(memory(16#05AB#)) & " " &
+				to_hstring(memory(16#05AC#)) &
+				to_hstring(memory(16#05AD#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

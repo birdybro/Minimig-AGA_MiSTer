@@ -13,6 +13,7 @@ architecture test of tb_tg68k_fpu_exponential is
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
+	signal natural_base : std_logic := '0';
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
@@ -30,6 +31,7 @@ begin
 			nReset => nReset,
 			start => start,
 			source => source,
+			natural_base => natural_base,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			result => result,
@@ -48,11 +50,13 @@ begin
 			constant mode_value : fpu_rounding_mode_t;
 			constant expected_result : fpu_extended_t;
 			constant expected_status : std_logic_vector(7 downto 0);
-			constant expected_iterations : natural) is
+			constant expected_iterations : natural;
+			constant natural_base_value : std_logic := '0') is
 			variable iteration_count : natural := 0;
 		begin
 			wait until falling_edge(clk);
 			source <= source_value;
+			natural_base <= natural_base_value;
 			rounding_precision <= precision_value;
 			rounding_mode <= mode_value;
 			start <= '1';
@@ -63,7 +67,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				iteration_count := iteration_count + 1;
-				assert iteration_count < 250
+				assert iteration_count < 370
 					report "FTWOTOX did not complete" severity failure;
 			end loop;
 			assert iteration_count = expected_iterations
@@ -132,7 +136,21 @@ begin
 		execute(x"C00D807E000000000000", FPU_PRECISION_EXTENDED,
 			FPU_ROUND_PLUS_INFINITY, x"00000000000000000001", x"0A", 0);
 
-		report "PASS: MC68882 FTWOTOX range reduction and CORDIC" severity note;
+		execute(x"3FFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"4000ADF85458A2BB4A9B", x"02", 338, '1');
+		execute(x"BFFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFDBC5AB1B16779BE35", x"02", 338, '1');
+		execute(x"3FFE8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFFD3094C70F034DE4C", x"02", 338, '1');
+		execute(x"4000D000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"4003CE529DBC088A578B", x"02", 338, '1');
+		execute(x"400D8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"7FFF8000000000000000", x"12", 0, '1');
+		execute(x"C00D807E000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"00000000000000000000", x"0A", 0, '1');
+
+		report "PASS: MC68882 FETOX/FTWOTOX range reduction and CORDIC"
+			severity note;
 		stop;
 	end process;
 end architecture;

@@ -123,6 +123,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal remainder_latched : std_logic := '0';
 	signal ieee_remainder_latched : std_logic := '0';
 	signal exponential_latched : std_logic := '0';
+	signal natural_exponential_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -348,6 +349,7 @@ begin
 			nReset => nReset,
 			start => exponential_start,
 			source => source_latched,
+			natural_base => natural_exponential_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -489,6 +491,7 @@ begin
 				remainder_latched <= '0';
 				ieee_remainder_latched <= '0';
 				exponential_latched <= '0';
+				natural_exponential_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -571,10 +574,16 @@ begin
 							else
 								ieee_remainder_latched <= '0';
 							end if;
-							if operation = FPU_OP_TWOTOX then
+							if operation = FPU_OP_TWOTOX or
+									operation = FPU_OP_ETOX then
 								exponential_latched <= '1';
 							else
 								exponential_latched <= '0';
+							end if;
+							if operation = FPU_OP_ETOX then
+								natural_exponential_latched <= '1';
+							else
+								natural_exponential_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
