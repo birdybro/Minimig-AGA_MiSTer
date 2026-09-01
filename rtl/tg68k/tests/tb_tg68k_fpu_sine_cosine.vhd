@@ -90,7 +90,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycles := cycles + 1;
-				assert cycles < 400
+				assert cycles < 500
 					report "sine engine timeout" severity failure;
 			end loop;
 			assert result = expected_result and
@@ -129,11 +129,11 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycles := cycles + 1;
-				assert cycles < 300
+				assert cycles < 400
 					report "large-argument sine timeout" severity failure;
 			end loop;
 			assert unsigned(result(78 downto 64)) <= to_unsigned(16#3FFF#, 15) and
-				exception_status = x"02" and cycles = 258
+				exception_status = x"02" and cycles = 357
 				report "large-argument sine range/status mismatch: result=" &
 					to_hstring(result) & " status=" &
 					to_hstring(exception_status) & " cycles=" &
@@ -150,7 +150,7 @@ begin
 
 		execute(x"00000000000000000000", x"00000000000000000000", x"4", x"00");
 		execute(x"80000000000000000000", x"80000000000000000000", x"C", x"00");
-		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02", 258);
+		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02", 357);
 		execute(x"3FFF4000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02");
 		execute(x"BFFE8000000000000000", x"BFFDF57743A2582F7F44", x"8", x"02");
 		execute(x"3FFF8000000000000000", x"3FFED76AA47848677021", x"0", x"02");
@@ -170,7 +170,7 @@ begin
 		execute(x"80000000000000000000", x"3FFF8000000000000000",
 			x"0", x"00", 0, '1');
 		execute(x"3FFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
-			x"0", x"02", 258, '1');
+			x"0", x"02", 357, '1');
 		execute(x"BFFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
 			x"0", x"02", 0, '1');
 		execute(x"3FFF8000000000000000", x"3FFE8A51407DA8345C92",
@@ -187,7 +187,7 @@ begin
 		execute(x"80000000000000000000", x"80000000000000000000",
 			x"C", x"00", 0, '0', '1');
 		execute(x"3FFE8000000000000000", x"3FFE8BDA7ADF9A3A5219",
-			x"0", x"02", 323, '0', '1');
+			x"0", x"02", 424, '0', '1');
 		execute(x"BFFE8000000000000000", x"BFFE8BDA7ADF9A3A5219",
 			x"8", x"02", 0, '0', '1');
 		execute(x"3FFFC90FDAA22168C235", x"C0408A51E04DAABDA35F",
@@ -204,7 +204,7 @@ begin
 			x"C", x"00", 0, '0', '0', '1',
 			x"3FFF8000000000000000");
 		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44",
-			x"0", x"02", 258, '0', '0', '1',
+			x"0", x"02", 358, '0', '0', '1',
 			x"3FFEE0A94032DBEA7CEE");
 		execute(x"BFFE8000000000000000", x"BFFDF57743A2582F7F44",
 			x"8", x"02", 0, '0', '0', '1',

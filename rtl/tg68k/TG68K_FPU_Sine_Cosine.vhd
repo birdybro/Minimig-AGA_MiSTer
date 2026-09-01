@@ -48,7 +48,10 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, REDUCE_RANGE,
-		LOAD_CORDIC_ANGLE, ROTATE_CORDIC, DIVIDE_TANGENT, COMPLETE);
+		ROTATE_CORDIC_XY, ROTATE_CORDIC_Z, FINISH_CORDIC,
+		CONVERT_PRIMARY, CONVERT_SECONDARY,
+		NORMALIZE_TANGENT_NUMERATOR, NORMALIZE_TANGENT_DENOMINATOR,
+		START_TANGENT_DIVIDE, DIVIDE_TANGENT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 63) of cordic_value_t;
 
@@ -192,10 +195,38 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal cordic_angle_address : natural range 0 to 47 := 0;
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
+	signal cordic_z_previous : cordic_value_t := (others => '0');
+	signal cordic_angle_previous : cordic_value_t := (others => '0');
+	signal cordic_direction_previous : std_logic := '0';
 	signal tangent_divisor : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
 	signal tangent_remainder : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
 	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
 	signal tangent_iteration : natural range 0 to 64 := 0;
+	signal tangent_numerator_latched : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal tangent_denominator_latched : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal normalized_tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal normalized_tangent_denominator : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal tangent_numerator_highest : natural range 0 to CORDIC_WIDTH - 1 := 0;
+	signal tangent_quotient_exponent : integer range -65536 to 65535 := 0;
+	signal primary_fixed_value : cordic_value_t := (others => '0');
+	signal secondary_fixed_value : cordic_value_t := (others => '0');
+	signal selected_fixed_value : cordic_value_t;
+	signal converted_fixed_value : fpu_round_input_t;
+	signal normalization_source : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal normalization_highest : natural range 0 to CORDIC_WIDTH - 1;
+	signal normalized_value : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal shared_left_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_right_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_left_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_right_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_subtract_a : std_logic;
+	signal shared_subtract_b : std_logic;
+	signal shared_result_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_result_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -226,6 +257,90 @@ begin
 	secondary_round_input.significand <= secondary_significand;
 	secondary_round_input.special <= secondary_special;
 	base_exception_status <= base_status;
+	selected_fixed_value <= secondary_fixed_value when
+		state = CONVERT_SECONDARY else primary_fixed_value;
+	converted_fixed_value <= fixed_round_input(selected_fixed_value);
+	normalization_source <= tangent_numerator_latched when
+		state = NORMALIZE_TANGENT_NUMERATOR else tangent_denominator_latched;
+	normalization_highest <= highest_set_bit(normalization_source);
+	normalized_value <= shift_left(normalization_source,
+		CORDIC_WIDTH - 1 - normalization_highest);
+
+	shared_operands : process(state, reciprocal_product,
+		reciprocal_multiplier, reciprocal_multiplicand, cordic_x, cordic_y,
+		cordic_z, cordic_iteration, cordic_z_previous,
+		cordic_angle_previous, cordic_direction_previous,
+		normalized_tangent_numerator, normalized_tangent_denominator,
+		tangent_remainder, tangent_divisor)
+		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+	begin
+		shared_left_a <= (others => '0');
+		shared_right_a <= (others => '0');
+		shared_left_b <= (others => '0');
+		shared_right_b <= (others => '0');
+		shared_subtract_a <= '0';
+		shared_subtract_b <= '0';
+		case state is
+			when MULTIPLY_RECIPROCAL =>
+				shared_left_a <= reciprocal_product;
+				if reciprocal_multiplier(0) = '1' then
+					shared_right_a <= reciprocal_multiplicand;
+				end if;
+			when ROTATE_CORDIC_XY =>
+				shared_left_a <= unsigned(resize(cordic_x, PRODUCT_WIDTH));
+				shared_right_a <= unsigned(resize(shift_right(cordic_y,
+					cordic_iteration), PRODUCT_WIDTH));
+				shared_left_b <= unsigned(resize(cordic_y, PRODUCT_WIDTH));
+				shared_right_b <= unsigned(resize(shift_right(cordic_x,
+					cordic_iteration), PRODUCT_WIDTH));
+				if cordic_z >= 0 then
+					shared_subtract_a <= '1';
+				else
+					shared_subtract_b <= '1';
+				end if;
+			when ROTATE_CORDIC_Z =>
+				shared_left_a <= unsigned(resize(cordic_z_previous,
+					PRODUCT_WIDTH));
+				shared_right_a <= unsigned(resize(cordic_angle_previous,
+					PRODUCT_WIDTH));
+				shared_subtract_a <= cordic_direction_previous;
+			when START_TANGENT_DIVIDE =>
+				if normalized_tangent_numerator <
+						normalized_tangent_denominator then
+					shared_left_a <= shift_left(resize(
+						normalized_tangent_numerator, PRODUCT_WIDTH), 1);
+				else
+					shared_left_a <= resize(normalized_tangent_numerator,
+						PRODUCT_WIDTH);
+				end if;
+				shared_right_a <= resize(normalized_tangent_denominator,
+					PRODUCT_WIDTH);
+				shared_subtract_a <= '1';
+			when DIVIDE_TANGENT =>
+				shifted_remainder := shift_left(tangent_remainder, 1);
+				shared_left_a <= resize(shifted_remainder, PRODUCT_WIDTH);
+				if shifted_remainder >= tangent_divisor then
+					shared_right_a <= resize(tangent_divisor, PRODUCT_WIDTH);
+					shared_subtract_a <= '1';
+				end if;
+			when others => null;
+		end case;
+	end process;
+
+	shared_add_subtract : process(shared_subtract_a, shared_left_a,
+		shared_right_a, shared_subtract_b, shared_left_b, shared_right_b)
+	begin
+		if shared_subtract_a = '1' then
+			shared_result_a <= shared_left_a - shared_right_a;
+		else
+			shared_result_a <= shared_left_a + shared_right_a;
+		end if;
+		if shared_subtract_b = '1' then
+			shared_result_b <= shared_left_b - shared_right_b;
+		else
+			shared_result_b <= shared_left_b + shared_right_b;
+		end if;
+	end process;
 
 	angle_rom_read : process(clk)
 	begin
@@ -280,30 +395,18 @@ begin
 		variable normalization_shift : natural range 0 to 63;
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
-		variable next_product : unsigned(PRODUCT_WIDTH - 1 downto 0);
 		variable aligned_product : unsigned(PRODUCT_WIDTH - 1 downto 0);
 		variable shift_position : integer range -16128 to 294;
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable reduced_angle : cordic_value_t;
 		variable quadrant_sum : unsigned(2 downto 0);
 		variable next_angle : cordic_value_t;
-		variable next_x : cordic_value_t;
-		variable next_y : cordic_value_t;
-		variable next_z : cordic_value_t;
 		variable selected_value : cordic_value_t;
 		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable final_sign : std_logic;
-		variable primary_input : fpu_round_input_t;
-		variable secondary_input : fpu_round_input_t;
 		variable cosine_value : cordic_value_t;
 		variable tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable tangent_denominator : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable normalized_numerator : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable normalized_denominator : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable numerator_highest : natural range 0 to CORDIC_WIDTH - 1;
-		variable denominator_highest : natural range 0 to CORDIC_WIDTH - 1;
-		variable numerator_shift : natural range 0 to CORDIC_WIDTH - 1;
-		variable denominator_shift : natural range 0 to CORDIC_WIDTH - 1;
 		variable quotient_exponent : integer range -65536 to 65535;
 		variable shifted_tangent_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable next_tangent_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -328,10 +431,21 @@ begin
 				cordic_iteration <= 0;
 				cordic_angle_address <= 0;
 				cordic_shift_angle <= (others => '0');
+				cordic_z_previous <= (others => '0');
+				cordic_angle_previous <= (others => '0');
+				cordic_direction_previous <= '0';
 				tangent_divisor <= (others => '0');
 				tangent_remainder <= (others => '0');
 				tangent_quotient <= (others => '0');
 				tangent_iteration <= 0;
+				tangent_numerator_latched <= (others => '0');
+				tangent_denominator_latched <= (others => '0');
+				normalized_tangent_numerator <= (others => '0');
+				normalized_tangent_denominator <= (others => '0');
+				tangent_numerator_highest <= 0;
+				tangent_quotient_exponent <= 0;
+				primary_fixed_value <= (others => '0');
+				secondary_fixed_value <= (others => '0');
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -368,10 +482,21 @@ begin
 							cordic_iteration <= 0;
 							cordic_angle_address <= 0;
 							cordic_shift_angle <= (others => '0');
+							cordic_z_previous <= (others => '0');
+							cordic_angle_previous <= (others => '0');
+							cordic_direction_previous <= '0';
 							tangent_divisor <= (others => '0');
 							tangent_remainder <= (others => '0');
 							tangent_quotient <= (others => '0');
 							tangent_iteration <= 0;
+							tangent_numerator_latched <= (others => '0');
+							tangent_denominator_latched <= (others => '0');
+							normalized_tangent_numerator <= (others => '0');
+							normalized_tangent_denominator <= (others => '0');
+							tangent_numerator_highest <= 0;
+							tangent_quotient_exponent <= 0;
+							primary_fixed_value <= (others => '0');
+							secondary_fixed_value <= (others => '0');
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= source(79);
 							intermediate_exponent <= (others => '0');
@@ -472,11 +597,7 @@ begin
 						end if;
 
 					when MULTIPLY_RECIPROCAL =>
-						next_product := reciprocal_product;
-						if reciprocal_multiplier(0) = '1' then
-							next_product := next_product + reciprocal_multiplicand;
-						end if;
-						reciprocal_product <= next_product;
+						reciprocal_product <= shared_result_a;
 						reciprocal_multiplier <= shift_right(
 							reciprocal_multiplier, 1);
 						reciprocal_multiplicand <= shift_left(
@@ -520,145 +641,158 @@ begin
 						cordic_z <= reduced_angle;
 						cordic_iteration <= 0;
 						cordic_angle_address <= 0;
-						state <= LOAD_CORDIC_ANGLE;
+						state <= ROTATE_CORDIC_XY;
 
-					when LOAD_CORDIC_ANGLE =>
-						state <= ROTATE_CORDIC;
-
-					when ROTATE_CORDIC =>
+					when ROTATE_CORDIC_XY =>
 						if cordic_iteration <= 47 then
 							next_angle := cordic_angle_rom_data;
 						else
 							next_angle := cordic_shift_angle;
 						end if;
+						cordic_z_previous <= cordic_z;
+						cordic_angle_previous <= next_angle;
 						if cordic_z >= 0 then
-							next_x := cordic_x - shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y + shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z - next_angle;
+							cordic_direction_previous <= '1';
 						else
-							next_x := cordic_x + shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y - shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z + next_angle;
+							cordic_direction_previous <= '0';
 						end if;
-						cordic_x <= next_x;
-						cordic_y <= next_y;
-						cordic_z <= next_z;
+						cordic_x <= signed(shared_result_a(
+							CORDIC_WIDTH - 1 downto 0));
+						cordic_y <= signed(shared_result_b(
+							CORDIC_WIDTH - 1 downto 0));
+						if cordic_iteration < 47 then
+							cordic_angle_address <= cordic_iteration + 1;
+						elsif cordic_iteration = 47 then
+							cordic_shift_angle <= CORDIC_TAIL_START;
+						else
+							cordic_shift_angle <= shift_right(
+								cordic_shift_angle, 1);
+						end if;
+						state <= ROTATE_CORDIC_Z;
+
+					when ROTATE_CORDIC_Z =>
+						cordic_z <= signed(shared_result_a(
+							CORDIC_WIDTH - 1 downto 0));
 						if cordic_iteration = FRACTION_BITS then
-							if tangent_latched = '1' then
-								if next_y < 0 then
-									final_sign := '1';
-									magnitude := unsigned(-next_y);
-								else
-									final_sign := '0';
-									magnitude := unsigned(next_y);
-								end if;
-								if quadrant(0) = '0' then
-									tangent_numerator := magnitude;
-									tangent_denominator := unsigned(next_x);
-								else
-									tangent_numerator := unsigned(next_x);
-									tangent_denominator := magnitude;
-									final_sign := not final_sign;
-								end if;
-								if source_sign_latched = '1' then
-									final_sign := not final_sign;
-								end if;
-								intermediate_sign <= final_sign;
-								if tangent_denominator = 0 then
-									intermediate_class <= FPU_CLASS_INFINITY;
-									state <= COMPLETE;
-								elsif tangent_numerator = 0 then
-									intermediate_class <= FPU_CLASS_ZERO;
-									state <= COMPLETE;
-								else
-									numerator_highest := highest_set_bit(tangent_numerator);
-									denominator_highest := highest_set_bit(tangent_denominator);
-									numerator_shift := CORDIC_WIDTH - 1 - numerator_highest;
-									denominator_shift := CORDIC_WIDTH - 1 - denominator_highest;
-									normalized_numerator := shift_left(tangent_numerator,
-										numerator_shift);
-									normalized_denominator := shift_left(tangent_denominator,
-										denominator_shift);
-									quotient_exponent := integer(numerator_highest) -
-										integer(denominator_highest);
-									tangent_divisor <= resize(normalized_denominator,
-										CORDIC_WIDTH + 1);
-									if normalized_numerator < normalized_denominator then
-										tangent_remainder <= shift_left(resize(
-											normalized_numerator, CORDIC_WIDTH + 1), 1) -
-											resize(normalized_denominator, CORDIC_WIDTH + 1);
-										quotient_exponent := quotient_exponent - 1;
-									else
-										tangent_remainder <= resize(normalized_numerator,
-											CORDIC_WIDTH + 1) - resize(normalized_denominator,
-											CORDIC_WIDTH + 1);
-									end if;
-									tangent_quotient <= (0 => '1', others => '0');
-									tangent_iteration <= 0;
-									intermediate_class <= FPU_CLASS_NORMAL;
-									intermediate_exponent <= to_signed(quotient_exponent, 17);
-									state <= DIVIDE_TANGENT;
-								end if;
-							else
-								case quadrant is
-									when "00" => selected_value := next_y;
-									when "01" => selected_value := next_x;
-									when "10" => selected_value := -next_y;
-									when others => selected_value := -next_x;
-								end case;
-								if cosine_latched = '0' and
-										source_sign_latched = '1' then
-									selected_value := -selected_value;
-								end if;
-								primary_input := fixed_round_input(selected_value);
-								intermediate_class <= primary_input.data_class;
-								intermediate_sign <= primary_input.sign;
-								intermediate_exponent <= primary_input.exponent;
-								intermediate_significand <= primary_input.significand;
-								intermediate_special <= primary_input.special;
-								if simultaneous_latched = '1' then
-									case quadrant is
-										when "00" => cosine_value := next_x;
-										when "01" => cosine_value := -next_y;
-										when "10" => cosine_value := -next_x;
-										when others => cosine_value := next_y;
-									end case;
-									secondary_input := fixed_round_input(cosine_value);
-									secondary_class <= secondary_input.data_class;
-									secondary_sign <= secondary_input.sign;
-									secondary_exponent <= secondary_input.exponent;
-									secondary_significand <=
-										secondary_input.significand;
-									secondary_special <= secondary_input.special;
-								end if;
-								state <= COMPLETE;
-							end if;
+							state <= FINISH_CORDIC;
 						else
 							cordic_iteration <= cordic_iteration + 1;
-							if cordic_iteration < 47 then
-								cordic_angle_address <= cordic_iteration + 1;
-								state <= LOAD_CORDIC_ANGLE;
-							elsif cordic_iteration = 47 then
-								cordic_shift_angle <= CORDIC_TAIL_START;
-							else
-								cordic_shift_angle <= shift_right(
-									cordic_shift_angle, 1);
-							end if;
+							state <= ROTATE_CORDIC_XY;
 						end if;
+
+					when FINISH_CORDIC =>
+						if tangent_latched = '1' then
+							if cordic_y < 0 then
+								final_sign := '1';
+								magnitude := unsigned(-cordic_y);
+							else
+								final_sign := '0';
+								magnitude := unsigned(cordic_y);
+							end if;
+							if quadrant(0) = '0' then
+								tangent_numerator := magnitude;
+								tangent_denominator := unsigned(cordic_x);
+							else
+								tangent_numerator := unsigned(cordic_x);
+								tangent_denominator := magnitude;
+								final_sign := not final_sign;
+							end if;
+							if source_sign_latched = '1' then
+								final_sign := not final_sign;
+							end if;
+							intermediate_sign <= final_sign;
+							tangent_numerator_latched <= tangent_numerator;
+							tangent_denominator_latched <= tangent_denominator;
+							if tangent_denominator = 0 then
+								intermediate_class <= FPU_CLASS_INFINITY;
+								state <= COMPLETE;
+							elsif tangent_numerator = 0 then
+								intermediate_class <= FPU_CLASS_ZERO;
+								state <= COMPLETE;
+							else
+								state <= NORMALIZE_TANGENT_NUMERATOR;
+							end if;
+						else
+							case quadrant is
+								when "00" => selected_value := cordic_y;
+								when "01" => selected_value := cordic_x;
+								when "10" => selected_value := -cordic_y;
+								when others => selected_value := -cordic_x;
+							end case;
+							if cosine_latched = '0' and
+									source_sign_latched = '1' then
+								selected_value := -selected_value;
+							end if;
+							primary_fixed_value <= selected_value;
+							if simultaneous_latched = '1' then
+								case quadrant is
+									when "00" => cosine_value := cordic_x;
+									when "01" => cosine_value := -cordic_y;
+									when "10" => cosine_value := -cordic_x;
+									when others => cosine_value := cordic_y;
+								end case;
+								secondary_fixed_value <= cosine_value;
+							end if;
+							state <= CONVERT_PRIMARY;
+						end if;
+
+					when CONVERT_PRIMARY =>
+						intermediate_class <= converted_fixed_value.data_class;
+						intermediate_sign <= converted_fixed_value.sign;
+						intermediate_exponent <= converted_fixed_value.exponent;
+						intermediate_significand <=
+							converted_fixed_value.significand;
+						intermediate_special <= converted_fixed_value.special;
+						if simultaneous_latched = '1' then
+							state <= CONVERT_SECONDARY;
+						else
+							state <= COMPLETE;
+						end if;
+
+					when CONVERT_SECONDARY =>
+						secondary_class <= converted_fixed_value.data_class;
+						secondary_sign <= converted_fixed_value.sign;
+						secondary_exponent <= converted_fixed_value.exponent;
+						secondary_significand <= converted_fixed_value.significand;
+						secondary_special <= converted_fixed_value.special;
+						state <= COMPLETE;
+
+					when NORMALIZE_TANGENT_NUMERATOR =>
+						normalized_tangent_numerator <= normalized_value;
+						tangent_numerator_highest <= normalization_highest;
+						state <= NORMALIZE_TANGENT_DENOMINATOR;
+
+					when NORMALIZE_TANGENT_DENOMINATOR =>
+						normalized_tangent_denominator <= normalized_value;
+						tangent_quotient_exponent <=
+							integer(tangent_numerator_highest) -
+							integer(normalization_highest);
+						state <= START_TANGENT_DIVIDE;
+
+					when START_TANGENT_DIVIDE =>
+						tangent_divisor <= resize(normalized_tangent_denominator,
+							CORDIC_WIDTH + 1);
+						tangent_remainder <= shared_result_a(
+							CORDIC_WIDTH downto 0);
+						tangent_quotient <= (0 => '1', others => '0');
+						tangent_iteration <= 0;
+						intermediate_class <= FPU_CLASS_NORMAL;
+						quotient_exponent := tangent_quotient_exponent;
+						if normalized_tangent_numerator <
+								normalized_tangent_denominator then
+							quotient_exponent := quotient_exponent - 1;
+						end if;
+						intermediate_exponent <= to_signed(quotient_exponent, 17);
+						state <= DIVIDE_TANGENT;
 
 					when DIVIDE_TANGENT =>
 						shifted_tangent_remainder := shift_left(tangent_remainder, 1);
+						next_tangent_remainder := shared_result_a(
+							CORDIC_WIDTH downto 0);
 						next_tangent_quotient := shift_left(tangent_quotient, 1);
 						if shifted_tangent_remainder >= tangent_divisor then
-							next_tangent_remainder := shifted_tangent_remainder -
-								tangent_divisor;
 							next_tangent_quotient(0) := '1';
 						else
-							next_tangent_remainder := shifted_tangent_remainder;
 							next_tangent_quotient(0) := '0';
 						end if;
 						tangent_remainder <= next_tangent_remainder;
