@@ -369,8 +369,16 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08C5#) := x"6580";
 		result(16#08C6#) := x"0000";
 		result(16#08C7#) := x"0B90";
-		result(16#08C8#) := x"4E72";
-		result(16#08C9#) := x"2700";
+		result(16#08C8#) := x"F239";
+		result(16#08C9#) := x"461D";
+		result(16#08CA#) := x"0000";
+		result(16#08CB#) := x"1800";
+		result(16#08CC#) := x"F239";
+		result(16#08CD#) := x"6600";
+		result(16#08CE#) := x"0000";
+		result(16#08CF#) := x"0B94";
+		result(16#08D0#) := x"4E72";
+		result(16#08D1#) := x"2700";
 		return result;
 	end function;
 
@@ -414,6 +422,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal arc_sine_result_write_count : natural range 0 to 2 := 0;
 	signal arc_cosine_result_write_count : natural range 0 to 2 := 0;
 	signal sine_result_write_count : natural range 0 to 2 := 0;
+	signal cosine_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -602,8 +611,11 @@ begin
 				if addr_out = x"00000B90" or addr_out = x"00000B92" then
 					sine_result_write_count <= sine_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B94" or addr_out = x"00000B96" then
+					cosine_result_write_count <= cosine_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001192" then
+			if busstate = "00" and addr_out = x"000011A2" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -641,6 +653,7 @@ begin
 				arc_sine_result_write_count = 2 and
 				arc_cosine_result_write_count = 2 and
 				sine_result_write_count = 2 and
+				cosine_result_write_count = 2 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -847,6 +860,12 @@ begin
 			report "TG68K FSIN instruction stream mismatch: " &
 				to_hstring(memory(16#05C8#)) &
 				to_hstring(memory(16#05C9#))
+			severity failure;
+		assert cosine_result_write_count = 2 and
+			memory(16#05CA#) = x"3F60" and memory(16#05CB#) = x"A940"
+			report "TG68K FCOS instruction stream mismatch: " &
+				to_hstring(memory(16#05CA#)) &
+				to_hstring(memory(16#05CB#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, trigonometric and hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

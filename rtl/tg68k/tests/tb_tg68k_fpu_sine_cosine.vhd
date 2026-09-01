@@ -12,6 +12,7 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 	signal clk : std_logic := '0';
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
+	signal cosine : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
@@ -25,6 +26,7 @@ begin
 			clk => clk,
 			nReset => nReset,
 			start => start,
+			cosine => cosine,
 			source => source,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
@@ -43,10 +45,12 @@ begin
 				constant expected_result : in fpu_extended_t;
 				constant expected_cc : in std_logic_vector(3 downto 0);
 				constant expected_status : in std_logic_vector(7 downto 0);
-				constant expected_cycles : in natural := 0) is
+				constant expected_cycles : in natural := 0;
+				constant cosine_value : in std_logic := '0') is
 			variable cycles : natural := 0;
 		begin
 			wait until falling_edge(clk);
+			cosine <= cosine_value;
 			source <= source_value;
 			start <= '1';
 			wait until rising_edge(clk);
@@ -125,7 +129,24 @@ begin
 		execute_bounded(x"40428000000000000000");
 		execute_bounded(x"7FFEFFFFFFFFFFFFFFFF");
 
-		report "PASS: FSIN range reduction, CORDIC, special values, and status"
+		execute(x"00000000000000000000", x"3FFF8000000000000000",
+			x"0", x"00", 0, '1');
+		execute(x"80000000000000000000", x"3FFF8000000000000000",
+			x"0", x"00", 0, '1');
+		execute(x"3FFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
+			x"0", x"02", 258, '1');
+		execute(x"BFFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
+			x"0", x"02", 0, '1');
+		execute(x"3FFF8000000000000000", x"3FFE8A51407DA8345C92",
+			x"0", x"02", 0, '1');
+		execute(x"40008000000000000000", x"BFFDD51132BA9B902522",
+			x"8", x"02", 0, '1');
+		execute(x"3FD68000000000000000", x"3FFF8000000000000000",
+			x"0", x"02", 0, '1');
+		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF",
+			x"1", x"20", 0, '1');
+
+		report "PASS: FSIN/FCOS range reduction, CORDIC, special values, and status"
 			severity note;
 		stop;
 	end process;

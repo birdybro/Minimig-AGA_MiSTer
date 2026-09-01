@@ -106,12 +106,14 @@ def sine_cosine_decimal(angle: Decimal, cosine: bool) -> Decimal:
 
 
 @lru_cache(maxsize=None)
-def high_precision_sin(source: int) -> Fraction:
+def high_precision_trig(source: int, cosine: bool) -> Fraction:
     source_value = extended_bits_value(source)
     sign = -1 if source_value < 0 else 1
     magnitude = abs(source_value)
     if magnitude < power_of_two(-100):
         square = magnitude * magnitude
+        if cosine:
+            return 1 - square / 2 + square * square / 24
         result = magnitude - magnitude * square / 6 + (
             magnitude * square * square / 120)
         return result * sign
@@ -119,40 +121,43 @@ def high_precision_sin(source: int) -> Fraction:
         context.prec = 450
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
-        return Fraction(sine_cosine_decimal(source_decimal, False))
+        return Fraction(sine_cosine_decimal(source_decimal, cosine))
 
 
-def reference_sin(source: int, precision_bits: int,
-                  mode: int) -> tuple[int, int, int]:
+def reference_trig(source: int, precision_bits: int, mode: int,
+                   cosine: bool) -> tuple[int, int, int]:
     result, condition_codes, status = round_binary_precision(
-        high_precision_sin(source), precision_bits, mode)
+        high_precision_trig(source, cosine), precision_bits, mode)
     return result, condition_codes, status | 0x02
 
 
-def make_vectors():
+def make_vectors(cosine: bool):
     vectors = []
     for source in source_values():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
-                result, condition_codes, status = reference_sin(
-                    source, precision_bits, mode)
+                result, condition_codes, status = reference_trig(
+                    source, precision_bits, mode, cosine)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
     return vectors
 
 
-def emit_testbench() -> None:
-    vectors = make_vectors()
-    print("""library ieee;
+def emit_testbench(cosine: bool) -> None:
+    operation = "cos" if cosine else "sin"
+    operation_upper = operation.upper()
+    cosine_literal = "'1'" if cosine else "'0'"
+    vectors = make_vectors(cosine)
+    print(f"""library ieee;
 use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_sin_differential is
+entity tb_tg68k_fpu_{operation}_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_sin_differential is
+architecture test of tb_tg68k_fpu_{operation}_differential is
     constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
@@ -169,7 +174,7 @@ architecture test of tb_tg68k_fpu_sin_differential is
         suffix = "," if index + 1 < len(vectors) else ""
         print(f'        (x"{source:020X}", {precision}, {mode}, '
               f'x"{result:020X}", x"{cc:X}", x"{status:02X}"){suffix}')
-    print("""    );
+    print(f"""    );
     signal clk : std_logic := '0';
     signal nReset : std_logic := '0';
     signal start : std_logic := '0';
@@ -189,6 +194,7 @@ begin
             clk => clk,
             nReset => nReset,
             start => start,
+            cosine => {cosine_literal},
             source => source,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
@@ -223,12 +229,12 @@ begin
                 wait for 1 ns;
                 cycles := cycles + 1;
                 assert cycles < 300
-                    report "differential FSIN timeout" severity failure;
+                    report "differential F{operation_upper} timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FSIN vector " & integer'image(index) &
+                report "differential F{operation_upper} vector " & integer'image(index) &
                     " mismatch: source=" & to_hstring(source) &
                     " result=" & to_hstring(result) &
                     " expected=" & to_hstring(vectors(index).expected_result) &
@@ -238,7 +244,7 @@ begin
             wait until rising_edge(clk);
             wait for 1 ns;
         end loop;
-        report "PASS: 1152 high-precision FSIN vectors" severity note;
+        report "PASS: 1152 high-precision F{operation_upper} vectors" severity note;
         stop;
     end process;
 end architecture;
@@ -246,4 +252,4 @@ end architecture;
 
 
 if __name__ == "__main__":
-    emit_testbench()
+    emit_testbench(False)

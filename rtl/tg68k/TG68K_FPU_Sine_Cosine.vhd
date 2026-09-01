@@ -22,6 +22,7 @@ entity TG68K_FPU_Sine_Cosine is
 		clk : in std_logic;
 		nReset : in std_logic;
 		start : in std_logic;
+		cosine : in std_logic;
 		source : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
@@ -41,7 +42,8 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant RECIPROCAL_BITS : natural := 192;
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
-	constant TINY_EXPONENT : integer := -40;
+	constant SINE_TINY_EXPONENT : integer := -40;
+	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, REDUCE_RANGE,
 		LOAD_CORDIC_ANGLE, ROTATE_CORDIC, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
@@ -131,6 +133,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	end function;
 
 	signal state : sine_cosine_state_t := IDLE;
+	signal cosine_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
 	signal reciprocal_multiplier : unsigned(63 downto 0) := (others => '0');
@@ -241,6 +244,7 @@ begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
+				cosine_latched <= '0';
 				source_sign_latched <= '0';
 				source_exponent_latched <= 0;
 				reciprocal_multiplier <= (others => '0');
@@ -269,6 +273,7 @@ begin
 							source_exponent := fpu_unbiased_exponent(source);
 							selected_nan := source;
 							selected_nan(62) := '1';
+							cosine_latched <= cosine;
 							source_sign_latched <= source(79);
 							source_exponent_latched <= 0;
 							reciprocal_multiplier <= (others => '0');
@@ -304,7 +309,14 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								intermediate_class <= FPU_CLASS_ZERO;
+								if cosine = '1' then
+									intermediate_class <= FPU_CLASS_NORMAL;
+									intermediate_sign <= '0';
+									intermediate_significand <=
+										(66 => '1', others => '0');
+								else
+									intermediate_class <= FPU_CLASS_ZERO;
+								end if;
 								state <= COMPLETE;
 							else
 								normalization_shift :=
@@ -313,7 +325,14 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent - normalization_shift;
 								base_status(1) <= '1';
-								if source_exponent <= TINY_EXPONENT then
+								if cosine = '1' and
+										source_exponent <= COSINE_TINY_EXPONENT then
+									intermediate_class <= FPU_CLASS_NORMAL;
+									intermediate_sign <= '0';
+									intermediate_exponent <= to_signed(-1, 17);
+									intermediate_significand <= (others => '1');
+									state <= COMPLETE;
+								elsif source_exponent <= SINE_TINY_EXPONENT then
 									if source_significand = x"8000000000000000" then
 										tiny_significand := (others => '1');
 										source_exponent := source_exponent - 1;
@@ -377,6 +396,9 @@ begin
 							reduced_angle := reduced_angle - shift_left(
 								to_signed(1, CORDIC_WIDTH), FRACTION_BITS);
 						end if;
+						if cosine_latched = '1' then
+							quadrant_sum := quadrant_sum + 1;
+						end if;
 						quadrant <= quadrant_sum(1 downto 0);
 						cordic_x <= signed(CORDIC_GAIN_INVERSE);
 						cordic_y <= (others => '0');
@@ -417,7 +439,8 @@ begin
 								when "10" => selected_value := -next_y;
 								when others => selected_value := -next_x;
 							end case;
-							if source_sign_latched = '1' then
+							if cosine_latched = '0' and
+									source_sign_latched = '1' then
 								selected_value := -selected_value;
 							end if;
 							if selected_value < 0 then

@@ -350,6 +350,7 @@ begin
 		decoded_operation = FPU_OP_ASIN or
 		decoded_operation = FPU_OP_ACOS or
 		decoded_operation = FPU_OP_SIN or
+		decoded_operation = FPU_OP_COS or
 		decoded_operation = FPU_OP_ATANH or
 		decoded_operation = FPU_OP_SINH or
 		decoded_operation = FPU_OP_COSH or
