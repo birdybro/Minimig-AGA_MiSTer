@@ -58,7 +58,8 @@ end entity;
 
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
-		CAPTURE_DESTINATION, EXECUTE, COMMIT, BUS_ERROR_WAIT, COMPLETE);
+		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, COMMIT, BUS_ERROR_WAIT,
+		COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -111,6 +112,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal subtract_latched : std_logic := '0';
 	signal compare_latched : std_logic := '0';
 	signal multiply_latched : std_logic := '0';
+	signal divide_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -119,6 +121,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal mode_latched : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
 	signal snan_enable_latched : std_logic := '0';
 	signal operr_enable_latched : std_logic := '0';
+	signal dz_enable_latched : std_logic := '0';
 	signal external_buffer : std_logic_vector(95 downto 0) := (others => '0');
 	signal source_latched : fpu_extended_t := (others => '0');
 	signal destination_latched : fpu_extended_t := (others => '0');
@@ -136,7 +139,14 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal multiply_result : fpu_extended_t;
 	signal multiply_condition_codes : std_logic_vector(3 downto 0);
 	signal multiply_status : std_logic_vector(7 downto 0);
+	signal divide_start : std_logic;
+	signal divide_done : std_logic;
+	signal divide_result : fpu_extended_t;
+	signal divide_condition_codes : std_logic_vector(3 downto 0);
+	signal divide_status : std_logic_vector(7 downto 0);
 begin
+	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
+
 	unpack : entity work.TG68K_FPU_Convert
 		port map(
 			source_format => format_latched,
@@ -171,10 +181,26 @@ begin
 			exception_status => multiply_status
 		);
 
+	divide : entity work.TG68K_FPU_Divide
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => divide_start,
+			source => source_latched,
+			destination => destination_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => divide_result,
+			condition_codes => divide_condition_codes,
+			exception_status => divide_status,
+			busy => open,
+			done => divide_done
+		);
+
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, result_latched,
 		condition_codes_latched, status_latched, write_result_latched,
-		snan_enable_latched, operr_enable_latched)
+		snan_enable_latched, operr_enable_latched, dz_enable_latched)
 		variable suppress_write : boolean;
 	begin
 		memory_request <= '0';
@@ -213,7 +239,8 @@ begin
 
 		suppress_write :=
 			(status_latched(6) = '1' and snan_enable_latched = '1') or
-			(status_latched(5) = '1' and operr_enable_latched = '1');
+			(status_latched(5) = '1' and operr_enable_latched = '1') or
+			(status_latched(2) = '1' and dz_enable_latched = '1');
 		case state is
 			when COMMIT =>
 				operation_status_write <= '1';
@@ -238,6 +265,7 @@ begin
 				subtract_latched <= '0';
 				compare_latched <= '0';
 				multiply_latched <= '0';
+				divide_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -245,6 +273,7 @@ begin
 				mode_latched <= FPU_ROUND_NEAREST;
 				snan_enable_latched <= '0';
 				operr_enable_latched <= '0';
+				dz_enable_latched <= '0';
 				external_buffer <= (others => '0');
 				source_latched <= (others => '0');
 				destination_latched <= (others => '0');
@@ -274,6 +303,11 @@ begin
 							else
 								multiply_latched <= '0';
 							end if;
+							if operation = FPU_OP_DIV then
+								divide_latched <= '1';
+							else
+								divide_latched <= '0';
+							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
 							function_code_latched <= function_code;
@@ -281,6 +315,7 @@ begin
 							mode_latched <= rounding_mode;
 							snan_enable_latched <= exception_enable(6);
 							operr_enable_latched <= exception_enable(5);
+							dz_enable_latched <= exception_enable(2);
 							external_buffer <= (others => '0');
 							status_latched <= (others => '0');
 							transfer_index <= 0;
@@ -330,17 +365,28 @@ begin
 						state <= EXECUTE;
 
 					when EXECUTE =>
-						if multiply_latched = '1' then
+						if divide_latched = '1' then
+							state <= WAIT_DIVIDE;
+						elsif multiply_latched = '1' then
 							result_latched <= multiply_result;
 							condition_codes_latched <= multiply_condition_codes;
 							status_latched <= multiply_status;
+							state <= COMMIT;
 						else
 							result_latched <= add_subtract_result;
 							condition_codes_latched <=
 								add_subtract_condition_codes;
 							status_latched <= add_subtract_status;
+							state <= COMMIT;
 						end if;
-						state <= COMMIT;
+
+					when WAIT_DIVIDE =>
+						if divide_done = '1' then
+							result_latched <= divide_result;
+							condition_codes_latched <= divide_condition_codes;
+							status_latched <= divide_status;
+							state <= COMMIT;
+						end if;
 
 					when COMMIT => state <= COMPLETE;
 

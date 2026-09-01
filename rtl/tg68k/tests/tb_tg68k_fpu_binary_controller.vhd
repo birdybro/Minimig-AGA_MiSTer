@@ -178,7 +178,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 40
+				assert cycle_count < 100
 					report "FPU binary controller did not complete"
 					severity failure;
 			end loop;
@@ -273,6 +273,17 @@ begin
 			report "memory single FMUL controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_DIV;
+		fp_register_data <= x"4001C000000000000000";
+		start_operation;
+		finish_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"40018000000000000000" and
+			observed_status = x"00"
+			report "memory single FDIV controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_ADD;
 		external_data_register <= '1';
 		operand_format <= FPU_FORMAT_LONG_INTEGER;
@@ -309,6 +320,17 @@ begin
 			severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_DIV;
+		exception_enable <= x"04";
+		run_register_operation(x"00000000000000000000",
+			x"4000C000000000000000");
+		assert fp_write_count = 0 and observed_status = x"04" and
+			observed_cc = "0010"
+			report "enabled DZ destination suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_ADD;
 		exception_enable <= x"10";
 		rounding_precision <= FPU_PRECISION_SINGLE;
 		run_register_operation(x"407EFFFFFF0000000000",
@@ -355,7 +377,7 @@ begin
 			trace_address(0) = x"00004000" and status_write_count = 1
 			report "binary bus-error retry mismatch" severity failure;
 
-		report "PASS: MC68882 FADD, FSUB, FMUL, and FCMP controller"
+		report "PASS: MC68882 FADD, FSUB, FMUL, FDIV, and FCMP controller"
 			severity note;
 		stop;
 	end process;
