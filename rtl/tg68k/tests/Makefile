@@ -37,9 +37,9 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
 .PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_condition fpu_conditional_controller fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_packed_output_power_rom_check fpu_extended_to_packed_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
-.PHONY: fpu_conditional_integration fpu_ftrap_integration fpu_bsun_integration fpu_state_frame_controller fpu_state_frame_integration fpu_busy_frame_integration
+.PHONY: fpu_conditional_integration fpu_ftrap_integration fpu_bsun_integration fpu_state_frame_controller fpu_state_frame_integration fpu_busy_frame_integration mmu_fpu_integration mmu_fpu_fault_integration
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_condition fpu_conditional_controller fpu_state_frame_controller fpu_state_frame_integration fpu_busy_frame_integration fpu_conditional_integration fpu_ftrap_integration fpu_bsun_integration fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_packed_output_power_rom_check fpu_extended_to_packed_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fpu_integration mmu_fpu_fault_integration mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_condition fpu_conditional_controller fpu_state_frame_controller fpu_state_frame_integration fpu_busy_frame_integration fpu_conditional_integration fpu_ftrap_integration fpu_bsun_integration fpu_convert fpu_round fpu_packed_power_rom_check fpu_packed_to_extended_differential fpu_packed_output_power_rom_check fpu_extended_to_packed_differential fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_constant_controller fpu_constant_differential fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_exponential fpu_twotox_differential fpu_etox_differential fpu_tentox_differential fpu_etoxm1_differential fpu_sinh_differential fpu_cosh_differential fpu_tanh_differential fpu_logarithm fpu_lognp1_differential fpu_logn_differential fpu_log2_differential fpu_log10_differential fpu_atanh_differential fpu_arc_tangent fpu_atan_differential fpu_asin_differential fpu_acos_differential fpu_sine_cosine fpu_sin_differential fpu_cos_differential fpu_tan_differential fpu_sincos_differential fpu_binary_controller fpu_system fpu_wrapper synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -49,6 +49,8 @@ analyze:
 		tb_tg68k_mmu_instruction_controller.vhd \
 		tb_tg68k_mmu_dispatch.vhd tb_tg68k_mmu_wrapper_smoke.vhd \
 		tb_tg68k_mmu_wrapper.vhd \
+		tb_tg68k_mmu_fpu_integration.vhd \
+		tb_tg68k_mmu_fpu_fault_integration.vhd \
 		tb_tg68k_mmu_fault_frame.vhd \
 		tb_tg68k_mmu_fault_integration.vhd \
 		tb_tg68k_mmu_fault_rte.vhd tb_tg68k_rte_validation.vhd \
@@ -88,6 +90,8 @@ analyze:
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_dispatch
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_wrapper_smoke
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_wrapper
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fpu_integration
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fpu_fault_integration
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_frame
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_integration
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_rte
@@ -144,6 +148,16 @@ mmu_wrapper_smoke: analyze
 
 mmu_wrapper: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_wrapper $(GHDL_RUN_FLAGS)
+
+mmu_fpu_integration: analyze
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fpu_integration $(GHDL_RUN_FLAGS)
+
+mmu_fpu_fault_integration: analyze
+	set -e; for fault_kind in 0 1 2 3 4 5; do \
+		$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) \
+			tb_tg68k_mmu_fpu_fault_integration -gFAULT_KIND=$$fault_kind \
+			$(GHDL_RUN_FLAGS); \
+	done
 
 mmu_fault_frame: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_mmu_fault_frame $(GHDL_RUN_FLAGS)
