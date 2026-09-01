@@ -134,6 +134,7 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_effective_address : std_logic_vector(31 downto 0);
 	signal fpu_function_code : std_logic_vector(2 downto 0);
 	signal fpu_integer_register_data : std_logic_vector(31 downto 0);
+	signal fpu_address_register_data : std_logic_vector(31 downto 0);
 	signal fpu_memory_ready : std_logic;
 	signal fpu_memory_error : std_logic;
 	signal fpu_memory_request : std_logic;
@@ -515,6 +516,7 @@ begin
 			FPU_effective_address => fpu_effective_address,
 			FPU_function_code => fpu_function_code,
 			FPU_integer_register_data => fpu_integer_register_data,
+			FPU_address_register_data => fpu_address_register_data,
 			skipFetch => skipFetch,
 			regin_out => regin_out,
 			CACR_out => CACR_out,
@@ -605,6 +607,7 @@ begin
 			effective_address => fpu_effective_address,
 			function_code => fpu_function_code,
 			integer_register_data => fpu_integer_register_data,
+			address_register_data => fpu_address_register_data,
 			instruction_start => fpu_instruction_start,
 			retry => fpu_retry,
 			instruction_match => fpu_instruction_match,

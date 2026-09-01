@@ -22,6 +22,8 @@ architecture test of tb_tg68k_fpu_system is
 	signal function_code : std_logic_vector(2 downto 0) := "001";
 	signal integer_register_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
+	signal address_register_data : std_logic_vector(31 downto 0) :=
+		(others => '0');
 	signal instruction_start : std_logic := '0';
 	signal retry : std_logic := '0';
 	signal instruction_match : std_logic;
@@ -83,6 +85,12 @@ begin
 			when x"00001002" => memory_read_data <= x"0000";
 			when x"00001004" => memory_read_data <= x"0000";
 			when x"00001006" => memory_read_data <= x"0000";
+			when x"00002000" => memory_read_data <= x"0000";
+			when x"00002002" => memory_read_data <= x"0030";
+			when x"00002004" => memory_read_data <= x"A5A5";
+			when x"00002006" => memory_read_data <= x"1234";
+			when x"00002008" => memory_read_data <= x"1122";
+			when x"0000200A" => memory_read_data <= x"3344";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -98,6 +106,7 @@ begin
 			effective_address => effective_address,
 			function_code => function_code,
 			integer_register_data => integer_register_data,
+			address_register_data => address_register_data,
 			instruction_start => instruction_start,
 			retry => retry,
 			instruction_match => instruction_match,
@@ -322,6 +331,78 @@ begin
 			observed_integer_format = FPU_FORMAT_SINGLE
 			report "register-to-data-register FMOVE system result mismatch"
 			severity failure;
+
+		clear_observations;
+		integer_register_data <= x"000000B0";
+		start_instruction(x"F203", x"9000", '1');
+		assert instruction_requires_effective_address = '0'
+			report "direct FPCR load incorrectly requested an effective address"
+			severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert fpcr = x"000000B0" and fpiar = x"00000000" and
+			trace_count = 0
+			report "data-register-to-FPCR transfer mismatch" severity failure;
+
+		clear_observations;
+		start_instruction(x"F204", x"B000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert integer_write_count = 1 and
+			observed_integer_data = x"000000B0" and
+			observed_integer_format = FPU_FORMAT_LONG_INTEGER
+			report "FPCR-to-data-register transfer mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00002000";
+		function_code <= "101";
+		start_instruction(x"F210", x"9C00", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 6 and trace_write(0) = '0' and
+			trace_address(0) = x"00002000" and
+			trace_address(5) = x"0000200A" and trace_fc(5) = "101" and
+			fpcr = x"00000030" and fpsr = x"A5A51234" and
+			fpiar = x"11223344"
+			report "memory-to-control FMOVEM system mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00003000";
+		start_instruction(x"F219", x"BC00", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 6 and trace_write(0) = '1' and
+			trace_address(0) = x"00003000" and trace_data(0) = x"0000" and
+			trace_data(1) = x"0030" and trace_data(2) = x"A5A5" and
+			trace_data(3) = x"1234" and trace_data(4) = x"1122" and
+			trace_data(5) = x"3344" and address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"0000300C"
+			report "control-to-memory FMOVEM system mismatch" severity failure;
+
+		clear_observations;
+		opcode <= x"F209";
+		command_word <= x"A400";
+		wait for 1 ns;
+		assert instruction_requires_effective_address = '0'
+			report "FPIAR-to-An direct transfer requested an effective address"
+			severity failure;
+		start_instruction(x"F209", x"A400", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"11223344" and trace_count = 0
+			report "FPIAR-to-address-register system mismatch" severity failure;
+
+		clear_observations;
+		address_register_data <= x"55667788";
+		start_instruction(x"F209", x"8400", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fpiar = x"55667788" and address_write_count = 0 and
+			trace_count = 0
+			report "address-register-to-FPIAR system mismatch" severity failure;
 
 		clear_observations;
 		start_instruction(x"F210", x"4C00", '0');

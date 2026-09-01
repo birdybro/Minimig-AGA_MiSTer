@@ -116,7 +116,9 @@ begin
 		check_decode(x"F220", x"6800", '1', '1', '1', '1',
 			FPU_FAMILY_MOVE_TO_EXTERNAL);
 
-		check_decode(x"F208", x"8000", '1', '1', '1', '1',
+		check_decode(x"F208", x"8000", '1', '0', '1', '1',
+			FPU_FAMILY_MOVE_TO_CONTROL);
+		check_decode(x"F200", x"9000", '1', '1', '1', '1',
 			FPU_FAMILY_MOVE_TO_CONTROL);
 		check_decode(x"F208", x"8800", '1', '0', '1', '1',
 			FPU_FAMILY_MOVE_TO_CONTROL);

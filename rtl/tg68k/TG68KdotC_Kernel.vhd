@@ -194,6 +194,7 @@ entity TG68KdotC_Kernel is
 		FPU_effective_address	: out std_logic_vector(31 downto 0);
 		FPU_function_code		: out std_logic_vector(2 downto 0);
 		FPU_integer_register_data : out std_logic_vector(31 downto 0);
+		FPU_address_register_data : out std_logic_vector(31 downto 0);
 -- for debug
 		skipFetch				: out std_logic;
 		regin_out				: out std_logic_vector(31 downto 0);
@@ -472,6 +473,8 @@ BEGIN
 	FPU_function_code <= SVmode & "01";
 	FPU_integer_register_data <= regfile(conv_integer(
 		FPU_integer_register_select));
+	FPU_address_register_data <= regfile(8 + conv_integer(
+		FPU_address_register_select));
 
 	process(clk)
 	begin

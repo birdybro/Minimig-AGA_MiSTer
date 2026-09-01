@@ -219,6 +219,7 @@ cpu1: entity work.TG68KdotC_Kernel
       FPU_effective_address => open,
       FPU_function_code => open,
       FPU_integer_register_data => open,
+      FPU_address_register_data => open,
       skipFetch => skipFetch,
       regin_out => open,
       CACR_out => open,

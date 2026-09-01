@@ -194,22 +194,23 @@ begin
 						when "100" =>
 							decoded_family := FPU_FAMILY_MOVE_TO_CONTROL;
 							needs_ea := true;
-							if register_select = "000" or register_select = "001" then
+							if register_select = "001" then
 								valid := standard_ea(ea);
 							elsif register_select = "010" or register_select = "100" then
 								valid := data_ea(ea);
 							else
-								valid := memory_ea(ea);
+								valid := register_select /= "000" and memory_ea(ea);
 							end if;
 						when "101" =>
 							decoded_family := FPU_FAMILY_MOVE_FROM_CONTROL;
 							needs_ea := true;
-							if register_select = "000" or register_select = "001" then
+							if register_select = "001" then
 								valid := alterable_ea(ea);
 							elsif register_select = "010" or register_select = "100" then
 								valid := data_alterable_ea(ea);
 							else
-								valid := memory_alterable_ea(ea);
+								valid := register_select /= "000" and
+									memory_alterable_ea(ea);
 							end if;
 						when "110" =>
 							decoded_family := FPU_FAMILY_MOVEM_TO_FP;
