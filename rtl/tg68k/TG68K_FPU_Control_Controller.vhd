@@ -36,6 +36,9 @@ entity TG68K_FPU_Control_Controller is
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
 		retry : in std_logic;
+		resume_context : in std_logic;
+		saved_context_in : in std_logic_vector(55 downto 0);
+		saved_context_out : out std_logic_vector(55 downto 0);
 		memory_read_data : in std_logic_vector(15 downto 0);
 		memory_request : out std_logic;
 		memory_write : out std_logic;
@@ -73,6 +76,28 @@ architecture rtl of TG68K_FPU_Control_Controller is
 		end case;
 	end function;
 
+	function restored_register_index(
+		value : std_logic_vector(1 downto 0)) return natural is
+		variable decoded : natural;
+	begin
+		decoded := to_integer(unsigned(value));
+		if decoded <= 2 then
+			return decoded;
+		end if;
+		return 0;
+	end function;
+
+	function restored_byte_offset(
+		value : std_logic_vector(3 downto 0)) return natural is
+		variable decoded : natural;
+	begin
+		decoded := to_integer(unsigned(value));
+		if decoded <= 10 then
+			return decoded;
+		end if;
+		return 0;
+	end function;
+
 	signal state : controller_state_t := IDLE;
 	signal direction_latched : std_logic := '0';
 	signal mask_latched : std_logic_vector(2 downto 0) := (others => '0');
@@ -87,12 +112,30 @@ architecture rtl of TG68K_FPU_Control_Controller is
 	signal byte_offset : natural range 0 to 10 := 0;
 	signal high_word : std_logic_vector(15 downto 0) := (others => '0');
 	signal load_data : std_logic_vector(31 downto 0) := (others => '0');
+	signal store_data_latched : std_logic_vector(31 downto 0) :=
+		(others => '0');
 	signal fault_state : controller_state_t := LOAD_HIGH;
 begin
 	control_register_select <= control_select(register_index);
+	saved_context_out <= store_data_latched & high_word &
+		std_logic_vector(to_unsigned(register_index, 2)) &
+		std_logic_vector(to_unsigned(byte_offset, 4)) &
+		"00" when fault_state = LOAD_HIGH else
+		store_data_latched & high_word &
+		std_logic_vector(to_unsigned(register_index, 2)) &
+		std_logic_vector(to_unsigned(byte_offset, 4)) &
+		"01" when fault_state = LOAD_LOW else
+		store_data_latched & high_word &
+		std_logic_vector(to_unsigned(register_index, 2)) &
+		std_logic_vector(to_unsigned(byte_offset, 4)) &
+		"10" when fault_state = STORE_HIGH else
+		store_data_latched & high_word &
+		std_logic_vector(to_unsigned(register_index, 2)) &
+		std_logic_vector(to_unsigned(byte_offset, 4)) & "11";
 
 	outputs : process(state, address_latched, byte_offset,
-		function_code_latched, high_word, load_data, control_register_read_data,
+		function_code_latched, high_word, load_data, store_data_latched,
+		control_register_read_data,
 		data_direct_latched, address_direct_latched)
 	begin
 		control_register_write <= '0';
@@ -123,11 +166,11 @@ begin
 			when STORE_HIGH =>
 				memory_request <= '1';
 				memory_write <= '1';
-				memory_write_data <= control_register_read_data(31 downto 16);
+				memory_write_data <= store_data_latched(31 downto 16);
 			when STORE_LOW =>
 				memory_request <= '1';
 				memory_write <= '1';
-				memory_write_data <= control_register_read_data(15 downto 0);
+				memory_write_data <= store_data_latched(15 downto 0);
 			when DIRECT_STORE =>
 				if data_direct_latched = '1' then
 					data_register_write <= '1';
@@ -158,6 +201,7 @@ begin
 				byte_offset <= 0;
 				high_word <= (others => '0');
 				load_data <= (others => '0');
+				store_data_latched <= (others => '0');
 				fault_state <= LOAD_HIGH;
 			else
 				case state is
@@ -176,7 +220,26 @@ begin
 							end if;
 							register_index <= 0;
 							byte_offset <= 0;
-							state <= SELECT_REGISTER;
+							if resume_context = '1' then
+								store_data_latched <= saved_context_in(55 downto 24);
+								high_word <= saved_context_in(23 downto 8);
+								register_index <= restored_register_index(
+									saved_context_in(7 downto 6));
+								byte_offset <= restored_byte_offset(
+									saved_context_in(5 downto 2));
+								case saved_context_in(1 downto 0) is
+									when "00" => fault_state <= LOAD_HIGH;
+										state <= LOAD_HIGH;
+									when "01" => fault_state <= LOAD_LOW;
+										state <= LOAD_LOW;
+									when "10" => fault_state <= STORE_HIGH;
+										state <= STORE_HIGH;
+									when others => fault_state <= STORE_LOW;
+										state <= STORE_LOW;
+								end case;
+							else
+								state <= SELECT_REGISTER;
+							end if;
 						end if;
 
 					when SELECT_REGISTER =>
@@ -192,6 +255,7 @@ begin
 							elsif direction_latched = '1' then
 								state <= LOAD_HIGH;
 							else
+								store_data_latched <= control_register_read_data;
 								state <= STORE_HIGH;
 							end if;
 						elsif register_index = 2 then

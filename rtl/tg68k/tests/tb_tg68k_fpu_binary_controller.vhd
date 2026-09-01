@@ -35,6 +35,10 @@ architecture test of tb_tg68k_fpu_binary_controller is
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal retry : std_logic := '0';
+	signal resume_context : std_logic := '0';
+	signal saved_context_in : std_logic_vector(98 downto 0) :=
+		(others => '0');
+	signal saved_context_out : std_logic_vector(98 downto 0);
 	signal memory_read_data : std_logic_vector(15 downto 0);
 	signal memory_request : std_logic;
 	signal memory_write : std_logic;
@@ -95,6 +99,11 @@ begin
 			when x"00005202" | x"00005204" | x"00005206" |
 					x"00005208" => memory_read_data <= x"0000";
 			when x"0000520A" => memory_read_data <= x"0042";
+			when x"00005400" => memory_read_data <= x"3FFF";
+			when x"00005402" => memory_read_data <= x"0000";
+			when x"00005404" => memory_read_data <= x"C000";
+			when x"00005406" | x"00005408" | x"0000540A" =>
+				memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -123,6 +132,9 @@ begin
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
+			resume_context => resume_context,
+			saved_context_in => saved_context_in,
+			saved_context_out => saved_context_out,
 			memory_read_data => memory_read_data,
 			memory_request => memory_request,
 			memory_write => memory_write,
@@ -869,6 +881,35 @@ begin
 		assert observed_bus_error = '1' and trace_count = 1 and
 			trace_address(0) = x"00004000" and status_write_count = 1
 			report "binary bus-error retry mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_ADD;
+		operand_format <= FPU_FORMAT_EXTENDED;
+		effective_address <= x"00005400";
+		fp_register_data <= x"3FFF8000000000000000";
+		start_operation;
+		wait until trace_count = 2;
+		wait until falling_edge(clk);
+		memory_error <= '1';
+		wait until bus_error_exception = '1';
+		saved_context_in <= saved_context_out;
+		nReset <= '0';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		nReset <= '1';
+		memory_error <= '0';
+		clear_observations;
+		resume_context <= '1';
+		start_operation;
+		resume_context <= '0';
+		fp_register_data <= x"3FFF8000000000000000";
+		finish_operation;
+		assert trace_count = 4 and trace_address(0) = x"00005404" and
+			trace_address(3) = x"0000540A" and
+			observed_fp_data = x"4000A000000000000000" and
+			status_write_count = 1
+			report "restored binary operand fetch did not resume from saved data"
+			severity failure;
 
 		report "PASS: MC68882 fundamental arithmetic controller"
 			severity note;

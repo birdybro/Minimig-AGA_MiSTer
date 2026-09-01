@@ -35,6 +35,9 @@ entity TG68K_FPU_Movem_Controller is
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
 		retry : in std_logic;
+		resume_context : in std_logic;
+		saved_context_in : in std_logic_vector(197 downto 0);
+		saved_context_out : out std_logic_vector(197 downto 0);
 		memory_read_data : in std_logic_vector(15 downto 0);
 		memory_request : out std_logic;
 		memory_write : out std_logic;
@@ -94,6 +97,17 @@ architecture rtl of TG68K_FPU_Movem_Controller is
 		return updated;
 	end function;
 
+	function restored_word_index(
+		value : std_logic_vector(2 downto 0)) return natural is
+		variable decoded : natural;
+	begin
+		decoded := to_integer(unsigned(value));
+		if decoded <= 5 then
+			return decoded;
+		end if;
+		return 0;
+	end function;
+
 	signal state : controller_state_t := IDLE;
 	signal direction_latched : std_logic := '0';
 	signal predecrement_latched : std_logic := '0';
@@ -104,12 +118,17 @@ architecture rtl of TG68K_FPU_Movem_Controller is
 	signal register_index : natural range 0 to 7 := 7;
 	signal word_index : natural range 0 to 5 := 0;
 	signal load_data : fpu_extended_t := (others => '0');
+	signal store_data_latched : fpu_extended_t := (others => '0');
 begin
 	fp_register_select <= std_logic_vector(to_unsigned(register_index, 3));
+	saved_context_out <= address_latched &
+		std_logic_vector(to_unsigned(register_index, 3)) &
+		std_logic_vector(to_unsigned(word_index, 3)) & load_data &
+		store_data_latched;
 
 	outputs : process(state, direction_latched, address_latched,
 		function_code_latched, register_index, word_index, load_data,
-		fp_register_read_data)
+		store_data_latched)
 	begin
 		fp_register_write <= '0';
 		fp_register_write_data <= load_data;
@@ -117,7 +136,7 @@ begin
 		memory_write <= not direction_latched;
 		memory_address <= std_logic_vector(unsigned(address_latched) +
 			to_unsigned(word_index * 2, 32));
-		memory_write_data <= register_word(fp_register_read_data, word_index);
+		memory_write_data <= register_word(store_data_latched, word_index);
 		memory_function_code <= function_code_latched;
 		done <= '0';
 		bus_error_exception <= '0';
@@ -149,6 +168,7 @@ begin
 				register_index <= 7;
 				word_index <= 0;
 				load_data <= (others => '0');
+				store_data_latched <= (others => '0');
 			else
 				case state is
 					when IDLE =>
@@ -165,7 +185,18 @@ begin
 							register_index <= 7;
 							word_index <= 0;
 							load_data <= (others => '0');
-							state <= SELECT_REGISTER;
+							if resume_context = '1' then
+								address_latched <= saved_context_in(197 downto 166);
+								register_index <= to_integer(unsigned(
+									saved_context_in(165 downto 163)));
+								word_index <= restored_word_index(
+									saved_context_in(162 downto 160));
+								load_data <= saved_context_in(159 downto 80);
+								store_data_latched <= saved_context_in(79 downto 0);
+								state <= TRANSFER_WORD;
+							else
+								state <= SELECT_REGISTER;
+							end if;
 						end if;
 
 					when SELECT_REGISTER =>
@@ -176,6 +207,9 @@ begin
 							if predecrement_latched = '1' then
 								address_latched <= std_logic_vector(
 									unsigned(address_latched) - 12);
+							end if;
+							if direction_latched = '0' then
+								store_data_latched <= fp_register_read_data;
 							end if;
 							state <= TRANSFER_WORD;
 						elsif register_index = 0 then

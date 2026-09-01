@@ -151,6 +151,10 @@ entity TG68KdotC_Kernel is
 		MMU_fault_function_code : in std_logic_vector(2 downto 0) := (others => '0');
 		MMU_fault_write		: in std_logic := '0';
 		MMU_fault_instruction	: in std_logic := '0';
+		MMU_fault_external_cycle : in std_logic := '0';
+		MMU_fault_size		: in std_logic_vector(1 downto 0) := "00";
+		MMU_fault_data_output : in std_logic_vector(31 downto 0) :=
+			(others => '0');
 		MMU_address_register_write : in std_logic := '0';
 		MMU_address_register_select : in std_logic_vector(2 downto 0) := "000";
 		MMU_address_register_data : in std_logic_vector(31 downto 0) := (others => '0');
@@ -690,7 +694,11 @@ ALU: TG68K_ALU
 				mmu_fault_logical_address <= MMU_fault_address;
 				mmu_fault_pipe_stage_c <= opcode;
 				mmu_fault_pipe_stage_b <= last_opc_read;
-				mmu_fault_data_output_buffer <= data_write_tmp;
+				if MMU_fault_external_cycle = '1' then
+					mmu_fault_data_output_buffer <= MMU_fault_data_output;
+				else
+					mmu_fault_data_output_buffer <= data_write_tmp;
+				end if;
 				mmu_fault_data_input_buffer <= data_read;
 				mmu_fault_stage_b_address <= TG68_PC;
 				if MMU_fault_instruction = '1' and micro_state = idle then
@@ -707,12 +715,16 @@ ALU: TG68K_ALU
 						mmu_fault_special_status_word <=
 							mmu_instruction_fault_ssw('1', '0');
 					else
-						case exe_datatype is
-							when "00" => size_code := "01";
-							when "01" => size_code := "10";
-							when "10" => size_code := "00";
-							when others => size_code := "11";
-						end case;
+						if MMU_fault_external_cycle = '1' then
+							size_code := MMU_fault_size;
+						else
+							case exe_datatype is
+								when "00" => size_code := "01";
+								when "01" => size_code := "10";
+								when "10" => size_code := "00";
+								when others => size_code := "11";
+							end case;
+						end if;
 						mmu_fault_special_status_word <= mmu_data_fault_ssw(
 							MMU_fault_function_code, MMU_fault_write,
 							'0', size_code);
@@ -760,7 +772,7 @@ ALU: TG68K_ALU
 				rte_saved_program_counter <= (others => '0');
 				rte_format_recovery <= '0';
 			elsif clkena_lw = '1' then
-				if decodeOPC = '1' and opcode = x"4E73" and MMU_enable = '1' then
+				if decodeOPC = '1' and opcode = x"4E73" then
 					rte_saved_stack_pointer <= regfile(15);
 					rte_saved_status_register <= FlagsSR & Flags(7 downto 0);
 					rte_saved_program_counter <= exe_pc;
@@ -4310,9 +4322,9 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 						set(postadd) <= '1';
 						setstackaddr <= '1';
 						next_micro_state <= rte5;
-					elsif MMU_enable = '1' and
+					elsif cpu(1) = '1' and
 							(last_data_in(15 downto 12) = "1010" or
-							last_data_in(15 downto 12) = "1011") then
+							 last_data_in(15 downto 12) = "1011") then
 						setstate <= "10";
 						datatype <= "10";
 						set(postadd) <= '1';
@@ -4614,6 +4626,7 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 				WHEN mmu_fault_push =>
 					setstackaddr <= '1';
 					datatype <= "01";
+					set_datatype <= "01";
 					if mmu_fault_word_index = "000000" then
 						setstate <= "01";
 						next_micro_state <= trap3;
@@ -4636,6 +4649,8 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 			end if;
 
 			if MMU_access_fault = '1' then
+				datatype <= "01";
+				set_datatype <= "01";
 				setstate <= "01";
 				next_micro_state <= mmu_fault_push;
 				if preSVmode = '0' then

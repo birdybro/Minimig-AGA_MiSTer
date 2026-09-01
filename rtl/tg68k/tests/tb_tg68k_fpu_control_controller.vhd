@@ -34,6 +34,11 @@ architecture test of tb_tg68k_fpu_control_controller is
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal retry : std_logic := '0';
+	signal resume_context : std_logic := '0';
+	signal saved_context_in : std_logic_vector(55 downto 0) :=
+		(others => '0');
+	signal saved_context_out : std_logic_vector(55 downto 0);
+	signal alternate_control_values : std_logic := '0';
 	signal memory_read_data : std_logic_vector(15 downto 0);
 	signal memory_request : std_logic;
 	signal memory_write : std_logic;
@@ -61,10 +66,29 @@ begin
 	clk <= not clk after CLK_PERIOD / 2;
 	memory_ready <= memory_request and not memory_error;
 
-	with control_register_select select control_register_read_data <=
-		x"AABBCCDD" when FPU_REG_FPCR,
-		x"89ABCDEF" when FPU_REG_FPSR,
-		x"11223344" when FPU_REG_FPIAR;
+	control_read_mux : process(all)
+	begin
+		case control_register_select is
+			when FPU_REG_FPCR =>
+				if alternate_control_values = '1' then
+					control_register_read_data <= x"DEADBEEF";
+				else
+					control_register_read_data <= x"AABBCCDD";
+				end if;
+			when FPU_REG_FPSR =>
+				if alternate_control_values = '1' then
+					control_register_read_data <= x"01234567";
+				else
+					control_register_read_data <= x"89ABCDEF";
+				end if;
+			when FPU_REG_FPIAR =>
+				if alternate_control_values = '1' then
+					control_register_read_data <= x"76543210";
+				else
+					control_register_read_data <= x"11223344";
+				end if;
+		end case;
+	end process;
 
 	read_memory : process(memory_address)
 	begin
@@ -99,6 +123,9 @@ begin
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
+			resume_context => resume_context,
+			saved_context_in => saved_context_in,
+			saved_context_out => saved_context_out,
 			memory_read_data => memory_read_data,
 			memory_request => memory_request,
 			memory_write => memory_write,
@@ -246,6 +273,32 @@ begin
 		wait_done;
 		assert control_count = 1 and control_values(0) = x"11112222"
 			report "control transfer retry mismatch" severity failure;
+
+		clear_observations;
+		external_to_control <= '0';
+		register_mask <= "100";
+		alternate_control_values <= '0';
+		start_transfer;
+		wait until bus_count = 1;
+		wait until falling_edge(clk);
+		memory_error <= '1';
+		wait until bus_error_exception = '1';
+		saved_context_in <= saved_context_out;
+		nReset <= '0';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		nReset <= '1';
+		memory_error <= '0';
+		alternate_control_values <= '1';
+		clear_observations;
+		resume_context <= '1';
+		start_transfer;
+		resume_context <= '0';
+		wait_done;
+		assert bus_count = 1 and bus_addresses(0) = x"00001002" and
+			bus_words(0) = x"CCDD"
+			report "restored control transfer did not resume with saved data"
+			severity failure;
 
 		report "PASS: MC68882 control-register transfer sequencing"
 			severity note;

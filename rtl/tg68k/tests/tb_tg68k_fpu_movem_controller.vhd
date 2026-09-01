@@ -38,6 +38,11 @@ architecture test of tb_tg68k_fpu_movem_controller is
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal retry : std_logic := '0';
+	signal resume_context : std_logic := '0';
+	signal saved_context_in : std_logic_vector(197 downto 0) :=
+		(others => '0');
+	signal saved_context_out : std_logic_vector(197 downto 0);
+	signal alternate_fp_read : std_logic := '0';
 	signal memory_read_data : std_logic_vector(15 downto 0);
 	signal memory_request : std_logic;
 	signal memory_write : std_logic;
@@ -58,8 +63,9 @@ architecture test of tb_tg68k_fpu_movem_controller is
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 	memory_ready <= memory_request and not memory_error;
-	fp_register_read_data <= fp_registers(to_integer(unsigned(
-		fp_register_select)));
+	fp_register_read_data <= x"DEAD0123456789ABCDEF" when
+		alternate_fp_read = '1' and fp_register_select = "110" else
+		fp_registers(to_integer(unsigned(fp_register_select)));
 
 	read_memory : process(memory_address)
 	begin
@@ -102,6 +108,9 @@ begin
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
+			resume_context => resume_context,
+			saved_context_in => saved_context_in,
+			saved_context_out => saved_context_out,
 			memory_read_data => memory_read_data,
 			memory_request => memory_request,
 			memory_write => memory_write,
@@ -273,6 +282,34 @@ begin
 		assert bus_count = 6 and write_count = 1 and
 			write_selects(0) = "111"
 			report "FMOVEM retry mismatch" severity failure;
+
+		clear_observations;
+		memory_to_register <= '0';
+		static_register_list <= x"02";
+		effective_address <= x"00007000";
+		start_transfer;
+		wait until bus_count = 2;
+		wait until falling_edge(clk);
+		memory_error <= '1';
+		wait until bus_error_exception = '1';
+		saved_context_in <= saved_context_out;
+		nReset <= '0';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		nReset <= '1';
+		memory_error <= '0';
+		alternate_fp_read <= '1';
+		clear_observations;
+		resume_context <= '1';
+		start_transfer;
+		resume_context <= '0';
+		wait_done;
+		assert bus_count = 4 and bus_addresses(0) = x"00007004" and
+			bus_addresses(3) = x"0000700A" and
+			bus_words(0) = x"AABB" and bus_words(1) = x"CCDD" and
+			bus_words(2) = x"EEFF" and bus_words(3) = x"0011"
+			report "restored FMOVEM did not resume with saved register data"
+			severity failure;
 
 		report "PASS: MC68882 FP data-register FMOVEM sequencing"
 			severity note;

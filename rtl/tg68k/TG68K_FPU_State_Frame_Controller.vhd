@@ -21,9 +21,11 @@ entity TG68K_FPU_State_Frame_Controller is
 		start : in std_logic;
 		family : in fpu_instruction_family_t;
 		initialized : in std_logic;
+		suspended : in std_logic;
 		exception_pending : in std_logic;
 		command_condition : in std_logic_vector(31 downto 0);
 		exceptional_operand : in fpu_extended_t;
+		busy_context : in fpu_busy_context_t;
 		effective_address : in std_logic_vector(31 downto 0);
 		function_code : in std_logic_vector(2 downto 0);
 
@@ -40,13 +42,15 @@ entity TG68K_FPU_State_Frame_Controller is
 		memory_function_code : out std_logic_vector(2 downto 0);
 
 		frame_byte_count : out natural range 0 to
-			FPU_STATE_FRAME_IDLE_BYTES_68882;
+			FPU_STATE_FRAME_BUSY_BYTES_68882;
 		save_complete : out std_logic;
 		restore_null : out std_logic;
 		restore_idle : out std_logic;
+		restore_busy : out std_logic;
 		restore_exception_pending : out std_logic;
 		restore_command_condition : out std_logic_vector(31 downto 0);
 		restore_exceptional_operand : out fpu_extended_t;
+		restore_busy_context : out fpu_busy_context_t;
 		format_error_exception : out std_logic;
 		busy : out std_logic;
 		done : out std_logic;
@@ -58,6 +62,11 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	constant NULL_WORD_COUNT : natural := FPU_STATE_FRAME_NULL_BYTES / 2;
 	constant IDLE_WORD_COUNT : natural :=
 		FPU_STATE_FRAME_IDLE_BYTES_68882 / 2;
+	constant BUSY_WORD_COUNT : natural :=
+		FPU_STATE_FRAME_BUSY_BYTES_68882 / 2;
+	constant BUSY_CONTEXT_WORD_COUNT : natural := BUSY_WORD_COUNT - 2;
+	type busy_context_word_array_t is array (
+		0 to BUSY_CONTEXT_WORD_COUNT - 1) of std_logic_vector(15 downto 0);
 	type controller_state_t is (IDLE, SAVE_TRANSFER, RESTORE_TRANSFER,
 		BUS_ERROR_WAIT, COMPLETE);
 	signal state : controller_state_t := IDLE;
@@ -69,11 +78,13 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	signal pending_latched : std_logic := '0';
 	signal command_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal exceptional_latched : fpu_extended_t := (others => '0');
-	signal transfer_index : natural range 0 to IDLE_WORD_COUNT - 1 := 0;
+	signal busy_context_words : busy_context_word_array_t :=
+		(others => (others => '0'));
+	signal transfer_index : natural range 0 to BUSY_WORD_COUNT - 1 := 0;
 	signal word_count_latched : natural range NULL_WORD_COUNT to
-		IDLE_WORD_COUNT := NULL_WORD_COUNT;
+		BUSY_WORD_COUNT := NULL_WORD_COUNT;
 	signal frame_bytes_latched : natural range 0 to
-		FPU_STATE_FRAME_IDLE_BYTES_68882 := 0;
+		FPU_STATE_FRAME_BUSY_BYTES_68882 := 0;
 	signal format_high_latched : std_logic_vector(15 downto 0) :=
 		(others => '0');
 	signal restore_command_latched : std_logic_vector(31 downto 0) :=
@@ -82,6 +93,9 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	signal restore_pending_latched : std_logic := '0';
 	signal restore_null_latched : std_logic := '0';
 	signal restore_idle_latched : std_logic := '0';
+	signal restore_busy_latched : std_logic := '0';
+	signal restore_busy_context_words : busy_context_word_array_t :=
+		(others => (others => '0'));
 	signal format_error_latched : std_logic := '0';
 
 	function save_frame_word(
@@ -89,14 +103,22 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		word_count : natural;
 		pending_value : std_logic;
 		command_value : std_logic_vector(31 downto 0);
-		exceptional_value : fpu_extended_t)
+		exceptional_value : fpu_extended_t;
+		busy_context_value : busy_context_word_array_t)
 		return std_logic_vector is
 	begin
+		if word_count = BUSY_WORD_COUNT and frame_word_index >= 2 then
+			return busy_context_value(frame_word_index - 2);
+		end if;
 		case frame_word_index is
 			when 0 =>
 				if word_count = NULL_WORD_COUNT then
-					return x"00" & std_logic_vector(to_unsigned(
-						FPU_STATE_FRAME_IDLE_SIZE_68882, 8));
+					return x"0000";
+				end if;
+				if word_count = BUSY_WORD_COUNT then
+					return FPU_STATE_FRAME_VERSION_68882 &
+						std_logic_vector(to_unsigned(
+						FPU_STATE_FRAME_BUSY_SIZE_68882, 8));
 				end if;
 				return FPU_STATE_FRAME_VERSION_68882 &
 					std_logic_vector(to_unsigned(
@@ -132,13 +154,22 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		return longword_index * 2 + (sequence_index mod 2);
 	end function;
 begin
+	restore_context_output : for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1
+	generate
+		restore_busy_context(restore_busy_context'high - index * 16 downto
+			restore_busy_context'high - index * 16 - 15) <=
+			restore_busy_context_words(index);
+	end generate;
+
 	outputs : process(state, family_latched, address_latched,
 		function_code_latched, pending_latched, command_latched,
-		exceptional_latched, transfer_index, word_count_latched,
+		exceptional_latched, busy_context_words, transfer_index,
+		word_count_latched,
 		frame_bytes_latched, restore_command_latched,
 		restore_exceptional_latched, restore_pending_latched,
-		restore_null_latched, restore_idle_latched, format_error_latched)
-		variable frame_word_index : natural range 0 to IDLE_WORD_COUNT - 1;
+		restore_null_latched, restore_idle_latched, restore_busy_latched,
+		format_error_latched)
+		variable frame_word_index : natural range 0 to BUSY_WORD_COUNT - 1;
 	begin
 		frame_word_index := transfer_index;
 		if state = SAVE_TRANSFER then
@@ -152,7 +183,7 @@ begin
 			to_unsigned(frame_word_index * 2, 32));
 		memory_write_data <= save_frame_word(frame_word_index,
 			word_count_latched, pending_latched, command_latched,
-			exceptional_latched);
+			exceptional_latched, busy_context_words);
 		memory_nuds <= '0';
 		memory_nlds <= '0';
 		memory_function_code <= function_code_latched;
@@ -160,6 +191,7 @@ begin
 		save_complete <= '0';
 		restore_null <= '0';
 		restore_idle <= '0';
+		restore_busy <= '0';
 		restore_exception_pending <= restore_pending_latched;
 		restore_command_condition <= restore_command_latched;
 		restore_exceptional_operand <= restore_exceptional_latched;
@@ -189,6 +221,7 @@ begin
 					else
 						restore_null <= restore_null_latched;
 						restore_idle <= restore_idle_latched;
+						restore_busy <= restore_busy_latched;
 					end if;
 				end if;
 			when others => null;
@@ -208,6 +241,7 @@ begin
 				pending_latched <= '0';
 				command_latched <= (others => '0');
 				exceptional_latched <= (others => '0');
+				busy_context_words <= (others => (others => '0'));
 				transfer_index <= 0;
 				word_count_latched <= NULL_WORD_COUNT;
 				frame_bytes_latched <= 0;
@@ -217,6 +251,8 @@ begin
 				restore_pending_latched <= '0';
 				restore_null_latched <= '0';
 				restore_idle_latched <= '0';
+				restore_busy_latched <= '0';
+				restore_busy_context_words <= (others => (others => '0'));
 				format_error_latched <= '0';
 			else
 				case state is
@@ -228,15 +264,26 @@ begin
 							pending_latched <= exception_pending;
 							command_latched <= command_condition;
 							exceptional_latched <= exceptional_operand;
+							for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1 loop
+								busy_context_words(index) <= busy_context(
+									busy_context'high - index * 16 downto
+									busy_context'high - index * 16 - 15);
+								restore_busy_context_words(index) <= (others => '0');
+							end loop;
 							transfer_index <= 0;
 							restore_command_latched <= (others => '0');
 							restore_exceptional_latched <= (others => '0');
 							restore_pending_latched <= '0';
 							restore_null_latched <= '0';
 							restore_idle_latched <= '0';
+							restore_busy_latched <= '0';
 							format_error_latched <= '0';
 							if family = FPU_FAMILY_SAVE then
-								if initialized = '1' then
+								if suspended = '1' then
+									word_count_latched <= BUSY_WORD_COUNT;
+									frame_bytes_latched <=
+										FPU_STATE_FRAME_BUSY_BYTES_68882;
+								elsif initialized = '1' then
 									word_count_latched <= IDLE_WORD_COUNT;
 									frame_bytes_latched <=
 										FPU_STATE_FRAME_IDLE_BYTES_68882;
@@ -271,6 +318,11 @@ begin
 							resume_state <= RESTORE_TRANSFER;
 							state <= BUS_ERROR_WAIT;
 						elsif memory_ready = '1' then
+							if word_count_latched = BUSY_WORD_COUNT and
+									transfer_index >= 2 then
+								restore_busy_context_words(transfer_index - 2) <=
+									memory_read_data;
+							end if;
 							case transfer_index is
 								when 0 => format_high_latched <= memory_read_data;
 								when 2 =>
@@ -315,6 +367,16 @@ begin
 									word_count_latched <= IDLE_WORD_COUNT;
 									frame_bytes_latched <=
 										FPU_STATE_FRAME_IDLE_BYTES_68882;
+									transfer_index <= transfer_index + 1;
+								elsif format_value(31 downto 24) =
+										FPU_STATE_FRAME_VERSION_68882 and
+										format_value(23 downto 16) =
+										std_logic_vector(to_unsigned(
+										FPU_STATE_FRAME_BUSY_SIZE_68882, 8)) then
+									restore_busy_latched <= '1';
+									word_count_latched <= BUSY_WORD_COUNT;
+									frame_bytes_latched <=
+										FPU_STATE_FRAME_BUSY_BYTES_68882;
 									transfer_index <= transfer_index + 1;
 								else
 									format_error_latched <= '1';

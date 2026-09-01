@@ -37,6 +37,9 @@ entity TG68K_FPU_Unary_Controller is
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
 		retry : in std_logic;
+		resume_context : in std_logic;
+		saved_context_in : in std_logic_vector(98 downto 0);
+		saved_context_out : out std_logic_vector(98 downto 0);
 		memory_read_data : in std_logic_vector(15 downto 0);
 		memory_request : out std_logic;
 		memory_write : out std_logic;
@@ -112,6 +115,17 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 		return updated;
 	end function;
 
+	function restored_transfer_index(
+		value : std_logic_vector(2 downto 0)) return natural is
+		variable decoded : natural;
+	begin
+		decoded := to_integer(unsigned(value));
+		if decoded <= 5 then
+			return decoded;
+		end if;
+		return 0;
+	end function;
+
 	signal state : controller_state_t := IDLE;
 	signal negate_latched : std_logic := '0';
 	signal test_latched : std_logic := '0';
@@ -138,6 +152,8 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 	signal extracted_status : std_logic_vector(7 downto 0);
 begin
 	exceptional_operand <= operand_latched;
+	saved_context_out <= external_buffer &
+		std_logic_vector(to_unsigned(transfer_index, 3));
 	operand_class <= fpu_classify(operand_latched);
 
 	unpack : entity work.TG68K_FPU_Convert
@@ -280,7 +296,12 @@ begin
 							conversion_status_latched <= (others => '0');
 							write_result_latched <= '0';
 							transfer_index <= 0;
-							if external_source = '0' then
+							if resume_context = '1' then
+								external_buffer <= saved_context_in(98 downto 3);
+								transfer_index <= restored_transfer_index(
+									saved_context_in(2 downto 0));
+								state <= LOAD_MEMORY;
+							elsif external_source = '0' then
 								operand_latched <= fp_register_data;
 								state <= EXECUTE;
 							elsif external_data_register = '1' then

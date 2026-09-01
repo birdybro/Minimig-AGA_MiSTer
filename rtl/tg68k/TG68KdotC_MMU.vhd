@@ -74,6 +74,17 @@ architecture rtl of TG68KdotC_MMU is
 	signal bridge_cache_inhibit : std_logic := '0';
 	signal bridge_fault_write : std_logic;
 	signal bridge_fault_instruction : std_logic;
+	signal direct_fpu_fault : std_logic;
+	signal kernel_fault_address : std_logic_vector(31 downto 0);
+	signal kernel_fault_fc : std_logic_vector(2 downto 0);
+	signal kernel_fault_write : std_logic;
+	signal kernel_fault_instruction : std_logic;
+	signal kernel_fault_fpu : std_logic;
+	signal kernel_fault_size : std_logic_vector(1 downto 0);
+	signal kernel_fault_data_output : std_logic_vector(31 downto 0);
+	signal kernel_fault_bus_data : std_logic_vector(15 downto 0);
+	signal kernel_fault_nuds : std_logic;
+	signal kernel_fault_nlds : std_logic;
 
 	signal kernel_clkena : std_logic;
 	signal kernel_berr : std_logic;
@@ -181,6 +192,32 @@ begin
 	direct_translation_bypass <= not MMU_enable or not tc(MMU_TC_ENABLE_BIT);
 	bridge_fault_write <= '1' when bridge_busstate = "11" else '0';
 	bridge_fault_instruction <= '1' when bridge_busstate = "00" else '0';
+	direct_fpu_fault <= '1' when berr = '1' and fpu_memory_request = '1' and
+		(MMU_enable = '0' or
+		 (direct_translation_bypass = '1' and bridge_state = BRIDGE_IDLE)) else '0';
+	kernel_fault_address <= fpu_memory_address when direct_fpu_fault = '1' else
+		bridge_logical_address;
+	kernel_fault_fc <= fpu_memory_fc when direct_fpu_fault = '1' else bridge_fc;
+	kernel_fault_write <= fpu_memory_write when direct_fpu_fault = '1' else
+		bridge_fault_write;
+	kernel_fault_instruction <= '0' when direct_fpu_fault = '1' else
+		bridge_fault_instruction;
+	kernel_fault_fpu <= '1' when direct_fpu_fault = '1' or
+		(bridge_owner_fpu = '1' and kernel_mmu_fault = '1') else '0';
+	kernel_fault_bus_data <= fpu_memory_write_data when direct_fpu_fault = '1' else
+		bridge_data;
+	kernel_fault_nuds <= fpu_memory_nuds when direct_fpu_fault = '1' else
+		bridge_nuds;
+	kernel_fault_nlds <= fpu_memory_nlds when direct_fpu_fault = '1' else
+		bridge_nlds;
+	kernel_fault_size <= "01" when kernel_fault_nuds /= kernel_fault_nlds else
+		"10";
+	-- Byte and word operands are right-justified in the 68030 data-output buffer.
+	kernel_fault_data_output <= x"000000" & kernel_fault_bus_data(15 downto 8)
+		when kernel_fault_nuds = '0' and kernel_fault_nlds = '1' else
+		x"000000" & kernel_fault_bus_data(7 downto 0)
+		when kernel_fault_nuds = '1' and kernel_fault_nlds = '0' else
+		x"0000" & kernel_fault_bus_data;
 	translation_logical_request <= fpu_memory_request when
 		fpu_memory_request = '1' else operand_request when operand_request = '1' else
 		'1' when kernel_busstate /= "01" and mmu_instruction_start = '0' else '0';
@@ -327,6 +364,7 @@ begin
 				FC <= fpu_memory_fc;
 				fpu_memory_ready <= clkena_in;
 				fpu_memory_error <= berr;
+				kernel_mmu_fault <= berr;
 			else
 				busstate <= kernel_busstate;
 				longword <= kernel_longword;
@@ -369,6 +407,7 @@ begin
 				FC <= fpu_memory_fc;
 				fpu_memory_ready <= clkena_in;
 				fpu_memory_error <= berr;
+				kernel_mmu_fault <= berr;
 			elsif operand_request = '1' then
 				addr_out <= operand_address;
 				data_write <= operand_write_data;
@@ -415,6 +454,7 @@ begin
 				logical_bus_access <= '1';
 				fpu_memory_ready <= clkena_in;
 				fpu_memory_error <= berr;
+				kernel_mmu_fault <= berr;
 			elsif bridge_owner_operand = '1' then
 				operand_ready <= clkena_in;
 				operand_error <= berr;
@@ -426,6 +466,7 @@ begin
 			kernel_clkena <= '1';
 			if bridge_owner_fpu = '1' then
 				fpu_memory_error <= '1';
+				kernel_mmu_fault <= '1';
 			elsif bridge_owner_operand = '1' then
 				operand_error <= '1';
 			else
@@ -475,10 +516,13 @@ begin
 			MMU_bus_error_exception => mmu_bus_error_exception,
 			MMU_configuration_exception => mmu_configuration_exception,
 			MMU_access_fault => kernel_mmu_fault,
-			MMU_fault_address => bridge_logical_address,
-			MMU_fault_function_code => bridge_fc,
-			MMU_fault_write => bridge_fault_write,
-			MMU_fault_instruction => bridge_fault_instruction,
+			MMU_fault_address => kernel_fault_address,
+			MMU_fault_function_code => kernel_fault_fc,
+			MMU_fault_write => kernel_fault_write,
+			MMU_fault_instruction => kernel_fault_instruction,
+			MMU_fault_external_cycle => kernel_fault_fpu,
+			MMU_fault_size => kernel_fault_size,
+			MMU_fault_data_output => kernel_fault_data_output,
 			MMU_address_register_write => mmu_address_register_write,
 			MMU_address_register_select => mmu_address_register_select,
 			MMU_address_register_data => mmu_address_register_data,

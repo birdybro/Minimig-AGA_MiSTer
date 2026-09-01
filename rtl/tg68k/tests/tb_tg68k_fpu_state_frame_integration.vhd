@@ -194,13 +194,13 @@ begin
 						memory(16#0183#) = x"06C4"
 						report "FSAVE predecrement address update mismatch"
 						severity failure;
-					assert memory(16#0300#) = x"0038" and
+					assert memory(16#0300#) = x"0000" and
 						memory(16#0301#) = x"0000" and
 						memory(16#0362#) = x"1F38" and
 						memory(16#0363#) = x"0000" and
 						memory(16#037E#) = x"7C0E" and
 						memory(16#037F#) = x"FFFF" and
-						memory(16#0400#) = x"0038" and
+						memory(16#0400#) = x"0000" and
 						memory(16#0401#) = x"0000"
 						report "TG68K FSAVE/FRESTORE frame contents mismatch"
 						severity failure;

@@ -82,9 +82,16 @@ package TG68K_FPU_Pack is
 	constant FPU_STATE_FRAME_VERSION_68882 : std_logic_vector(7 downto 0) :=
 		x"1F";
 	constant FPU_STATE_FRAME_IDLE_SIZE_68882 : natural := 16#38#;
+	constant FPU_STATE_FRAME_BUSY_SIZE_68882 : natural := 16#D4#;
 	constant FPU_STATE_FRAME_NULL_BYTES : natural := 4;
 	constant FPU_STATE_FRAME_IDLE_BYTES_68882 : natural :=
 		FPU_STATE_FRAME_IDLE_SIZE_68882 + 4;
+	constant FPU_STATE_FRAME_BUSY_BYTES_68882 : natural :=
+		FPU_STATE_FRAME_BUSY_SIZE_68882 + 4;
+	-- Motorola defines the busy payload as opaque, but requires byte-exact
+	-- preservation between FSAVE and FRESTORE.
+	subtype fpu_busy_context_t is std_logic_vector(
+		FPU_STATE_FRAME_BUSY_SIZE_68882 * 8 - 1 downto 0);
 	constant FPU_STATE_FRAME_BIU_IDLE : std_logic_vector(31 downto 0) :=
 		x"7C0EFFFF";
 	constant FPU_STATE_FRAME_BIU_EXCEPTION : std_logic_vector(31 downto 0) :=

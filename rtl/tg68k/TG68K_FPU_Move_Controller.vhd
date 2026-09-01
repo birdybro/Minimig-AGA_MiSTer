@@ -38,6 +38,9 @@ entity TG68K_FPU_Move_Controller is
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
 		retry : in std_logic;
+		resume_context : in std_logic;
+		saved_context_in : in std_logic_vector(187 downto 0);
+		saved_context_out : out std_logic_vector(187 downto 0);
 		memory_read_data : in std_logic_vector(15 downto 0);
 		memory_request : out std_logic;
 		memory_write : out std_logic;
@@ -184,8 +187,21 @@ architecture rtl of TG68K_FPU_Move_Controller is
 	signal packed_output_status : std_logic_vector(7 downto 0);
 	signal packed_output_done : std_logic;
 	signal packed_output_start : std_logic;
+
+	function restored_transfer_index(
+		value : std_logic_vector(2 downto 0)) return natural is
+		variable decoded : natural;
+	begin
+		decoded := to_integer(unsigned(value));
+		if decoded <= 5 then
+			return decoded;
+		end if;
+		return 0;
+	end function;
 begin
 	exceptional_operand <= source_latched;
+	saved_context_out <= external_buffer & source_latched & status_latched &
+		std_logic_vector(to_unsigned(transfer_index, 3)) & fault_write_latched;
 	packed_output_start <= '1' when state = START_PACKED_OUTPUT else '0';
 	with precision_latched select precision_format <=
 		FPU_FORMAT_SINGLE when FPU_PRECISION_SINGLE,
@@ -347,7 +363,19 @@ begin
 							status_latched <= (others => '0');
 							transfer_index <= 0;
 							fault_write_latched <= '0';
-							if direction = FPU_MOVE_REGISTER_TO_REGISTER then
+							if resume_context = '1' then
+								external_buffer <= saved_context_in(187 downto 92);
+								source_latched <= saved_context_in(91 downto 12);
+								status_latched <= saved_context_in(11 downto 4);
+								transfer_index <= restored_transfer_index(
+									saved_context_in(3 downto 1));
+								fault_write_latched <= saved_context_in(0);
+								if saved_context_in(0) = '1' then
+									state <= STORE_MEMORY;
+								else
+									state <= LOAD_MEMORY;
+								end if;
+							elsif direction = FPU_MOVE_REGISTER_TO_REGISTER then
 								source_latched <= fp_register_data;
 								state <= REGISTER_ROUND;
 							elsif direction = FPU_MOVE_EXTERNAL_TO_REGISTER then

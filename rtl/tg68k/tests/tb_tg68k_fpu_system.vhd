@@ -1,5 +1,6 @@
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -8,9 +9,10 @@ end entity;
 
 architecture test of tb_tg68k_fpu_system is
 	constant CLK_PERIOD : time := 10 ns;
-	type address_trace_t is array (0 to 31) of std_logic_vector(31 downto 0);
-	type word_trace_t is array (0 to 31) of std_logic_vector(15 downto 0);
-	type fc_trace_t is array (0 to 31) of std_logic_vector(2 downto 0);
+	type address_trace_t is array (0 to 255) of std_logic_vector(31 downto 0);
+	type word_trace_t is array (0 to 255) of std_logic_vector(15 downto 0);
+	type fc_trace_t is array (0 to 255) of std_logic_vector(2 downto 0);
+	type busy_frame_t is array (0 to 107) of std_logic_vector(15 downto 0);
 
 	signal clk : std_logic := '0';
 	signal nReset : std_logic := '0';
@@ -65,11 +67,12 @@ architecture test of tb_tg68k_fpu_system is
 	signal fpsr : std_logic_vector(31 downto 0);
 	signal fpiar : std_logic_vector(31 downto 0);
 	signal monitor_clear : std_logic := '0';
-	signal trace_count : natural range 0 to 32 := 0;
+	signal trace_count : natural range 0 to 256 := 0;
 	signal trace_address : address_trace_t := (others => (others => '0'));
 	signal trace_data : word_trace_t := (others => (others => '0'));
 	signal trace_fc : fc_trace_t := (others => (others => '0'));
-	signal trace_write : std_logic_vector(0 to 31) := (others => '0');
+	signal trace_write : std_logic_vector(0 to 255) := (others => '0');
+	signal busy_frame : busy_frame_t := (others => (others => '0'));
 	signal integer_write_count : natural range 0 to 2 := 0;
 	signal observed_integer_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
@@ -84,8 +87,13 @@ begin
 	clk <= not clk after CLK_PERIOD / 2;
 	memory_ready <= memory_request and not memory_error;
 
-	read_memory : process(memory_address)
+	read_memory : process(memory_address, busy_frame)
 	begin
+		if unsigned(memory_address) >= to_unsigned(16#0000F000#, 32) and
+				unsigned(memory_address) < to_unsigned(16#0000F0D8#, 32) then
+			memory_read_data <= busy_frame(to_integer(unsigned(
+				memory_address(7 downto 1))));
+		else
 		case memory_address is
 			when x"00001000" => memory_read_data <= x"C004";
 			when x"00001002" => memory_read_data <= x"0000";
@@ -162,6 +170,7 @@ begin
 			when x"0000E202" => memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
+		end if;
 	end process;
 
 	dut : entity work.TG68K_FPU_System
@@ -236,6 +245,14 @@ begin
 					trace_fc(trace_count) <= memory_function_code;
 					trace_write(trace_count) <= memory_write;
 					trace_count <= trace_count + 1;
+					if memory_write = '1' and
+							unsigned(memory_address) >=
+							to_unsigned(16#0000F000#, 32) and
+							unsigned(memory_address) <
+							to_unsigned(16#0000F0D8#, 32) then
+						busy_frame(to_integer(unsigned(
+							memory_address(7 downto 1)))) <= memory_write_data;
+					end if;
 				end if;
 				if integer_register_write = '1' then
 					integer_write_count <= integer_write_count + 1;
@@ -1763,7 +1780,7 @@ begin
 		assert trace_count = 2 and trace_write(0) = '1' and
 			trace_address(0) = x"0000D000" and
 			trace_address(1) = x"0000D002" and
-			trace_data(0) = x"0038" and trace_data(1) = x"0000" and
+			trace_data(0) = x"0000" and trace_data(1) = x"0000" and
 			address_write_count = 0
 			report "integrated null FSAVE mismatch" severity failure;
 
@@ -1829,6 +1846,90 @@ begin
 			report "invalid FRESTORE format handling mismatch" severity failure;
 		wait until rising_edge(clk);
 		wait for 1 ns;
+
+		integer_register_data <= x"00000005";
+		start_instruction(x"F200", x"4000", '1');
+		wait_done;
+		assert fp_registers(0) = x"4001A000000000000000"
+			report "busy-frame source setup mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00011000";
+		function_code <= "101";
+		start_instruction(x"F210", x"6800", '1');
+		while trace_count < 2 loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		wait until falling_edge(clk);
+		memory_error <= '1';
+		wait until bus_error_exception = '1';
+		wait for 1 ns;
+		assert instruction_busy = '1' and instruction_done = '0' and
+			trace_address(0) = x"00011000" and
+			trace_address(1) = x"00011002" and
+			trace_data(0) = x"4001" and trace_data(1) = x"0000"
+			report "busy-frame source transfer did not suspend at word two"
+			severity failure;
+		wait until falling_edge(clk);
+		memory_error <= '0';
+
+		clear_observations;
+		effective_address <= x"0000F000";
+		start_instruction(x"F310", x"0000", '1');
+		wait_done;
+		assert trace_count = 108 and trace_write(0) = '1' and
+			trace_data(0) = x"1FD4" and trace_data(1) = x"0000" and
+			trace_address(0) = x"0000F000" and
+			trace_address(1) = x"0000F002" and
+			trace_address(2) = x"0000F0D4" and
+			trace_address(3) = x"0000F0D6" and
+			trace_address(106) = x"0000F004" and
+			trace_address(107) = x"0000F006" and
+			busy_frame(0) = x"1FD4"
+			report "integrated busy FSAVE format or bus order mismatch"
+			severity failure;
+
+		integer_register_data <= x"00000009";
+		start_instruction(x"F200", x"4000", '1');
+		wait_done;
+		assert fp_registers(0) = x"40029000000000000000"
+			report "busy-frame handler register modification mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"0000F000";
+		start_instruction(x"F350", x"0000", '1');
+		wait_done;
+		assert trace_count = 108 and trace_write(0) = '0' and
+			trace_address(0) = x"0000F000" and
+			trace_address(107) = x"0000F0D6"
+			report "integrated busy FRESTORE bus order mismatch"
+			severity failure;
+
+		clear_observations;
+		instruction_address <= x"00000404";
+		effective_address <= x"00011000";
+		start_instruction(x"F210", x"6800", '1');
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		assert instruction_busy = '0' and instruction_done = '0' and
+			trace_count = 0
+			report "busy continuation accepted a matching opcode at another PC"
+			severity failure;
+
+		instruction_address <= x"00000400";
+		effective_address <= x"00011000";
+		start_instruction(x"F210", x"6800", '1');
+		wait_done;
+		assert trace_count = 4 and trace_write(0) = '1' and
+			trace_address(0) = x"00011004" and
+			trace_address(3) = x"0001100A" and
+			trace_data(0) = x"A000" and trace_data(1) = x"0000" and
+			trace_data(2) = x"0000" and trace_data(3) = x"0000" and
+			fp_registers(0) = x"40029000000000000000"
+			report "busy FRESTORE did not resume the saved transfer context"
+			severity failure;
 
 		assert bus_error_exception = '0' and floating_point_exception = '0' and
 			floating_point_exception_class = FPU_EXCEPTION_NONE

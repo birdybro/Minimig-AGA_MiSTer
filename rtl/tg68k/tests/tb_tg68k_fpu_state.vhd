@@ -14,6 +14,7 @@ architecture test of tb_tg68k_fpu_state is
 	signal nreset : std_logic := '0';
 	signal null_restore : std_logic := '0';
 	signal idle_restore : std_logic := '0';
+	signal busy_restore : std_logic := '0';
 	signal restore_exception_pending : std_logic := '0';
 	signal instruction_complete : std_logic := '0';
 	signal save_complete : std_logic := '0';
@@ -56,6 +57,7 @@ begin
 			nReset => nreset,
 			null_restore => null_restore,
 			idle_restore => idle_restore,
+			busy_restore => busy_restore,
 			restore_exception_pending => restore_exception_pending,
 			instruction_complete => instruction_complete,
 			save_complete => save_complete,
@@ -290,6 +292,21 @@ begin
 		assert initialized = '1' and exception_pending = '1' and
 			pending_exception_class = FPU_EXCEPTION_SNAN
 			report "idle restore did not reestablish pending exception state"
+			severity failure;
+
+		wait until falling_edge(clk);
+		null_restore <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		null_restore <= '0';
+		restore_exception_pending <= '1';
+		busy_restore <= '1';
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		busy_restore <= '0';
+		restore_exception_pending <= '0';
+		assert initialized = '1' and exception_pending = '1'
+			report "busy restore did not reestablish execution state"
 			severity failure;
 
 		report "PASS: MC68882 architectural register state" severity note;

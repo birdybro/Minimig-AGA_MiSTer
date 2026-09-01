@@ -20,6 +20,7 @@ entity TG68K_FPU is
 		nReset : in std_logic;
 		null_restore : in std_logic;
 		idle_restore : in std_logic;
+		busy_restore : in std_logic;
 		restore_exception_pending : in std_logic;
 		instruction_complete : in std_logic;
 		save_complete : in std_logic;
@@ -110,7 +111,7 @@ begin
 				initialized <= '0';
 				exception_pending <= '0';
 			else
-				if idle_restore = '1' then
+				if idle_restore = '1' or busy_restore = '1' then
 					initialized <= '1';
 					exception_pending <= restore_exception_pending;
 				else
