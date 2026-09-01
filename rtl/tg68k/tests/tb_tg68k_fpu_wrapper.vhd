@@ -309,8 +309,15 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#088B#) := x"6580";
 		result(16#088C#) := x"0000";
 		result(16#088D#) := x"0B70";
-		result(16#088E#) := x"4E72";
-		result(16#088F#) := x"2700";
+		result(16#088E#) := x"7401";
+		result(16#088F#) := x"F202";
+		result(16#0890#) := x"418A";
+		result(16#0891#) := x"F239";
+		result(16#0892#) := x"6580";
+		result(16#0893#) := x"0000";
+		result(16#0894#) := x"0B74";
+		result(16#0895#) := x"4E72";
+		result(16#0896#) := x"2700";
 		return result;
 	end function;
 
@@ -346,6 +353,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal constant_result_write_count : natural range 0 to 2 := 0;
 	signal exponential_result_write_count : natural range 0 to 8 := 0;
 	signal logarithm_result_write_count : natural range 0 to 8 := 0;
+	signal arc_tangent_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -505,8 +513,12 @@ begin
 					logarithm_result_write_count <=
 						logarithm_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B74" or addr_out = x"00000B76" then
+					arc_tangent_result_write_count <=
+						arc_tangent_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"0000111C" then
+			if busstate = "00" and addr_out = x"0000112A" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -517,7 +529,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 4400 loop
+		for cycle in 0 to 5000 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
@@ -535,7 +547,8 @@ begin
 				single_result_write_count = 4 and
 				constant_result_write_count = 2 and
 				exponential_result_write_count = 8 and
-				logarithm_result_write_count = 8 and post_fpu_fetch = '1';
+				logarithm_result_write_count = 8 and
+				arc_tangent_result_write_count = 2 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -694,7 +707,13 @@ begin
 				to_hstring(memory(16#05B8#)) &
 				to_hstring(memory(16#05B9#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
+		assert arc_tangent_result_write_count = 2 and
+			memory(16#05BA#) = x"3F49" and memory(16#05BB#) = x"0FDB"
+			report "TG68K FATAN instruction stream mismatch: " &
+				to_hstring(memory(16#05BA#)) &
+				to_hstring(memory(16#05BB#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;

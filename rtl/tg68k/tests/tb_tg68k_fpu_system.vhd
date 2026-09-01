@@ -1236,6 +1236,32 @@ begin
 			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02"
 			report "memory single FLOG10 system result mismatch" severity failure;
 
+		integer_register_data <= x"00000001";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		start_instruction(x"F200", x"0E0A", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(4) = x"3FFEC90FDAA22168C235" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "register FATAN system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009004";
+		function_code <= "101";
+		start_instruction(x"F210", x"460A", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009004" and
+			trace_address(1) = x"00009006" and trace_fc(1) = "101" and
+			fp_registers(4) = x"3FFDED63382B0DDA7B45" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "memory single FATAN system result mismatch" severity failure;
+
 		start_instruction(x"F200", x"0E02", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
 			report "FSINH command was not explicitly reported as unimplemented"

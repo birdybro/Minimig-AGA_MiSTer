@@ -346,6 +346,7 @@ begin
 		decoded_operation = FPU_OP_LOGN or
 		decoded_operation = FPU_OP_LOG10 or
 		decoded_operation = FPU_OP_LOG2 or
+		decoded_operation = FPU_OP_ATAN or
 		decoded_operation = FPU_OP_ETOXM1 or
 		decoded_operation = FPU_OP_ETOX or
 		decoded_operation = FPU_OP_TWOTOX or

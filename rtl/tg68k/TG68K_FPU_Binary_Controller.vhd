@@ -61,7 +61,7 @@ end entity;
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
-		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, COMMIT,
+		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT, COMMIT,
 		BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
@@ -130,6 +130,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal logarithm_latched : std_logic := '0';
 	signal logarithm_add_one_latched : std_logic := '0';
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
+	signal arc_tangent_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -181,6 +182,10 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal logarithm_done : std_logic;
 	signal logarithm_round_input : fpu_round_input_t;
 	signal logarithm_base_status : std_logic_vector(7 downto 0);
+	signal arc_tangent_start : std_logic;
+	signal arc_tangent_done : std_logic;
+	signal arc_tangent_round_input : fpu_round_input_t;
+	signal arc_tangent_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -198,6 +203,7 @@ begin
 		remainder_round_input when remainder_latched = '1' else
 		exponential_round_input when exponential_latched = '1' else
 		logarithm_round_input when logarithm_latched = '1' else
+		arc_tangent_round_input when arc_tangent_latched = '1' else
 		integer_round_input when integer_latched = '1' else
 		scale_round_input when scale_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
@@ -207,6 +213,7 @@ begin
 		remainder_base_status when remainder_latched = '1' else
 		exponential_base_status when exponential_latched = '1' else
 		logarithm_base_status when logarithm_latched = '1' else
+		arc_tangent_base_status when arc_tangent_latched = '1' else
 		integer_base_status when integer_latched = '1' else
 		scale_base_status when scale_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
@@ -399,6 +406,29 @@ begin
 			base_exception_status => logarithm_base_status
 		);
 
+	arc_tangent_start <= '1' when state = EXECUTE and
+		arc_tangent_latched = '1' else '0';
+
+	arc_tangent : entity work.TG68K_FPU_Arc_Tangent
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => arc_tangent_start,
+			source => source_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			busy => open,
+			done => arc_tangent_done,
+			round_input => arc_tangent_round_input,
+			base_exception_status => arc_tangent_base_status
+		);
+
 	integral_value : entity work.TG68K_FPU_Integer
 		generic map(
 			INCLUDE_ROUNDING_STAGE => false
@@ -534,6 +564,7 @@ begin
 				logarithm_latched <= '0';
 				logarithm_add_one_latched <= '0';
 				logarithm_base_latched <= FPU_LOG_BASE_E;
+				arc_tangent_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -657,6 +688,11 @@ begin
 							else
 								logarithm_base_latched <= FPU_LOG_BASE_E;
 							end if;
+							if operation = FPU_OP_ATAN then
+								arc_tangent_latched <= '1';
+							else
+								arc_tangent_latched <= '0';
+							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
 							function_code_latched <= function_code;
@@ -724,6 +760,8 @@ begin
 							state <= WAIT_EXPONENTIAL;
 						elsif logarithm_latched = '1' then
 							state <= WAIT_LOGARITHM;
+						elsif arc_tangent_latched = '1' then
+							state <= WAIT_ARC_TANGENT;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -766,6 +804,14 @@ begin
 
 					when WAIT_LOGARITHM =>
 						if logarithm_done = '1' then
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_ARC_TANGENT =>
+						if arc_tangent_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;
