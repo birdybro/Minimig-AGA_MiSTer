@@ -84,6 +84,10 @@ package TG68K_FPU_Pack is
 	constant FPU_FPSR_ZERO_BIT : natural := 30;
 	constant FPU_FPSR_INFINITY_BIT : natural := 29;
 	constant FPU_FPSR_NAN_BIT : natural := 28;
+	constant FPU_FPCC_NEGATIVE_BIT : natural := 3;
+	constant FPU_FPCC_ZERO_BIT : natural := 2;
+	constant FPU_FPCC_INFINITY_BIT : natural := 1;
+	constant FPU_FPCC_NAN_BIT : natural := 0;
 	constant FPU_FPSR_QUOTIENT_SIGN_BIT : natural := 23;
 	constant FPU_FPSR_BSUN_BIT : natural := 15;
 	constant FPU_FPSR_SNAN_BIT : natural := 14;
