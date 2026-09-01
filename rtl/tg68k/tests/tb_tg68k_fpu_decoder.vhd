@@ -124,6 +124,8 @@ begin
 			FPU_FAMILY_MOVE_TO_CONTROL);
 		check_decode(x"F208", x"A400", '1', '1', '1', '1',
 			FPU_FAMILY_MOVE_FROM_CONTROL);
+		check_decode(x"F200", x"9001", '1', '0', '1', '1',
+			FPU_FAMILY_MOVE_TO_CONTROL);
 
 		check_decode(x"F218", x"D0A5", '1', '1', '1', '1',
 			FPU_FAMILY_MOVEM_TO_FP);
@@ -131,12 +133,20 @@ begin
 			report "FMOVEM register list mismatch" severity failure;
 		check_decode(x"F218", x"C000", '1', '0', '1', '1',
 			FPU_FAMILY_MOVEM_TO_FP);
+		check_decode(x"F218", x"C810", '1', '0', '1', '1',
+			FPU_FAMILY_MOVEM_TO_FP);
 		check_decode(x"F220", x"E000", '1', '1', '1', '1',
 			FPU_FAMILY_MOVEM_FROM_FP);
 		check_decode(x"F238", x"E000", '1', '0', '1', '1',
 			FPU_FAMILY_MOVEM_FROM_FP);
 		check_decode(x"F238", x"F000", '1', '1', '1', '1',
 			FPU_FAMILY_MOVEM_FROM_FP);
+		check_decode(x"F218", x"D830", '1', '1', '1', '1',
+			FPU_FAMILY_MOVEM_TO_FP);
+		check_decode(x"F218", x"D831", '1', '0', '1', '1',
+			FPU_FAMILY_MOVEM_TO_FP);
+		check_decode(x"F218", x"D100", '1', '0', '1', '1',
+			FPU_FAMILY_MOVEM_TO_FP);
 
 		check_decode(x"F240", x"001F", '1', '1', '1', '1',
 			FPU_FAMILY_SCC);

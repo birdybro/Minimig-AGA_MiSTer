@@ -8,9 +8,9 @@ end entity;
 
 architecture test of tb_tg68k_fpu_system is
 	constant CLK_PERIOD : time := 10 ns;
-	type address_trace_t is array (0 to 7) of std_logic_vector(31 downto 0);
-	type word_trace_t is array (0 to 7) of std_logic_vector(15 downto 0);
-	type fc_trace_t is array (0 to 7) of std_logic_vector(2 downto 0);
+	type address_trace_t is array (0 to 31) of std_logic_vector(31 downto 0);
+	type word_trace_t is array (0 to 31) of std_logic_vector(15 downto 0);
+	type fc_trace_t is array (0 to 31) of std_logic_vector(2 downto 0);
 
 	signal clk : std_logic := '0';
 	signal nReset : std_logic := '0';
@@ -61,11 +61,11 @@ architecture test of tb_tg68k_fpu_system is
 	signal fpsr : std_logic_vector(31 downto 0);
 	signal fpiar : std_logic_vector(31 downto 0);
 	signal monitor_clear : std_logic := '0';
-	signal trace_count : natural range 0 to 8 := 0;
+	signal trace_count : natural range 0 to 32 := 0;
 	signal trace_address : address_trace_t := (others => (others => '0'));
 	signal trace_data : word_trace_t := (others => (others => '0'));
 	signal trace_fc : fc_trace_t := (others => (others => '0'));
-	signal trace_write : std_logic_vector(0 to 7) := (others => '0');
+	signal trace_write : std_logic_vector(0 to 31) := (others => '0');
 	signal integer_write_count : natural range 0 to 2 := 0;
 	signal observed_integer_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
@@ -91,6 +91,21 @@ begin
 			when x"00002006" => memory_read_data <= x"1234";
 			when x"00002008" => memory_read_data <= x"1122";
 			when x"0000200A" => memory_read_data <= x"3344";
+			when x"00004000" => memory_read_data <= x"4000";
+			when x"00004002" => memory_read_data <= x"DEAD";
+			when x"00004004" => memory_read_data <= x"8000";
+			when x"00004006" | x"00004008" => memory_read_data <= x"0000";
+			when x"0000400A" => memory_read_data <= x"0007";
+			when x"0000400C" => memory_read_data <= x"4001";
+			when x"0000400E" => memory_read_data <= x"BEEF";
+			when x"00004010" => memory_read_data <= x"9000";
+			when x"00004012" | x"00004014" | x"00004016" =>
+				memory_read_data <= x"0000";
+			when x"00006000" => memory_read_data <= x"4005";
+			when x"00006002" => memory_read_data <= x"CAFE";
+			when x"00006004" => memory_read_data <= x"A000";
+			when x"00006006" | x"00006008" => memory_read_data <= x"0000";
+			when x"0000600A" => memory_read_data <= x"0005";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -211,7 +226,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 40
+				assert cycle_count < 200
 					report "FPU system command did not complete" severity failure;
 			end loop;
 			wait until rising_edge(clk);
@@ -330,6 +345,79 @@ begin
 			observed_integer_data = x"C0200000" and
 			observed_integer_format = FPU_FORMAT_SINGLE
 			report "register-to-data-register FMOVE system result mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00004000";
+		function_code <= "101";
+		start_instruction(x"F219", x"D081", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 12 and trace_write(0) = '0' and
+			trace_address(0) = x"00004000" and
+			trace_address(11) = x"00004016" and
+			fp_registers(7) = x"40008000000000000007" and
+			fp_registers(0) = x"40019000000000000000" and
+			fpsr = x"80000000" and fpiar = x"00000000" and
+			address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"00004018"
+			report "static memory-to-FP-register FMOVEM mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00005000";
+		start_instruction(x"F212", x"F081", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 12 and trace_write(0) = '1' and
+			trace_address(0) = x"00005000" and
+			trace_address(11) = x"00005016" and
+			trace_data(0) = x"4000" and trace_data(1) = x"0000" and
+			trace_data(2) = x"8000" and trace_data(5) = x"0007" and
+			trace_data(6) = x"4001" and trace_data(7) = x"0000" and
+			trace_data(8) = x"9000"
+			report "static FP-register-to-memory FMOVEM mismatch"
+			severity failure;
+
+		clear_observations;
+		integer_register_data <= x"12340004";
+		effective_address <= x"00006000";
+		start_instruction(x"F21B", x"D830", '1');
+		assert integer_register_select = "011"
+			report "dynamic FMOVEM selected the wrong mask register"
+			severity failure;
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 6 and fp_registers(5) =
+			x"4005A000000000000005" and address_write_count = 1 and
+			observed_address_select = "011" and
+			observed_address_data = x"0000600C"
+			report "dynamic memory-to-FP-register FMOVEM mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00007000";
+		start_instruction(x"F224", x"E081", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 12 and trace_address(0) = x"00006FF4" and
+			trace_address(5) = x"00006FFE" and
+			trace_address(6) = x"00006FE8" and
+			trace_address(11) = x"00006FF2" and
+			trace_data(0) = x"4000" and trace_data(6) = x"4001" and
+			address_write_count = 1 and observed_address_select = "100" and
+			observed_address_data = x"00006FE8"
+			report "static predecrement FP-register FMOVEM mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00008000";
+		start_instruction(x"F21D", x"D000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and address_write_count = 0
+			report "empty FMOVEM list changed memory or its address register"
 			severity failure;
 
 		clear_observations;

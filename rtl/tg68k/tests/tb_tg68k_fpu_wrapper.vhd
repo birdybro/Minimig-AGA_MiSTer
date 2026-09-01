@@ -77,14 +77,61 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#00B7#) := x"23CB";
 		result(16#00B8#) := x"0000";
 		result(16#00B9#) := x"0214";
-		result(16#00BA#) := x"4E72";
-		result(16#00BB#) := x"2700";
+		result(16#00BA#) := x"287C";
+		result(16#00BB#) := x"0000";
+		result(16#00BC#) := x"0700";
+		result(16#00BD#) := x"F21C";
+		result(16#00BE#) := x"D081";
+		result(16#00BF#) := x"2A7C";
+		result(16#00C0#) := x"0000";
+		result(16#00C1#) := x"0800";
+		result(16#00C2#) := x"F215";
+		result(16#00C3#) := x"F081";
+		result(16#00C4#) := x"F224";
+		result(16#00C5#) := x"E081";
+		result(16#00C6#) := x"23CC";
+		result(16#00C7#) := x"0000";
+		result(16#00C8#) := x"0218";
+		result(16#00C9#) := x"23CD";
+		result(16#00CA#) := x"0000";
+		result(16#00CB#) := x"021C";
+		result(16#00CC#) := x"7A04";
+		result(16#00CD#) := x"2C7C";
+		result(16#00CE#) := x"0000";
+		result(16#00CF#) := x"0900";
+		result(16#00D0#) := x"F21E";
+		result(16#00D1#) := x"D850";
+		result(16#00D2#) := x"2C7C";
+		result(16#00D3#) := x"0000";
+		result(16#00D4#) := x"0A00";
+		result(16#00D5#) := x"F216";
+		result(16#00D6#) := x"F850";
+		result(16#00D7#) := x"4E72";
+		result(16#00D8#) := x"2700";
 		result(16#0280#) := x"0000";
 		result(16#0281#) := x"0030";
 		result(16#0282#) := x"A5A5";
 		result(16#0283#) := x"1234";
 		result(16#0284#) := x"1122";
 		result(16#0285#) := x"3344";
+		result(16#0380#) := x"4000";
+		result(16#0381#) := x"DEAD";
+		result(16#0382#) := x"8000";
+		result(16#0383#) := x"0000";
+		result(16#0384#) := x"0000";
+		result(16#0385#) := x"0007";
+		result(16#0386#) := x"4001";
+		result(16#0387#) := x"BEEF";
+		result(16#0388#) := x"9000";
+		result(16#0389#) := x"0000";
+		result(16#038A#) := x"0000";
+		result(16#038B#) := x"0000";
+		result(16#0480#) := x"4005";
+		result(16#0481#) := x"CAFE";
+		result(16#0482#) := x"A000";
+		result(16#0483#) := x"0000";
+		result(16#0484#) := x"0000";
+		result(16#0485#) := x"0005";
 		return result;
 	end function;
 
@@ -107,6 +154,8 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal control_result_write_count : natural range 0 to 6 := 0;
 	signal control_memory_transfer_count : natural range 0 to 12 := 0;
 	signal control_address_write_count : natural range 0 to 4 := 0;
+	signal movem_transfer_count : natural range 0 to 48 := 0;
+	signal movem_address_write_count : natural range 0 to 4 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -178,6 +227,17 @@ begin
 				control_memory_transfer_count <=
 					control_memory_transfer_count + 1;
 			end if;
+			if busstate /= "01" and
+					((unsigned(addr_out) >= unsigned'(x"00000700") and
+					unsigned(addr_out) <= unsigned'(x"00000717")) or
+					(unsigned(addr_out) >= unsigned'(x"00000800") and
+					unsigned(addr_out) <= unsigned'(x"00000817")) or
+					(unsigned(addr_out) >= unsigned'(x"00000900") and
+					unsigned(addr_out) <= unsigned'(x"0000090B")) or
+					(unsigned(addr_out) >= unsigned'(x"00000A00") and
+					unsigned(addr_out) <= unsigned'(x"00000A0B"))) then
+				movem_transfer_count <= movem_transfer_count + 1;
+			end if;
 			if busstate = "11" and not is_x(addr_out) then
 				word_address := to_integer(unsigned(addr_out(13 downto 1)));
 				if nUDS = '0' then
@@ -201,8 +261,12 @@ begin
 					control_address_write_count <=
 						control_address_write_count + 1;
 				end if;
+				if addr_out = x"00000218" or addr_out = x"0000021A" or
+						addr_out = x"0000021C" or addr_out = x"0000021E" then
+					movem_address_write_count <= movem_address_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00000174" then
+			if busstate = "00" and addr_out = x"000001AE" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -213,12 +277,14 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 900 loop
+		for cycle in 0 to 1500 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
 				control_result_write_count = 2 and
-				control_address_write_count = 4 and post_fpu_fetch = '1';
+				control_address_write_count = 4 and
+				movem_transfer_count = 48 and
+				movem_address_write_count = 4 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -254,7 +320,28 @@ begin
 			memory(16#010A#) = x"0000" and memory(16#010B#) = x"060C"
 			report "TG68K FPU control-register EA update mismatch"
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves and control state"
+		assert movem_transfer_count = 48 and
+			memory(16#0400#) = x"4000" and memory(16#0401#) = x"0000" and
+			memory(16#0402#) = x"8000" and memory(16#0405#) = x"0007" and
+			memory(16#0406#) = x"4001" and memory(16#0407#) = x"0000" and
+			memory(16#0408#) = x"9000" and
+			memory(16#0500#) = x"4005" and memory(16#0501#) = x"0000" and
+			memory(16#0502#) = x"A000" and memory(16#0505#) = x"0005"
+			report "TG68K FPU data-register FMOVEM image mismatch: cycles=" &
+				integer'image(movem_transfer_count) & " static=" &
+				to_hstring(memory(16#0400#)) & to_hstring(memory(16#0401#)) &
+				to_hstring(memory(16#0402#)) & to_hstring(memory(16#0405#)) &
+				to_hstring(memory(16#0406#)) & to_hstring(memory(16#0407#)) &
+				to_hstring(memory(16#0408#)) & " dynamic=" &
+				to_hstring(memory(16#0500#)) & to_hstring(memory(16#0501#)) &
+				to_hstring(memory(16#0502#)) & to_hstring(memory(16#0505#))
+			severity failure;
+		assert movem_address_write_count = 4 and
+			memory(16#010C#) = x"0000" and memory(16#010D#) = x"0700" and
+			memory(16#010E#) = x"0000" and memory(16#010F#) = x"0800"
+			report "TG68K FPU data-register FMOVEM EA update mismatch"
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;

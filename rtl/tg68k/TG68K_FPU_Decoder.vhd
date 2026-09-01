@@ -201,6 +201,8 @@ begin
 							else
 								valid := register_select /= "000" and memory_ea(ea);
 							end if;
+							valid := valid and command_word(9 downto 0) =
+								"0000000000";
 						when "101" =>
 							decoded_family := FPU_FAMILY_MOVE_FROM_CONTROL;
 							needs_ea := true;
@@ -212,11 +214,17 @@ begin
 								valid := register_select /= "000" and
 									memory_alterable_ea(ea);
 							end if;
+							valid := valid and command_word(9 downto 0) =
+								"0000000000";
 						when "110" =>
 							decoded_family := FPU_FAMILY_MOVEM_TO_FP;
 							needs_ea := true;
 							valid := command_word(12) = '1' and
-								(opcode(5 downto 3) = "011" or control_ea(ea));
+								(opcode(5 downto 3) = "011" or control_ea(ea)) and
+								command_word(10 downto 8) = "000" and
+								(command_word(11) = '0' or
+								(command_word(7) = '0' and
+								command_word(3 downto 0) = "0000"));
 						when "111" =>
 							decoded_family := FPU_FAMILY_MOVEM_FROM_FP;
 							needs_ea := true;
@@ -225,6 +233,10 @@ begin
 							else
 								valid := control_alterable_ea(ea);
 							end if;
+							valid := valid and command_word(10 downto 8) = "000" and
+								(command_word(11) = '0' or
+								(command_word(7) = '0' and
+								command_word(3 downto 0) = "0000"));
 						when others =>
 							null;
 					end case;

@@ -104,6 +104,18 @@ architecture rtl of TG68K_FPU_System is
 		return count * 4;
 	end function;
 
+	function movem_byte_count(
+		register_mask : std_logic_vector(7 downto 0)) return natural is
+		variable count : natural := 0;
+	begin
+		for index in register_mask'range loop
+			if register_mask(index) = '1' then
+				count := count + 1;
+			end if;
+		end loop;
+		return count * 12;
+	end function;
+
 	signal decoded_match : std_logic;
 	signal decoded_valid : std_logic;
 	signal decoded_fline : std_logic;
@@ -115,15 +127,19 @@ architecture rtl of TG68K_FPU_System is
 	signal decoded_source_register : std_logic_vector(2 downto 0);
 	signal decoded_destination_register : std_logic_vector(2 downto 0);
 	signal decoded_control_registers : std_logic_vector(2 downto 0);
+	signal decoded_register_list : std_logic_vector(7 downto 0);
 
 	signal move_implemented : std_logic;
 	signal control_implemented : std_logic;
+	signal movem_implemented : std_logic;
 	signal operation_implemented : std_logic;
 	signal operation_busy : std_logic;
 	signal operation_done : std_logic;
-	signal operation_byte_count : natural range 1 to 12;
+	signal operation_byte_count : natural range 0 to 96;
 	signal operation_effective_address : std_logic_vector(31 downto 0);
+	signal address_update_base : std_logic_vector(31 downto 0);
 	signal subsystem_reset : std_logic;
+	signal integer_operand_select : std_logic_vector(2 downto 0);
 
 	signal move_start : std_logic;
 	signal move_direction : fpu_move_direction_t;
@@ -176,12 +192,28 @@ architecture rtl of TG68K_FPU_System is
 	signal control_address_write : std_logic;
 	signal control_address_write_data : std_logic_vector(31 downto 0);
 
+	signal movem_start : std_logic;
+	signal movem_memory_to_register : std_logic;
+	signal movem_predecrement : std_logic;
+	signal movem_busy : std_logic;
+	signal movem_done : std_logic;
+	signal movem_bus_error : std_logic;
+	signal movem_register_mask : std_logic_vector(7 downto 0);
+	signal movem_fp_select : std_logic_vector(2 downto 0);
+	signal movem_fp_write : std_logic;
+	signal movem_fp_write_data : fpu_extended_t;
+	signal movem_memory_request : std_logic;
+	signal movem_memory_write : std_logic;
+	signal movem_memory_address : std_logic_vector(31 downto 0);
+	signal movem_memory_write_data : std_logic_vector(15 downto 0);
+	signal movem_memory_fc : std_logic_vector(2 downto 0);
+
 	signal effective_address_latched : std_logic_vector(31 downto 0) :=
 		(others => '0');
 	signal address_mode_latched : std_logic_vector(2 downto 0) := "000";
 	signal address_select_latched : std_logic_vector(2 downto 0) := "000";
 	signal integer_select_latched : std_logic_vector(2 downto 0) := "000";
-	signal transfer_bytes_latched : natural range 1 to 12 := 1;
+	signal transfer_bytes_latched : natural range 0 to 96 := 1;
 	signal rounding_precision : fpu_rounding_precision_t;
 	signal rounding_mode : fpu_rounding_mode_t;
 	signal fpcr : std_logic_vector(31 downto 0);
@@ -191,6 +223,8 @@ architecture rtl of TG68K_FPU_System is
 	signal state_control_select : fpu_control_register_t;
 	signal state_control_write : std_logic;
 	signal state_control_write_data : std_logic_vector(31 downto 0);
+	signal state_fp_write : std_logic;
+	signal state_fp_write_data : fpu_extended_t;
 begin
 	decoder : entity work.TG68K_FPU_Decoder
 		port map(
@@ -207,7 +241,7 @@ begin
 			source_register => decoded_source_register,
 			destination_register => decoded_destination_register,
 			control_register_list => decoded_control_registers,
-			register_list => open,
+			register_list => decoded_register_list,
 			conditional_predicate => open
 		);
 
@@ -224,15 +258,24 @@ begin
 	control_implemented <= '1' when
 		decoded_family = FPU_FAMILY_MOVE_TO_CONTROL or
 		decoded_family = FPU_FAMILY_MOVE_FROM_CONTROL else '0';
-	operation_implemented <= move_implemented or control_implemented;
-	operation_busy <= move_busy or control_busy;
-	operation_done <= move_done or control_done;
+	movem_implemented <= '1' when
+		decoded_family = FPU_FAMILY_MOVEM_TO_FP or
+		decoded_family = FPU_FAMILY_MOVEM_FROM_FP else '0';
+	operation_implemented <= move_implemented or control_implemented or
+		movem_implemented;
+	operation_busy <= move_busy or control_busy or movem_busy;
+	operation_done <= move_done or control_done or movem_done;
 	subsystem_reset <= nReset and not null_restore;
 
 	move_start <= instruction_start and decoded_match and decoded_valid and
 		move_implemented and not operation_busy;
 	control_start <= instruction_start and decoded_match and decoded_valid and
 		control_implemented and not operation_busy;
+	movem_start <= instruction_start and decoded_match and decoded_valid and
+		movem_implemented and not operation_busy;
+	movem_memory_to_register <= '1' when
+		decoded_family = FPU_FAMILY_MOVEM_TO_FP else '0';
+	movem_predecrement <= '1' when opcode(5 downto 3) = "100" else '0';
 	control_external_to_control <= '1' when
 		decoded_family = FPU_FAMILY_MOVE_TO_CONTROL else '0';
 	control_data_register_direct <= '1' when
@@ -248,17 +291,29 @@ begin
 	move_source_select <= decoded_destination_register when
 		decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL else
 		decoded_source_register;
-	fp_data_select <= move_source_select when move_start = '1' else
+	fp_data_select <= movem_fp_select when movem_busy = '1' else
+		move_source_select when move_start = '1' else
 		destination_select_latched when move_fp_write = '1' else
 		source_select_latched;
 	fpiar_write <= move_start when fpcr(15 downto 8) /= x"00" else '0';
 
-	operation_byte_count <= control_byte_count(decoded_control_registers) when
+	movem_register_mask <= integer_register_data(7 downto 0) when
+		command_word(11) = '1' else decoded_register_list;
+	operation_byte_count <= movem_byte_count(movem_register_mask) when
+		movem_implemented = '1' else
+		control_byte_count(decoded_control_registers) when
 		control_implemented = '1' else
 		move_byte_count(decoded_format, opcode(2 downto 0));
-	operation_effective_address <= std_logic_vector(unsigned(effective_address) -
+	operation_effective_address <= effective_address when movem_implemented = '1' else
+		std_logic_vector(unsigned(effective_address) -
 		to_unsigned(operation_byte_count, 32)) when
 		opcode(5 downto 3) = "100" else effective_address;
+	address_update_base <= std_logic_vector(unsigned(effective_address) -
+		to_unsigned(operation_byte_count, 32)) when
+		opcode(5 downto 3) = "100" else effective_address;
+	integer_operand_select <= command_word(6 downto 4) when
+		movem_implemented = '1' and command_word(11) = '1' else
+		opcode(2 downto 0);
 
 	instruction_match <= decoded_match;
 	instruction_valid <= decoded_valid;
@@ -269,8 +324,9 @@ begin
 		(control_implemented = '1' and opcode(5 downto 3) = "001" and
 		decoded_control_registers = "001") else decoded_requires_ea;
 	instruction_operand_format <= FPU_FORMAT_LONG_INTEGER when
-		control_implemented = '1' else decoded_format;
-	integer_register_select <= opcode(2 downto 0) when operation_busy = '0' else
+		control_implemented = '1' else FPU_FORMAT_EXTENDED when
+		movem_implemented = '1' else decoded_format;
+	integer_register_select <= integer_operand_select when operation_busy = '0' else
 		integer_select_latched;
 	address_register_select <= opcode(2 downto 0) when operation_busy = '0' else
 		address_select_latched;
@@ -278,20 +334,27 @@ begin
 	instruction_done <= operation_done or unsupported_done;
 	fline_exception <= decoded_fline;
 	unimplemented_exception <= unsupported_exception;
-	bus_error_exception <= move_bus_error or control_bus_error;
+	bus_error_exception <= move_bus_error or control_bus_error or movem_bus_error;
 	fpcr_out <= fpcr;
 
-	memory_request <= control_memory_request when control_busy = '1' else
+	memory_request <= movem_memory_request when movem_busy = '1' else
+		control_memory_request when control_busy = '1' else
 		move_memory_request;
-	memory_write <= control_memory_write when control_busy = '1' else
+	memory_write <= movem_memory_write when movem_busy = '1' else
+		control_memory_write when control_busy = '1' else
 		move_memory_write;
-	memory_address <= control_memory_address when control_busy = '1' else
+	memory_address <= movem_memory_address when movem_busy = '1' else
+		control_memory_address when control_busy = '1' else
 		move_memory_address;
-	memory_write_data <= control_memory_write_data when control_busy = '1' else
+	memory_write_data <= movem_memory_write_data when movem_busy = '1' else
+		control_memory_write_data when control_busy = '1' else
 		move_memory_write_data;
-	memory_nuds <= '0' when control_busy = '1' else move_memory_nuds;
-	memory_nlds <= '0' when control_busy = '1' else move_memory_nlds;
-	memory_function_code <= control_memory_fc when control_busy = '1' else
+	memory_nuds <= '0' when movem_busy = '1' or control_busy = '1' else
+		move_memory_nuds;
+	memory_nlds <= '0' when movem_busy = '1' or control_busy = '1' else
+		move_memory_nlds;
+	memory_function_code <= movem_memory_fc when movem_busy = '1' else
+		control_memory_fc when control_busy = '1' else
 		move_memory_fc;
 
 	integer_register_write <= control_integer_write or move_integer_write;
@@ -301,7 +364,7 @@ begin
 		control_integer_write = '1' else move_integer_write_format;
 	address_register_write <= '1' when control_address_write = '1' or
 		(operation_done = '1' and (address_mode_latched = "011" or
-		address_mode_latched = "100")) else '0';
+		address_mode_latched = "100") and transfer_bytes_latched /= 0) else '0';
 	address_register_write_data <= control_address_write_data when
 		control_address_write = '1' else std_logic_vector(
 		unsigned(effective_address_latched) +
@@ -313,6 +376,9 @@ begin
 	state_control_write <= fpiar_write or control_register_write;
 	state_control_write_data <= instruction_address when fpiar_write = '1' else
 		control_register_write_data;
+	state_fp_write <= move_fp_write or movem_fp_write;
+	state_fp_write_data <= movem_fp_write_data when movem_fp_write = '1' else
+		move_fp_write_data;
 
 	dispatch_state : process(clk)
 	begin
@@ -332,8 +398,8 @@ begin
 				if operation_implemented = '1' then
 					source_select_latched <= move_source_select;
 					destination_select_latched <= decoded_destination_register;
-					integer_select_latched <= opcode(2 downto 0);
-					effective_address_latched <= operation_effective_address;
+					integer_select_latched <= integer_operand_select;
+					effective_address_latched <= address_update_base;
 					address_mode_latched <= opcode(5 downto 3);
 					address_select_latched <= opcode(2 downto 0);
 					transfer_bytes_latched <= operation_byte_count;
@@ -419,14 +485,44 @@ begin
 			bus_error_exception => control_bus_error
 		);
 
+	movem_controller : entity work.TG68K_FPU_Movem_Controller
+		port map(
+			clk => clk,
+			nReset => subsystem_reset,
+			start => movem_start,
+			memory_to_register => movem_memory_to_register,
+			predecrement => movem_predecrement,
+			dynamic_list => command_word(11),
+			static_register_list => decoded_register_list,
+			dynamic_register_data => integer_register_data,
+			effective_address => effective_address,
+			function_code => function_code,
+			fp_register_read_data => fp_data_read,
+			fp_register_select => movem_fp_select,
+			fp_register_write => movem_fp_write,
+			fp_register_write_data => movem_fp_write_data,
+			memory_ready => memory_ready,
+			memory_error => memory_error,
+			retry => retry,
+			memory_read_data => memory_read_data,
+			memory_request => movem_memory_request,
+			memory_write => movem_memory_write,
+			memory_address => movem_memory_address,
+			memory_write_data => movem_memory_write_data,
+			memory_function_code => movem_memory_fc,
+			busy => movem_busy,
+			done => movem_done,
+			bus_error_exception => movem_bus_error
+		);
+
 	state : entity work.TG68K_FPU
 		port map(
 			clk => clk,
 			nReset => nReset,
 			null_restore => null_restore,
 			data_register_select => fp_data_select,
-			data_register_write => move_fp_write,
-			data_register_write_data => move_fp_write_data,
+			data_register_write => state_fp_write,
+			data_register_write_data => state_fp_write_data,
 			data_register_read_data => fp_data_read,
 			control_register_select => state_control_select,
 			control_register_write => state_control_write,
