@@ -61,7 +61,8 @@ end entity;
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
-		WAIT_REMAINDER, WAIT_EXPONENTIAL, COMMIT, BUS_ERROR_WAIT, COMPLETE);
+		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, COMMIT,
+		BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -126,6 +127,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_base_latched : fpu_exponential_base_t :=
 		FPU_EXP_BASE_TWO;
 	signal exponential_minus_one_latched : std_logic := '0';
+	signal logarithm_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -173,6 +175,10 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_done : std_logic;
 	signal exponential_round_input : fpu_round_input_t;
 	signal exponential_base_status : std_logic_vector(7 downto 0);
+	signal logarithm_start : std_logic;
+	signal logarithm_done : std_logic;
+	signal logarithm_round_input : fpu_round_input_t;
+	signal logarithm_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -189,6 +195,7 @@ begin
 		square_root_round_input when square_root_latched = '1' else
 		remainder_round_input when remainder_latched = '1' else
 		exponential_round_input when exponential_latched = '1' else
+		logarithm_round_input when logarithm_latched = '1' else
 		integer_round_input when integer_latched = '1' else
 		scale_round_input when scale_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
@@ -197,6 +204,7 @@ begin
 		square_root_base_status when square_root_latched = '1' else
 		remainder_base_status when remainder_latched = '1' else
 		exponential_base_status when exponential_latched = '1' else
+		logarithm_base_status when logarithm_latched = '1' else
 		integer_base_status when integer_latched = '1' else
 		scale_base_status when scale_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
@@ -364,6 +372,29 @@ begin
 			base_exception_status => exponential_base_status
 		);
 
+	logarithm_start <= '1' when state = EXECUTE and
+		logarithm_latched = '1' else '0';
+
+	logarithm : entity work.TG68K_FPU_Logarithm
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => logarithm_start,
+			source => source_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			busy => open,
+			done => logarithm_done,
+			round_input => logarithm_round_input,
+			base_exception_status => logarithm_base_status
+		);
+
 	integral_value : entity work.TG68K_FPU_Integer
 		generic map(
 			INCLUDE_ROUNDING_STAGE => false
@@ -496,6 +527,7 @@ begin
 				exponential_latched <= '0';
 				exponential_base_latched <= FPU_EXP_BASE_TWO;
 				exponential_minus_one_latched <= '0';
+				logarithm_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -599,6 +631,11 @@ begin
 							else
 								exponential_minus_one_latched <= '0';
 							end if;
+							if operation = FPU_OP_LOGNP1 then
+								logarithm_latched <= '1';
+							else
+								logarithm_latched <= '0';
+							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
 							function_code_latched <= function_code;
@@ -664,6 +701,8 @@ begin
 							state <= WAIT_REMAINDER;
 						elsif exponential_latched = '1' then
 							state <= WAIT_EXPONENTIAL;
+						elsif logarithm_latched = '1' then
+							state <= WAIT_LOGARITHM;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -698,6 +737,14 @@ begin
 
 					when WAIT_EXPONENTIAL =>
 						if exponential_done = '1' then
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_LOGARITHM =>
+						if logarithm_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;

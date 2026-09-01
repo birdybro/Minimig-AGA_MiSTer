@@ -311,6 +311,16 @@ begin
 			report "register FTENTOX controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_LOGNP1;
+		run_register_operation(x"3FFF8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFEB17217F7D1CF79AC" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FLOGNP1 controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_INT;
 		run_register_operation(x"3FFFC000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");
@@ -521,6 +531,25 @@ begin
 		assert fp_write_count = 0 and observed_status = x"04" and
 			observed_cc = "0010"
 			report "enabled DZ destination suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_LOGNP1;
+		exception_enable <= x"20";
+		run_register_operation(x"BFFF8000000000000001",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001"
+			report "enabled FLOGNP1 OPERR suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		exception_enable <= x"04";
+		run_register_operation(x"BFFF8000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and observed_status = x"04" and
+			observed_cc = "1010"
+			report "enabled FLOGNP1 DZ suppression mismatch"
 			severity failure;
 
 		clear_observations;
