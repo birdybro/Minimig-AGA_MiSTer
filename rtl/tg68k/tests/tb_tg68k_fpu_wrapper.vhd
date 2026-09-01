@@ -295,8 +295,15 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#087D#) := x"6580";
 		result(16#087E#) := x"0000";
 		result(16#087F#) := x"0B68";
-		result(16#0880#) := x"4E72";
-		result(16#0881#) := x"2700";
+		result(16#0880#) := x"7404";
+		result(16#0881#) := x"F202";
+		result(16#0882#) := x"4196";
+		result(16#0883#) := x"F239";
+		result(16#0884#) := x"6580";
+		result(16#0885#) := x"0000";
+		result(16#0886#) := x"0B6C";
+		result(16#0887#) := x"4E72";
+		result(16#0888#) := x"2700";
 		return result;
 	end function;
 
@@ -331,7 +338,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal single_result_write_count : natural range 0 to 4 := 0;
 	signal constant_result_write_count : natural range 0 to 2 := 0;
 	signal exponential_result_write_count : natural range 0 to 8 := 0;
-	signal logarithm_result_write_count : natural range 0 to 4 := 0;
+	signal logarithm_result_write_count : natural range 0 to 6 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -485,12 +492,13 @@ begin
 						exponential_result_write_count + 1;
 				end if;
 				if addr_out = x"00000B64" or addr_out = x"00000B66" or
-						addr_out = x"00000B68" or addr_out = x"00000B6A" then
+						addr_out = x"00000B68" or addr_out = x"00000B6A" or
+						addr_out = x"00000B6C" or addr_out = x"00000B6E" then
 					logarithm_result_write_count <=
 						logarithm_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001100" then
+			if busstate = "00" and addr_out = x"0000110E" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -501,7 +509,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 3400 loop
+		for cycle in 0 to 3900 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
@@ -519,7 +527,7 @@ begin
 				single_result_write_count = 4 and
 				constant_result_write_count = 2 and
 				exponential_result_write_count = 8 and
-				logarithm_result_write_count = 4 and post_fpu_fetch = '1';
+				logarithm_result_write_count = 6 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -657,7 +665,7 @@ begin
 				to_hstring(memory(16#05B0#)) &
 				to_hstring(memory(16#05B1#))
 			severity failure;
-		assert logarithm_result_write_count = 4 and
+		assert logarithm_result_write_count = 6 and
 			memory(16#05B2#) = x"3F31" and memory(16#05B3#) = x"7218"
 			report "TG68K FLOGNP1 instruction stream mismatch: " &
 				to_hstring(memory(16#05B2#)) &
@@ -667,6 +675,11 @@ begin
 			report "TG68K FLOGN instruction stream mismatch: " &
 				to_hstring(memory(16#05B4#)) &
 				to_hstring(memory(16#05B5#))
+			severity failure;
+		assert memory(16#05B6#) = x"4000" and memory(16#05B7#) = x"0000"
+			report "TG68K FLOG2 instruction stream mismatch: " &
+				to_hstring(memory(16#05B6#)) &
+				to_hstring(memory(16#05B7#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

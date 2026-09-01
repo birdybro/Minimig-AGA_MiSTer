@@ -24,6 +24,7 @@ entity TG68K_FPU_Logarithm is
 		start : in std_logic;
 		source : in fpu_extended_t;
 		add_one : in std_logic;
+		logarithm_base : in fpu_logarithm_base_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -53,12 +54,15 @@ architecture rtl of TG68K_FPU_Logarithm is
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_INPUT, LOAD_CORDIC_ANGLE, CORDIC, MULTIPLY_LN2,
-			NORMALIZE_RESULT, WRITE_PENDING_RESULT, COMPLETE);
+			SCALE_TO_BASE_TWO, NORMALIZE_RESULT, WRITE_PENDING_RESULT,
+			COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
 	constant LN2_FIXED : unsigned(FRACTION_BITS - 1 downto 0) :=
 		x"B17217F7D1CF79ABC9E3B398";
+	constant LOG2_E_FIXED : unsigned(RESULT_WIDTH - 1 downto 0) :=
+		unsigned'("1" & x"71547652B82FE1777D0FFDA0D23A");
 	signal cordic_angle_rom : cordic_angle_rom_t := (
 		0 => (others => '0'),
 		1 => signed'(x"08C9F53D5681854BB520CC6AB"),
@@ -116,6 +120,7 @@ architecture rtl of TG68K_FPU_Logarithm is
 	end function;
 
 	signal state : logarithm_state_t := IDLE;
+	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
 	signal source_sign_latched : std_logic := '0';
 	signal series_source_significand : unsigned(63 downto 0) :=
 		(others => '0');
@@ -152,6 +157,12 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal ln2_accumulator : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal ln2_index : natural range 0 to 14 := 0;
+	signal base_scale_multiplier : unsigned(RESULT_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal base_scale_accumulator : unsigned(RESULT_WIDTH downto 0) :=
+		(others => '0');
+	signal base_scale_index : natural range 0 to RESULT_WIDTH - 1 := 0;
+	signal scaling_series : std_logic := '0';
 	signal normalization_value : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalization_exponent : signed(16 downto 0) :=
@@ -254,13 +265,27 @@ begin
 
 		procedure begin_log_combine(
 				constant fractional_log : in signed(RESULT_WIDTH - 1 downto 0);
-				constant range_exponent : in signed(16 downto 0)) is
+				constant range_exponent : in signed(16 downto 0);
+				constant base_value : in fpu_logarithm_base_t) is
 			variable exponent_integer : integer range -65536 to 65535;
 			variable exponent_magnitude : natural range 0 to 32767;
+			variable fixed_exponent : signed(RESULT_WIDTH - 1 downto 0);
 		begin
 			exponent_integer := to_integer(range_exponent);
 			log_fraction <= fractional_log;
-			if exponent_integer = 0 then
+			if base_value = FPU_LOG_BASE_TWO then
+				fixed_exponent := shift_left(resize(range_exponent,
+					RESULT_WIDTH), FRACTION_BITS);
+				if fractional_log = 0 then
+					begin_fixed_result(fixed_exponent);
+				else
+					base_scale_multiplier <= shift_left(unsigned(fractional_log), 1);
+					base_scale_accumulator <= (others => '0');
+					base_scale_index <= 0;
+					scaling_series <= '0';
+					state <= SCALE_TO_BASE_TWO;
+				end if;
+			elsif exponent_integer = 0 then
 				begin_fixed_result(fractional_log);
 			else
 				if exponent_integer < 0 then
@@ -278,14 +303,16 @@ begin
 
 		procedure begin_cordic(
 				constant mantissa_value : in unsigned(CORDIC_WIDTH - 1 downto 0);
-				constant exponent_value : in signed(16 downto 0)) is
+				constant exponent_value : in signed(16 downto 0);
+				constant base_value : in fpu_logarithm_base_t) is
 			variable unit_value : unsigned(CORDIC_WIDTH - 1 downto 0);
 		begin
 			unit_value := (others => '0');
 			unit_value(FRACTION_BITS) := '1';
 			input_exponent <= exponent_value;
 			if mantissa_value = unit_value then
-				begin_log_combine(to_signed(0, RESULT_WIDTH), exponent_value);
+				begin_log_combine(to_signed(0, RESULT_WIDTH), exponent_value,
+					base_value);
 			else
 				cordic_x <= signed(mantissa_value + unit_value);
 				cordic_y <= signed(mantissa_value - unit_value);
@@ -297,8 +324,9 @@ begin
 			end if;
 		end procedure;
 
-		procedure complete_small_series(
-				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
+		procedure write_small_series_result(
+				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0);
+				constant result_exponent : in signed(16 downto 0)) is
 			variable final_significand : fpu_significand_grs_t;
 		begin
 			final_significand := (others => '0');
@@ -315,14 +343,29 @@ begin
 			final_significand(0) := '1';
 			pending_sign <= source_sign_latched;
 			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
-				pending_exponent <= series_exponent + 1;
+				pending_exponent <= result_exponent + 1;
 			elsif series_result(SERIES_NORMAL_BIT) = '1' then
-				pending_exponent <= series_exponent;
+				pending_exponent <= result_exponent;
 			else
-				pending_exponent <= series_exponent - 1;
+				pending_exponent <= result_exponent - 1;
 			end if;
 			pending_significand <= final_significand;
 			state <= WRITE_PENDING_RESULT;
+		end procedure;
+
+		procedure complete_small_series(
+				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
+		begin
+			if logarithm_base_latched = FPU_LOG_BASE_TWO then
+				base_scale_multiplier <= shift_left(resize(series_result,
+					RESULT_WIDTH), 1);
+				base_scale_accumulator <= (others => '0');
+				base_scale_index <= 0;
+				scaling_series <= '1';
+				state <= SCALE_TO_BASE_TWO;
+			else
+				write_small_series_result(series_result, series_exponent);
+			end if;
 		end procedure;
 
 		variable source_class : fpu_data_class_t;
@@ -344,6 +387,10 @@ begin
 		variable fractional_log : signed(RESULT_WIDTH - 1 downto 0);
 		variable ln2_sum : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable next_ln2 : unsigned(RESULT_WIDTH - 1 downto 0);
+		variable base_scale_sum : unsigned(RESULT_WIDTH downto 0);
+		variable next_base_scale : unsigned(RESULT_WIDTH downto 0);
+		variable scaled_series : unsigned(SERIES_WIDTH downto 0);
+		variable scaled_series_result : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable combined_log : signed(RESULT_WIDTH - 1 downto 0);
 		variable next_normalization : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable next_normalization_exponent : signed(16 downto 0);
@@ -363,6 +410,7 @@ begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
+				logarithm_base_latched <= FPU_LOG_BASE_E;
 				source_sign_latched <= '0';
 				series_source_significand <= (others => '0');
 				series_exponent <= (others => '0');
@@ -390,6 +438,10 @@ begin
 				ln2_multiplicand <= (others => '0');
 				ln2_accumulator <= (others => '0');
 				ln2_index <= 0;
+				base_scale_multiplier <= (others => '0');
+				base_scale_accumulator <= (others => '0');
+				base_scale_index <= 0;
+				scaling_series <= '0';
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
 				pending_sign <= '0';
@@ -410,6 +462,7 @@ begin
 							source_exponent := fpu_unbiased_exponent(source);
 							selected_nan := source;
 							selected_nan(62) := '1';
+							logarithm_base_latched <= logarithm_base;
 							source_sign_latched <= source(79);
 							series_source_significand <= (others => '0');
 							series_exponent <= (others => '0');
@@ -437,6 +490,10 @@ begin
 							ln2_multiplicand <= (others => '0');
 							ln2_accumulator <= (others => '0');
 							ln2_index <= 0;
+							base_scale_multiplier <= (others => '0');
+							base_scale_accumulator <= (others => '0');
+							base_scale_index <= 0;
+							scaling_series <= '0';
 							normalization_value <= (others => '0');
 							normalization_exponent <= (others => '0');
 							pending_sign <= '0';
@@ -496,7 +553,10 @@ begin
 										intermediate_class <= FPU_CLASS_ZERO;
 										state <= COMPLETE;
 									else
-										base_status(1) <= '1';
+										if logarithm_base = FPU_LOG_BASE_E or
+												source_significand /= x"8000000000000000" then
+											base_status(1) <= '1';
+										end if;
 										if source_exponent = 0 then
 											delta_significand := source_significand -
 												x"8000000000000000";
@@ -521,7 +581,7 @@ begin
 											initial_mantissa := shift_left(resize(
 												source_significand, CORDIC_WIDTH), 33);
 											begin_cordic(initial_mantissa,
-												to_signed(source_exponent, 17));
+												to_signed(source_exponent, 17), logarithm_base);
 										end if;
 									end if;
 								elsif source(79) = '1' and source_exponent >= 0 then
@@ -585,10 +645,10 @@ begin
 											initial_mantissa := shift_right(
 												initial_mantissa, 1);
 											begin_cordic(initial_mantissa,
-												to_signed(source_exponent + 1, 17));
+												to_signed(source_exponent + 1, 17), logarithm_base);
 										else
 											begin_cordic(initial_mantissa,
-												to_signed(source_exponent, 17));
+												to_signed(source_exponent, 17), logarithm_base);
 										end if;
 									else
 										aligned_source := shift_left(resize(
@@ -597,7 +657,7 @@ begin
 										if source(79) = '0' then
 											initial_mantissa := aligned_unit + aligned_source;
 											begin_cordic(initial_mantissa,
-												to_signed(0, 17));
+												to_signed(0, 17), logarithm_base);
 										else
 											initial_mantissa := aligned_unit - aligned_source;
 											input_mantissa <= initial_mantissa;
@@ -746,7 +806,8 @@ begin
 						input_mantissa <= next_input;
 						input_exponent <= next_input_exponent;
 						if next_input(FRACTION_BITS) = '1' then
-							begin_cordic(next_input, next_input_exponent);
+							begin_cordic(next_input, next_input_exponent,
+								logarithm_base_latched);
 						end if;
 
 					when LOAD_CORDIC_ANGLE =>
@@ -780,7 +841,8 @@ begin
 						elsif cordic_iteration = FRACTION_BITS then
 							fractional_log := shift_left(resize(next_z,
 								RESULT_WIDTH), 1);
-							begin_log_combine(fractional_log, input_exponent);
+							begin_log_combine(fractional_log, input_exponent,
+								logarithm_base_latched);
 						else
 							repeat_iteration <= '0';
 							cordic_iteration <= cordic_iteration + 1;
@@ -815,6 +877,39 @@ begin
 							ln2_multiplier <= shift_right(ln2_multiplier, 1);
 							ln2_multiplicand <= shift_left(ln2_multiplicand, 1);
 							ln2_index <= ln2_index + 1;
+						end if;
+
+					when SCALE_TO_BASE_TWO =>
+						base_scale_sum := base_scale_accumulator;
+						if base_scale_multiplier(base_scale_index) = '1' then
+							base_scale_sum := base_scale_sum + resize(
+								LOG2_E_FIXED, RESULT_WIDTH + 1);
+						end if;
+						next_base_scale := shift_right(base_scale_sum, 1);
+						base_scale_accumulator <= next_base_scale;
+						if base_scale_index = RESULT_WIDTH - 1 then
+							if scaling_series = '1' then
+								scaled_series := resize(next_base_scale,
+									SERIES_WIDTH + 1);
+								if scaled_series(SERIES_WIDTH) = '1' then
+									scaled_series_result := scaled_series(
+										SERIES_WIDTH downto 1);
+									scaled_series_result(0) :=
+										scaled_series_result(0) or scaled_series(0);
+									write_small_series_result(scaled_series_result,
+										series_exponent + 1);
+								else
+									write_small_series_result(scaled_series(
+										SERIES_WIDTH - 1 downto 0), series_exponent);
+								end if;
+							else
+								combined_log := shift_left(resize(input_exponent,
+									RESULT_WIDTH), FRACTION_BITS) + signed(
+									next_base_scale(RESULT_WIDTH - 1 downto 0));
+								begin_fixed_result(combined_log);
+							end if;
+						else
+							base_scale_index <= base_scale_index + 1;
 						end if;
 
 					when NORMALIZE_RESULT =>

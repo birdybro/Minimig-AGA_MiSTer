@@ -134,6 +134,7 @@ begin
             start => start,
             source => source,
             add_one => '0',
+            logarithm_base => FPU_LOG_BASE_E,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,

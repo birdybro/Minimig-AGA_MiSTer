@@ -3,78 +3,44 @@
 from decimal import Decimal, localcontext
 from fractions import Fraction
 from functools import lru_cache
-import random
 
 from fpu_exact_reference import (
-    encode_extended,
     extended_bits_value,
     mode_name,
     precision_name,
-    round_binary,
     round_binary_precision,
 )
+from generate_fpu_logn_vectors import source_values
 
 
-SEED = 0x68880606
-
-
-def encode_fraction(value: Fraction) -> int:
-    result, _, _ = round_binary(value, 64, 0)
-    if extended_bits_value(result) != value:
-        raise ValueError("test operand is not exactly representable")
-    return result
-
-
-def source_values() -> list[int]:
-    values = [
-        encode_fraction(value) for value in (
-            Fraction(1, 2), Fraction(-1, 2), Fraction(1, 4),
-            Fraction(-1, 4), Fraction(3, 4), Fraction(-3, 4),
-            Fraction(1), Fraction(3), Fraction(7), Fraction(31),
-            Fraction(1, 1 << 25), Fraction(-1, 1 << 25),
-            Fraction(1, 1 << 26), Fraction(-1, 1 << 26),
-            Fraction(1, 1 << 27), Fraction(-1, 1 << 27),
-            Fraction(1, 1 << 28), Fraction(-1, 1 << 28),
-            Fraction(1, 1 << 31), Fraction(-1, 1 << 31),
-            Fraction(1, 1 << 32), Fraction(-1, 1 << 32),
-            Fraction(1, 1 << 33), Fraction(-1, 1 << 33),
-            Fraction(1, 1 << 67), Fraction(-1, 1 << 67),
-            Fraction(1, 1 << 68), Fraction(-1, 1 << 68),
-            Fraction(-(1 << 64) + 1, 1 << 64),
-        )
-    ]
-    for exponent in (63, 64, 95, 96, 97, 1000, 16383):
-        values.append(encode_extended(0, exponent, 1 << 63))
-
-    rng = random.Random(SEED)
-    while len(values) < 96:
-        sign = rng.randrange(2)
-        exponent = rng.randrange(-220, 8)
-        if sign and exponent >= 0:
-            exponent = -rng.randrange(1, 66)
-        significand = (1 << 63) | rng.getrandbits(63)
-        value = encode_extended(sign, exponent, significand)
-        if extended_bits_value(value) > -1:
-            values.append(value)
-    return values
+def exact_power_of_two_logarithm(value: Fraction) -> int | None:
+    if value.numerator.bit_count() == 1 and value.denominator.bit_count() == 1:
+        return value.numerator.bit_length() - value.denominator.bit_length()
+    return None
 
 
 @lru_cache(maxsize=None)
-def exact_lognp1(source: int) -> Fraction:
+def high_precision_log2(source: int) -> tuple[Fraction, bool]:
     source_value = extended_bits_value(source)
+    exact_integer = exact_power_of_two_logarithm(source_value)
+    if exact_integer is not None:
+        return Fraction(exact_integer), True
     with localcontext() as context:
         context.prec = 450
         source_decimal = Decimal(source_value.numerator) / Decimal(
             source_value.denominator)
-        result_decimal = (Decimal(1) + source_decimal).ln()
-    return Fraction(result_decimal)
+        result_decimal = source_decimal.ln() / Decimal(2).ln()
+    return Fraction(result_decimal), False
 
 
-def reference_lognp1(source: int, precision_bits: int,
-                     mode: int) -> tuple[int, int, int]:
+def reference_log2(source: int, precision_bits: int,
+                   mode: int) -> tuple[int, int, int]:
+    result_value, exact = high_precision_log2(source)
     result, condition_codes, status = round_binary_precision(
-        exact_lognp1(source), precision_bits, mode)
-    return result, condition_codes, status | 0x02
+        result_value, precision_bits, mode)
+    if not exact:
+        status |= 0x02
+    return result, condition_codes, status
 
 
 def make_vectors():
@@ -83,7 +49,7 @@ def make_vectors():
         for precision_index in range(3):
             precision, precision_bits = precision_name(precision_index)
             for mode in range(4):
-                result, condition_codes, status = reference_lognp1(
+                result, condition_codes, status = reference_log2(
                     source, precision_bits, mode)
                 vectors.append((source, precision, mode_name(mode), result,
                                 condition_codes, status))
@@ -97,10 +63,10 @@ use ieee.std_logic_1164.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
-entity tb_tg68k_fpu_lognp1_differential is
+entity tb_tg68k_fpu_log2_differential is
 end entity;
 
-architecture test of tb_tg68k_fpu_lognp1_differential is
+architecture test of tb_tg68k_fpu_log2_differential is
     constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
@@ -138,8 +104,8 @@ begin
             nReset => nReset,
             start => start,
             source => source,
-            add_one => '1',
-            logarithm_base => FPU_LOG_BASE_E,
+            add_one => '0',
+            logarithm_base => FPU_LOG_BASE_TWO,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,
@@ -172,13 +138,13 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 400
-                    report "differential FLOGNP1 timeout" severity failure;
+                assert cycles < 500
+                    report "differential FLOG2 timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
-                report "differential FLOGNP1 vector " & integer'image(index) &
+                report "differential FLOG2 vector " & integer'image(index) &
                     " mismatch: result=" & to_hstring(result) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
@@ -186,7 +152,7 @@ begin
             wait until rising_edge(clk);
             wait for 1 ns;
         end loop;
-        report "PASS: 1152 high-precision FLOGNP1 vectors" severity note;
+        report "PASS: 1152 high-precision FLOG2 vectors" severity note;
         stop;
     end process;
 end architecture;

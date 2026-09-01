@@ -110,6 +110,8 @@ begin
 			when x"00009002" => memory_read_data <= x"0000";
 			when x"00009004" => memory_read_data <= x"3F00";
 			when x"00009006" => memory_read_data <= x"0000";
+			when x"00009008" => memory_read_data <= x"3F00";
+			when x"0000900A" => memory_read_data <= x"0000";
 			when x"0000A000" => memory_read_data <= x"7FFF";
 			when x"0000A002" => memory_read_data <= x"0000";
 			when x"0000A004" => memory_read_data <= x"8000";
@@ -1179,6 +1181,32 @@ begin
 			fp_registers(4) = x"BFFEB17217F7D1CF79AC" and
 			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"02"
 			report "memory single FLOGN system result mismatch" severity failure;
+
+		integer_register_data <= x"00000004";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		start_instruction(x"F200", x"0E16", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(4) = x"40008000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FLOG2 system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009008";
+		function_code <= "101";
+		start_instruction(x"F210", x"4616", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009008" and
+			trace_address(1) = x"0000900A" and trace_fc(1) = "101" and
+			fp_registers(4) = x"BFFF8000000000000000" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"00"
+			report "memory single FLOG2 system result mismatch" severity failure;
 
 		start_instruction(x"F200", x"0E02", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'

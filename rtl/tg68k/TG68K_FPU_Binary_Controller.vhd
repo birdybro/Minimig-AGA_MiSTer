@@ -129,6 +129,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_minus_one_latched : std_logic := '0';
 	signal logarithm_latched : std_logic := '0';
 	signal logarithm_add_one_latched : std_logic := '0';
+	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -386,6 +387,7 @@ begin
 			start => logarithm_start,
 			source => source_latched,
 			add_one => logarithm_add_one_latched,
+			logarithm_base => logarithm_base_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -531,6 +533,7 @@ begin
 				exponential_minus_one_latched <= '0';
 				logarithm_latched <= '0';
 				logarithm_add_one_latched <= '0';
+				logarithm_base_latched <= FPU_LOG_BASE_E;
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -635,7 +638,8 @@ begin
 								exponential_minus_one_latched <= '0';
 							end if;
 							if operation = FPU_OP_LOGNP1 or
-									operation = FPU_OP_LOGN then
+									operation = FPU_OP_LOGN or
+									operation = FPU_OP_LOG2 then
 								logarithm_latched <= '1';
 							else
 								logarithm_latched <= '0';
@@ -644,6 +648,11 @@ begin
 								logarithm_add_one_latched <= '1';
 							else
 								logarithm_add_one_latched <= '0';
+							end if;
+							if operation = FPU_OP_LOG2 then
+								logarithm_base_latched <= FPU_LOG_BASE_TWO;
+							else
+								logarithm_base_latched <= FPU_LOG_BASE_E;
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;

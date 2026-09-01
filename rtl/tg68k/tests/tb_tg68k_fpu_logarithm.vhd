@@ -13,6 +13,7 @@ architecture test of tb_tg68k_fpu_logarithm is
 	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal add_one : std_logic := '1';
+	signal logarithm_base : fpu_logarithm_base_t := FPU_LOG_BASE_E;
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
@@ -28,6 +29,7 @@ begin
 			start => start,
 			source => source,
 			add_one => add_one,
+			logarithm_base => logarithm_base,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
 			result => result,
@@ -103,7 +105,12 @@ begin
 		execute('0', x"40008000000000000000", x"3FFEB17217F7D1CF79AC", x"0", x"02");
 		execute('0', x"3FFE8000000000000000", x"BFFEB17217F7D1CF79AC", x"8", x"02");
 
-		report "PASS: FLOGNP1/FLOGN datapath, domains, special values, and status"
+		logarithm_base <= FPU_LOG_BASE_TWO;
+		execute('0', x"40008000000000000000", x"3FFF8000000000000000", x"0", x"00");
+		execute('0', x"40018000000000000000", x"40008000000000000000", x"0", x"00");
+		execute('0', x"3FFE8000000000000000", x"BFFF8000000000000000", x"8", x"00");
+
+		report "PASS: FLOGNP1/FLOGN/FLOG2 datapath, domains, special values, and status"
 			severity note;
 		stop;
 	end process;

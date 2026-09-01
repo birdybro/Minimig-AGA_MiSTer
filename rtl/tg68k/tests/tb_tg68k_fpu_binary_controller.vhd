@@ -331,6 +331,16 @@ begin
 			report "register FLOGN controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_LOG2;
+		run_register_operation(x"40018000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"40008000000000000000" and
+			status_write_count = 1 and observed_status = x"00" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FLOG2 controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_INT;
 		run_register_operation(x"3FFFC000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");
