@@ -29,7 +29,9 @@ architecture test of tb_tg68k_fpu_system is
 	signal instruction_implemented : std_logic;
 	signal instruction_requires_command_word : std_logic;
 	signal instruction_requires_effective_address : std_logic;
+	signal instruction_operand_format : fpu_operand_format_t;
 	signal integer_register_select : std_logic_vector(2 downto 0);
+	signal address_register_select : std_logic_vector(2 downto 0);
 	signal instruction_busy : std_logic;
 	signal instruction_done : std_logic;
 	signal fline_exception : std_logic;
@@ -50,6 +52,8 @@ architecture test of tb_tg68k_fpu_system is
 	signal integer_register_write : std_logic;
 	signal integer_register_write_data : std_logic_vector(31 downto 0);
 	signal integer_register_write_format : fpu_operand_format_t;
+	signal address_register_write : std_logic;
+	signal address_register_write_data : std_logic_vector(31 downto 0);
 	signal fp_registers : fpu_register_array_t;
 	signal fpcr : std_logic_vector(31 downto 0);
 	signal fpsr : std_logic_vector(31 downto 0);
@@ -64,6 +68,10 @@ architecture test of tb_tg68k_fpu_system is
 	signal observed_integer_data : std_logic_vector(31 downto 0) :=
 		(others => '0');
 	signal observed_integer_format : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
+	signal address_write_count : natural range 0 to 2 := 0;
+	signal observed_address_select : std_logic_vector(2 downto 0) := "000";
+	signal observed_address_data : std_logic_vector(31 downto 0) :=
+		(others => '0');
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 	memory_ready <= memory_request and not memory_error;
@@ -99,7 +107,9 @@ begin
 				instruction_requires_command_word,
 			instruction_requires_effective_address =>
 				instruction_requires_effective_address,
+			instruction_operand_format => instruction_operand_format,
 			integer_register_select => integer_register_select,
+			address_register_select => address_register_select,
 			instruction_busy => instruction_busy,
 			instruction_done => instruction_done,
 			fline_exception => fline_exception,
@@ -120,6 +130,8 @@ begin
 			integer_register_write => integer_register_write,
 			integer_register_write_data => integer_register_write_data,
 			integer_register_write_format => integer_register_write_format,
+			address_register_write => address_register_write,
+			address_register_write_data => address_register_write_data,
 			fp_registers_out => fp_registers,
 			fpcr_out => fpcr,
 			fpsr_out => fpsr,
@@ -132,6 +144,7 @@ begin
 			if monitor_clear = '1' then
 				trace_count <= 0;
 				integer_write_count <= 0;
+				address_write_count <= 0;
 			else
 				if memory_ready = '1' then
 					trace_address(trace_count) <= memory_address;
@@ -144,6 +157,11 @@ begin
 					integer_write_count <= integer_write_count + 1;
 					observed_integer_data <= integer_register_write_data;
 					observed_integer_format <= integer_register_write_format;
+				end if;
+				if address_register_write = '1' then
+					address_write_count <= address_write_count + 1;
+					observed_address_select <= address_register_select;
+					observed_address_data <= address_register_write_data;
 				end if;
 			end if;
 		end if;
@@ -238,6 +256,45 @@ begin
 			trace_data(0) = x"40A0" and trace_data(1) = x"0000" and
 			trace_fc(1) = "101"
 			report "register-to-memory FMOVE system bus sequence mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00000400";
+		start_instruction(x"F219", x"6980", '1');
+		command_word <= x"6000";
+		wait_done;
+		assert trace_count = 6 and trace_address(0) = x"00000400" and
+			trace_address(5) = x"0000040A" and address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"0000040C"
+			report "extended postincrement FMOVE address update mismatch"
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00000500";
+		start_instruction(x"F21F", x"7980", '1');
+		command_word <= x"6000";
+		wait_done;
+		assert trace_count = 1 and trace_address(0) = x"00000500" and
+			trace_data(0) = x"0505" and address_write_count = 1 and
+			observed_address_select = "111" and
+			observed_address_data = x"00000502"
+			report "byte postincrement FMOVE A7 alignment mismatch: cycles=" &
+				integer'image(trace_count) & " data=" &
+				to_hstring(trace_data(0)) & " address=" &
+				to_hstring(observed_address_data)
+			severity failure;
+
+		clear_observations;
+		effective_address <= x"00000400";
+		start_instruction(x"F221", x"4A80", '1');
+		command_word <= x"4000";
+		wait_done;
+		assert trace_count = 6 and trace_address(0) = x"000003F4" and
+			trace_address(5) = x"000003FE" and address_write_count = 1 and
+			observed_address_select = "001" and
+			observed_address_data = x"000003F4"
+			report "extended predecrement FMOVE address update mismatch"
 			severity failure;
 
 		clear_observations;

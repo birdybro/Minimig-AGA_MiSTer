@@ -36,8 +36,23 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#008E#) := x"23C1";
 		result(16#008F#) := x"0000";
 		result(16#0090#) := x"0200";
-		result(16#0091#) := x"4E72";
-		result(16#0092#) := x"2700";
+		result(16#0091#) := x"227C";
+		result(16#0092#) := x"0000";
+		result(16#0093#) := x"0400";
+		result(16#0094#) := x"F219";
+		result(16#0095#) := x"6980";
+		result(16#0096#) := x"F221";
+		result(16#0097#) := x"4A80";
+		result(16#0098#) := x"F200";
+		result(16#0099#) := x"6680";
+		result(16#009A#) := x"23C9";
+		result(16#009B#) := x"0000";
+		result(16#009C#) := x"0204";
+		result(16#009D#) := x"23C0";
+		result(16#009E#) := x"0000";
+		result(16#009F#) := x"0208";
+		result(16#00A0#) := x"4E72";
+		result(16#00A1#) := x"2700";
 		return result;
 	end function;
 
@@ -55,6 +70,8 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal memory : memory_t := initial_memory;
 	signal result_write_count : natural range 0 to 2 := 0;
 	signal fpu_memory_transfer_count : natural range 0 to 4 := 0;
+	signal extended_transfer_count : natural range 0 to 12 := 0;
+	signal extended_result_write_count : natural range 0 to 4 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -114,6 +131,10 @@ begin
 					severity failure;
 				fpu_memory_transfer_count <= fpu_memory_transfer_count + 1;
 			end if;
+			if busstate /= "01" and unsigned(addr_out) >= unsigned'(x"00000400") and
+					unsigned(addr_out) <= unsigned'(x"0000040A") then
+				extended_transfer_count <= extended_transfer_count + 1;
+			end if;
 			if busstate = "11" and not is_x(addr_out) then
 				word_address := to_integer(unsigned(addr_out(13 downto 1)));
 				if nUDS = '0' then
@@ -125,8 +146,12 @@ begin
 				if addr_out = x"00000200" or addr_out = x"00000202" then
 					result_write_count <= result_write_count + 1;
 				end if;
+				if addr_out = x"00000204" or addr_out = x"00000206" or
+						addr_out = x"00000208" or addr_out = x"0000020A" then
+					extended_result_write_count <= extended_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00000122" then
+			if busstate = "00" and addr_out = x"00000140" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -137,9 +162,10 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 320 loop
+		for cycle in 0 to 520 loop
 			wait until rising_edge(clk);
-			exit when result_write_count = 2 and post_fpu_fetch = '1';
+			exit when result_write_count = 2 and
+				extended_result_write_count = 4 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -151,7 +177,16 @@ begin
 		assert fpu_memory_transfer_count = 4 and
 			memory(16#0180#) = x"40A0" and memory(16#0181#) = x"0000"
 			report "TG68K FPU memory transfer sequence mismatch" severity failure;
-		report "PASS: TG68K instruction-level FPU register, Dn, and memory FMOVE"
+		assert extended_transfer_count = 12 and
+			memory(16#0102#) = x"0000" and memory(16#0103#) = x"0400" and
+			memory(16#0104#) = x"40A0" and memory(16#0105#) = x"0000"
+			report "TG68K FPU extended predecrement/postincrement mismatch: cycles=" &
+				integer'image(extended_transfer_count) & " A1=" &
+				to_hstring(memory(16#0102#)) & to_hstring(memory(16#0103#)) &
+				" result=" & to_hstring(memory(16#0104#)) &
+				to_hstring(memory(16#0105#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU FMOVE and EA updates"
 			severity note;
 		stop;
 	end process;

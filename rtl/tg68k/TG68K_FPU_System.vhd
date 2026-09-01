@@ -11,6 +11,7 @@
 
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_System is
@@ -33,7 +34,9 @@ entity TG68K_FPU_System is
 		instruction_implemented : out std_logic;
 		instruction_requires_command_word : out std_logic;
 		instruction_requires_effective_address : out std_logic;
+		instruction_operand_format : out fpu_operand_format_t;
 		integer_register_select : out std_logic_vector(2 downto 0);
+		address_register_select : out std_logic_vector(2 downto 0);
 		instruction_busy : out std_logic;
 		instruction_done : out std_logic;
 		fline_exception : out std_logic;
@@ -56,6 +59,8 @@ entity TG68K_FPU_System is
 		integer_register_write : out std_logic;
 		integer_register_write_data : out std_logic_vector(31 downto 0);
 		integer_register_write_format : out fpu_operand_format_t;
+		address_register_write : out std_logic;
+		address_register_write_data : out std_logic_vector(31 downto 0);
 
 		fp_registers_out : out fpu_register_array_t;
 		fpcr_out : out std_logic_vector(31 downto 0);
@@ -65,6 +70,24 @@ entity TG68K_FPU_System is
 end entity;
 
 architecture rtl of TG68K_FPU_System is
+	function transfer_byte_count(
+		format_value : fpu_operand_format_t;
+		register_select : std_logic_vector(2 downto 0)) return natural is
+	begin
+		case format_value is
+			when FPU_FORMAT_BYTE_INTEGER =>
+				if register_select = "111" then
+					return 2;
+				else
+					return 1;
+				end if;
+			when FPU_FORMAT_WORD_INTEGER => return 2;
+			when FPU_FORMAT_LONG_INTEGER | FPU_FORMAT_SINGLE => return 4;
+			when FPU_FORMAT_DOUBLE => return 8;
+			when others => return 12;
+		end case;
+	end function;
+
 	signal decoded_match : std_logic;
 	signal decoded_valid : std_logic;
 	signal decoded_fline : std_logic;
@@ -88,6 +111,12 @@ architecture rtl of TG68K_FPU_System is
 		(others => '0');
 	signal fp_data_select : std_logic_vector(2 downto 0);
 	signal fp_data_read : fpu_extended_t;
+	signal move_effective_address : std_logic_vector(31 downto 0);
+	signal effective_address_latched : std_logic_vector(31 downto 0) :=
+		(others => '0');
+	signal address_mode_latched : std_logic_vector(2 downto 0) := "000";
+	signal address_select_latched : std_logic_vector(2 downto 0) := "000";
+	signal transfer_bytes_latched : natural range 1 to 12 := 1;
 	signal move_fp_write : std_logic;
 	signal move_fp_write_data : fpu_extended_t;
 	signal move_status_write : std_logic;
@@ -149,6 +178,9 @@ begin
 		destination_select_latched when move_fp_write = '1' else
 		source_select_latched;
 	fpiar_write <= move_start when fpcr(15 downto 8) /= x"00" else '0';
+	move_effective_address <= std_logic_vector(unsigned(effective_address) -
+		to_unsigned(transfer_byte_count(decoded_format, opcode(2 downto 0)), 32)) when
+		opcode(5 downto 3) = "100" else effective_address;
 
 	instruction_match <= decoded_match;
 	instruction_valid <= decoded_valid;
@@ -156,8 +188,17 @@ begin
 	instruction_requires_command_word <= decoded_requires_command;
 	instruction_requires_effective_address <= decoded_requires_ea when
 		opcode(5 downto 3) /= "000" else '0';
+	instruction_operand_format <= decoded_format;
 	integer_register_select <= opcode(2 downto 0) when move_busy = '0' else
 		integer_select_latched;
+	address_register_select <= opcode(2 downto 0) when move_busy = '0' else
+		address_select_latched;
+	address_register_write <= move_done when
+		address_mode_latched = "011" or address_mode_latched = "100" else '0';
+	address_register_write_data <= std_logic_vector(
+		unsigned(effective_address_latched) +
+		to_unsigned(transfer_bytes_latched, 32)) when
+		address_mode_latched = "011" else effective_address_latched;
 	instruction_busy <= move_busy;
 	instruction_done <= move_done or unsupported_done;
 	fline_exception <= decoded_fline;
@@ -174,12 +215,21 @@ begin
 				source_select_latched <= (others => '0');
 				destination_select_latched <= (others => '0');
 				integer_select_latched <= (others => '0');
+				effective_address_latched <= (others => '0');
+				address_mode_latched <= "000";
+				address_select_latched <= "000";
+				transfer_bytes_latched <= 1;
 			elsif instruction_start = '1' and move_busy = '0' and
 					decoded_match = '1' and decoded_valid = '1' then
 				if move_implemented = '1' then
 					source_select_latched <= move_source_select;
 					destination_select_latched <= decoded_destination_register;
 					integer_select_latched <= opcode(2 downto 0);
+					effective_address_latched <= move_effective_address;
+					address_mode_latched <= opcode(5 downto 3);
+					address_select_latched <= opcode(2 downto 0);
+					transfer_bytes_latched <= transfer_byte_count(
+						decoded_format, opcode(2 downto 0));
 				else
 					unsupported_done <= '1';
 					unsupported_exception <= '1';
@@ -196,7 +246,7 @@ begin
 			direction => move_direction,
 			operand_format => decoded_format,
 			external_data_register => move_external_data_register,
-			effective_address => effective_address,
+			effective_address => move_effective_address,
 			function_code => function_code,
 			integer_register_data => integer_register_data,
 			fp_register_data => fp_data_read,

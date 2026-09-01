@@ -168,6 +168,8 @@ entity TG68KdotC_Kernel is
 		FPU_instruction_valid	: in std_logic := '0';
 		FPU_instruction_requires_command_word : in std_logic := '0';
 		FPU_instruction_requires_ea : in std_logic := '0';
+		FPU_instruction_operand_format : in fpu_operand_format_t :=
+			FPU_FORMAT_EXTENDED;
 		FPU_instruction_busy	: in std_logic := '0';
 		FPU_instruction_done	: in std_logic := '0';
 		FPU_unimplemented_exception : in std_logic := '0';
@@ -180,6 +182,10 @@ entity TG68KdotC_Kernel is
 			(others => '0');
 		FPU_integer_register_write_format : in fpu_operand_format_t :=
 			FPU_FORMAT_LONG_INTEGER;
+		FPU_address_register_select : in std_logic_vector(2 downto 0) := "000";
+		FPU_address_register_write : in std_logic := '0';
+		FPU_address_register_write_data : in std_logic_vector(31 downto 0) :=
+			(others => '0');
 		FPU_instruction_start	: out std_logic;
 		FPU_retry				: out std_logic;
 		FPU_opcode				: out std_logic_vector(15 downto 0);
@@ -342,6 +348,8 @@ architecture logic of TG68KdotC_Kernel is
 	signal trap_mmu_configuration : bit;
 	signal trap_mmu_access	: bit;
 	signal trap_fpu			: bit;
+	signal fpu_effective_address_latched : std_logic_vector(31 downto 0) :=
+		(others => '0');
 	signal trap_format			: bit;
 	signal trap_trap			: bit;
 	signal trap_trapv			: bit;
@@ -459,10 +467,23 @@ BEGIN
 	FPU_opcode <= opcode;
 	FPU_command_word <= data_read(15 downto 0) when decodeOPC = '1' else sndOPC;
 	FPU_instruction_address <= exe_pc;
-	FPU_effective_address <= addr;
+	FPU_effective_address <= addr when exec(get_ea_now) = '1' else
+		fpu_effective_address_latched;
 	FPU_function_code <= SVmode & "01";
 	FPU_integer_register_data <= regfile(conv_integer(
 		FPU_integer_register_select));
+
+	process(clk)
+	begin
+		if rising_edge(clk) then
+			if nReset = '0' then
+				fpu_effective_address_latched <= (others => '0');
+			elsif clkena_lw = '1' and exec(get_ea_now) = '1' and
+					FPU_instruction_match = '1' then
+				fpu_effective_address_latched <= addr;
+			end if;
+		end if;
+	end process;
 
 ALU: TG68K_ALU   
 	generic map(
@@ -796,7 +817,9 @@ PROCESS (long_start, reg_QB, data_write_tmp, exec, data_read, data_write_mux, me
 PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
 	MMU_address_register_select, MMU_address_register_data,
 	FPU_integer_register_write, FPU_integer_register_select,
-	FPU_integer_register_write_data, FPU_integer_register_write_format)
+	FPU_integer_register_write_data, FPU_integer_register_write_format,
+	FPU_address_register_write, FPU_address_register_select,
+	FPU_address_register_write_data)
 	BEGIN
 		reg_QA <= regfile(RDindex_A);
 		reg_QB <= regfile(RDindex_B);
@@ -818,6 +841,9 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec, MMU_address_register_write,
 						regfile(conv_integer(FPU_integer_register_select)) <=
 							FPU_integer_register_write_data;
 				end case;
+			ELSIF FPU_address_register_write = '1' THEN
+				regfile(8 + conv_integer(FPU_address_register_select)) <=
+					FPU_address_register_write_data;
 		    ELSIF clkena_lw='1' THEN
 				rf_source_addrd <= rf_source_addr;
 				WR_AReg <= rf_dest_addr(3);
@@ -1896,18 +1922,21 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 				WHEN "010"|"011"|"100" =>						-- -(An)+
 					set(get_ea_now) <='1';
 					setnextpass <= '1';
-					IF opcode(3)='1' THEN	--(An)+
-						set(postadd) <= '1';
-						IF opcode(2 downto 0)="111" THEN
-							set(use_SP) <= '1';
+					IF NOT (FPU_enable = '1' AND cpu(1) = '1' AND
+							FPU_instruction_match = '1') THEN
+						IF opcode(3)='1' THEN	--(An)+
+							set(postadd) <= '1';
+							IF opcode(2 downto 0)="111" THEN
+								set(use_SP) <= '1';
+							END IF;
 						END IF;
-					END IF;	 	
-					IF opcode(5)='1' THEN	-- -(An)
-						set(presub) <= '1'; 					
-						IF opcode(2 downto 0)="111" THEN
-							set(use_SP) <= '1';
+						IF opcode(5)='1' THEN	-- -(An)
+							set(presub) <= '1';
+							IF opcode(2 downto 0)="111" THEN
+								set(use_SP) <= '1';
+							END IF;
 						END IF;
-					END IF;	 	
+					END IF;
 				WHEN "101" =>				--(d16,An)
 					next_micro_state <= ld_dAn1;
 				WHEN "110" =>				--(d8,An,Xn)
@@ -3411,6 +3440,17 @@ PROCESS (clk, cpu, OP1out, OP2out, opcode, exe_condition, nextpass, micro_state,
 			WHEN "1111" =>
 				IF FPU_enable = '1' AND cpu(1) = '1' AND
 						FPU_instruction_match = '1' THEN
+					CASE FPU_instruction_operand_format IS
+						WHEN FPU_FORMAT_BYTE_INTEGER =>
+							datatype <= "00";
+							set_datatype <= "00";
+						WHEN FPU_FORMAT_WORD_INTEGER =>
+							datatype <= "01";
+							set_datatype <= "01";
+						WHEN OTHERS =>
+							datatype <= "10";
+							set_datatype <= "10";
+					END CASE;
 					ea_only <= to_bit(FPU_instruction_requires_ea);
 					IF decodeOPC = '1' THEN
 						IF FPU_instruction_requires_command_word = '1' THEN

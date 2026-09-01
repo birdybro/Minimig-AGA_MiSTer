@@ -112,6 +112,7 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_instruction_valid : std_logic;
 	signal fpu_instruction_requires_command : std_logic;
 	signal fpu_instruction_requires_ea : std_logic;
+	signal fpu_instruction_operand_format : fpu_operand_format_t;
 	signal fpu_integer_register_select : std_logic_vector(2 downto 0);
 	signal fpu_instruction_busy : std_logic;
 	signal fpu_instruction_done : std_logic;
@@ -122,6 +123,9 @@ architecture rtl of TG68KdotC_MMU is
 	signal fpu_integer_register_write : std_logic;
 	signal fpu_integer_register_write_data : std_logic_vector(31 downto 0);
 	signal fpu_integer_register_write_format : fpu_operand_format_t;
+	signal fpu_address_register_select : std_logic_vector(2 downto 0);
+	signal fpu_address_register_write : std_logic;
+	signal fpu_address_register_write_data : std_logic_vector(31 downto 0);
 	signal fpu_instruction_start : std_logic;
 	signal fpu_retry : std_logic;
 	signal fpu_opcode : std_logic_vector(15 downto 0);
@@ -488,6 +492,7 @@ begin
 			FPU_instruction_requires_command_word =>
 				fpu_instruction_requires_command,
 			FPU_instruction_requires_ea => fpu_instruction_requires_ea,
+			FPU_instruction_operand_format => fpu_instruction_operand_format,
 			FPU_instruction_busy => fpu_instruction_busy,
 			FPU_instruction_done => fpu_instruction_done,
 			FPU_unimplemented_exception => fpu_unimplemented_exception,
@@ -499,6 +504,9 @@ begin
 			FPU_integer_register_write_data => fpu_integer_register_write_data,
 			FPU_integer_register_write_format =>
 				fpu_integer_register_write_format,
+			FPU_address_register_select => fpu_address_register_select,
+			FPU_address_register_write => fpu_address_register_write,
+			FPU_address_register_write_data => fpu_address_register_write_data,
 			FPU_instruction_start => fpu_instruction_start,
 			FPU_retry => fpu_retry,
 			FPU_opcode => fpu_opcode,
@@ -606,7 +614,9 @@ begin
 				fpu_instruction_requires_command,
 			instruction_requires_effective_address =>
 				fpu_instruction_requires_ea,
+			instruction_operand_format => fpu_instruction_operand_format,
 			integer_register_select => fpu_integer_register_select,
+			address_register_select => fpu_address_register_select,
 			instruction_busy => fpu_instruction_busy,
 			instruction_done => fpu_instruction_done,
 			fline_exception => open,
@@ -627,6 +637,8 @@ begin
 			integer_register_write => fpu_integer_register_write,
 			integer_register_write_data => fpu_integer_register_write_data,
 			integer_register_write_format => fpu_integer_register_write_format,
+			address_register_write => fpu_address_register_write,
+			address_register_write_data => fpu_address_register_write_data,
 			fp_registers_out => open,
 			fpcr_out => open,
 			fpsr_out => open,
