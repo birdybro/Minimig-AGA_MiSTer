@@ -23,6 +23,7 @@ entity TG68K_FPU_Multiply is
 		destination : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		single_precision_operation : in std_logic := '0';
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -73,7 +74,7 @@ begin
 	base_exception_status <= "0" & signaling_nan_detected &
 		operand_error_detected & "00000";
 
-	calculate : process(source, destination)
+	calculate : process(source, destination, single_precision_operation)
 		variable source_class : fpu_data_class_t;
 		variable destination_class : fpu_data_class_t;
 		variable source_exponent : integer range -65536 to 65535;
@@ -105,6 +106,10 @@ begin
 			destination_significand := shift_left(destination_significand,
 				destination_shift);
 			destination_exponent := destination_exponent - destination_shift;
+		end if;
+		if single_precision_operation = '1' then
+			source_significand(39 downto 0) := (others => '0');
+			destination_significand(39 downto 0) := (others => '0');
 		end if;
 
 		intermediate_class <= FPU_CLASS_ZERO;
@@ -172,6 +177,10 @@ begin
 	end process;
 
 	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		signal effective_rounding_precision : fpu_rounding_precision_t;
+	begin
+		effective_rounding_precision <= FPU_PRECISION_SINGLE when
+			single_precision_operation = '1' else rounding_precision;
 		round_result : entity work.TG68K_FPU_Round
 			port map(
 				input_class => intermediate_class,
@@ -179,8 +188,9 @@ begin
 				input_exponent => intermediate_exponent,
 				input_significand => intermediate_significand,
 				special_value => intermediate_special,
-				rounding_precision => rounding_precision,
+				rounding_precision => effective_rounding_precision,
 				rounding_mode => rounding_mode,
+				single_extended_range => single_precision_operation,
 				result => rounded_result,
 				inexact => rounded_inexact,
 				overflow => rounded_overflow,

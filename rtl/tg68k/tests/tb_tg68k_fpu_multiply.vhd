@@ -12,6 +12,7 @@ architecture test of tb_tg68k_fpu_multiply is
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
+	signal single_precision_operation : std_logic := '0';
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
@@ -22,6 +23,7 @@ begin
 			destination => destination,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			single_precision_operation => single_precision_operation,
 			result => result,
 			condition_codes => condition_codes,
 			exception_status => exception_status,
@@ -76,6 +78,36 @@ begin
 		check(x"7FFF8000000000000000", "0010", x"12",
 			"single-precision FMUL overflow mismatch");
 
+		single_precision_operation <= '1';
+		rounding_precision <= FPU_PRECISION_DOUBLE;
+		source <= x"3FFF8000000000000001";
+		destination <= x"3FFF8000000000000001";
+		check(x"3FFF8000000000000000", "0000", x"00",
+			"FSGLMUL operand truncation mismatch");
+
+		source <= x"3FFF8000010000000000";
+		destination <= x"3FFF8000010000000000";
+		check(x"3FFF8000020000000000", "0000", x"02",
+			"FSGLMUL result rounding mismatch");
+
+		source <= x"40638000000000000000";
+		destination <= x"40638000000000000000";
+		check(x"40C78000000000000000", "0000", x"00",
+			"FSGLMUL extended exponent range mismatch");
+
+		source <= x"00008000000000000000";
+		destination <= x"3FFE8000000000000000";
+		check(x"00004000000000000000", "0000", x"08",
+			"FSGLMUL extended underflow boundary mismatch");
+
+		rounding_mode <= FPU_ROUND_ZERO;
+		source <= x"7FFE8000000000000000";
+		destination <= x"40008000000000000000";
+		check(x"7FFEFFFFFFFFFFFFFFFF", "0000", x"12",
+			"FSGLMUL extended overflow boundary mismatch");
+
+		single_precision_operation <= '0';
+		rounding_mode <= FPU_ROUND_NEAREST;
 		rounding_precision <= FPU_PRECISION_EXTENDED;
 		source <= x"00008000000000000000";
 		destination <= x"7FFE8000000000000000";

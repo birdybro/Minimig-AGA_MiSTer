@@ -226,8 +226,34 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0838#) := x"6780";
 		result(16#0839#) := x"0000";
 		result(16#083A#) := x"0B14";
-		result(16#083B#) := x"4E72";
-		result(16#083C#) := x"2700";
+		result(16#083B#) := x"263C";
+		result(16#083C#) := x"0000";
+		result(16#083D#) := x"0080";
+		result(16#083E#) := x"F203";
+		result(16#083F#) := x"9000";
+		result(16#0840#) := x"7403";
+		result(16#0841#) := x"F202";
+		result(16#0842#) := x"4180";
+		result(16#0843#) := x"7402";
+		result(16#0844#) := x"F202";
+		result(16#0845#) := x"4200";
+		result(16#0846#) := x"F200";
+		result(16#0847#) := x"0E27";
+		result(16#0848#) := x"F239";
+		result(16#0849#) := x"6600";
+		result(16#084A#) := x"0000";
+		result(16#084B#) := x"0B48";
+		result(16#084C#) := x"7401";
+		result(16#084D#) := x"F202";
+		result(16#084E#) := x"4200";
+		result(16#084F#) := x"F200";
+		result(16#0850#) := x"0E24";
+		result(16#0851#) := x"F239";
+		result(16#0852#) := x"6600";
+		result(16#0853#) := x"0000";
+		result(16#0854#) := x"0B4C";
+		result(16#0855#) := x"4E72";
+		result(16#0856#) := x"2700";
 		return result;
 	end function;
 
@@ -259,6 +285,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal remainder_result_write_count : natural range 0 to 4 := 0;
 	signal fpsr_result_write_count : natural range 0 to 2 := 0;
 	signal binary_result_write_count : natural range 0 to 8 := 0;
+	signal single_result_write_count : natural range 0 to 4 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -397,8 +424,12 @@ begin
 						addr_out = x"00000B1C" or addr_out = x"00000B1E" then
 					binary_result_write_count <= binary_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B48" or addr_out = x"00000B4A" or
+						addr_out = x"00000B4C" or addr_out = x"00000B4E" then
+					single_result_write_count <= single_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001076" then
+			if busstate = "00" and addr_out = x"000010AA" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -423,7 +454,8 @@ begin
 				scale_result_write_count = 2 and
 				remainder_result_write_count = 4 and
 				fpsr_result_write_count = 2 and
-				binary_result_write_count = 8 and post_fpu_fetch = '1';
+				binary_result_write_count = 8 and
+				single_result_write_count = 4 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
 			memory(16#0101#) = x"0000"
@@ -531,7 +563,16 @@ begin
 				" " & to_hstring(memory(16#058E#)) &
 				to_hstring(memory(16#058F#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, remainder, arithmetic, FMOVEM, and control state"
+		assert single_result_write_count = 4 and
+			memory(16#05A4#) = x"40C0" and memory(16#05A5#) = x"0000" and
+			memory(16#05A6#) = x"3EAA" and memory(16#05A7#) = x"AAAB"
+			report "TG68K FSGLMUL/FSGLDIV instruction stream mismatch: " &
+				to_hstring(memory(16#05A4#)) &
+				to_hstring(memory(16#05A5#)) & " " &
+				to_hstring(memory(16#05A6#)) &
+				to_hstring(memory(16#05A7#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;

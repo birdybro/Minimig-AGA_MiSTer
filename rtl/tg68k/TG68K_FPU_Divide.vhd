@@ -26,6 +26,7 @@ entity TG68K_FPU_Divide is
 		destination : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		single_precision_operation : in std_logic := '0';
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -82,6 +83,10 @@ begin
 		operand_error_detected & "00" & divide_by_zero_detected & "00";
 
 	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		signal effective_rounding_precision : fpu_rounding_precision_t;
+	begin
+		effective_rounding_precision <= FPU_PRECISION_SINGLE when
+			single_precision_operation = '1' else rounding_precision;
 		round_result : entity work.TG68K_FPU_Round
 			port map(
 				input_class => intermediate_class,
@@ -89,8 +94,9 @@ begin
 				input_exponent => intermediate_exponent,
 				input_significand => intermediate_significand,
 				special_value => intermediate_special,
-				rounding_precision => rounding_precision,
+				rounding_precision => effective_rounding_precision,
 				rounding_mode => rounding_mode,
+				single_extended_range => single_precision_operation,
 				result => rounded_result,
 				inexact => rounded_inexact,
 				overflow => rounded_overflow,
@@ -183,6 +189,11 @@ begin
 										destination_shift);
 								destination_exponent :=
 									destination_exponent - destination_shift;
+							end if;
+							if single_precision_operation = '1' then
+								source_significand(39 downto 0) := (others => '0');
+								destination_significand(39 downto 0) :=
+									(others => '0');
 							end if;
 
 							intermediate_class <= FPU_CLASS_ZERO;

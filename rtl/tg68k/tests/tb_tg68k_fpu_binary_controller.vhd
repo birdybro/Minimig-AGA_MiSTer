@@ -239,6 +239,28 @@ begin
 			report "register FMUL controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_SGLMUL;
+		rounding_precision <= FPU_PRECISION_DOUBLE;
+		run_register_operation(x"3FFF8000010000000000",
+			x"3FFF8000010000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFF8000020000000000" and
+			observed_status = x"02" and observed_cc = "0000" and
+			trace_count = 0
+			report "register FSGLMUL controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SGLDIV;
+		rounding_precision <= FPU_PRECISION_EXTENDED;
+		run_register_operation(x"4000C000000000000000",
+			x"3FFF8000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFDAAAAAB0000000000" and
+			observed_status = x"02" and observed_cc = "0000" and
+			trace_count = 0
+			report "register FSGLDIV controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_SQRT;
 		run_register_operation(x"40018000000000000000",
 			x"3FFF8000000000000000");
@@ -353,6 +375,17 @@ begin
 			observed_fp_data = x"4000C000000000000000" and
 			observed_status = x"00"
 			report "memory single FMUL controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SGLMUL;
+		fp_register_data <= x"40008000000000000000";
+		start_operation;
+		finish_operation;
+		assert trace_count = 2 and trace_address(0) = x"00001000" and
+			trace_address(1) = x"00001002" and
+			observed_fp_data = x"4000C000000000000000" and
+			observed_status = x"00"
+			report "memory single FSGLMUL controller mismatch" severity failure;
 
 		clear_observations;
 		operation <= FPU_OP_DIV;

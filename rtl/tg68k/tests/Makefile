@@ -26,9 +26,9 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU.vhd ../TG68K_FPU_System.vhd \
 	../TG68K_ALU.vhd ../TG68KdotC_Kernel.vhd ../TG68KdotC_MMU.vhd ../TG68K.vhd
 
-.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
+.PHONY: all analyze smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth clean
 
-all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth
+all: smoke mmu_wrapper_smoke mmu_wrapper mmu_fault_frame mmu_fault_integration mmu_fault_rte mmu_state mmu_instruction_decoder mmu_instruction_controller mmu_dispatch mmu_system mmu_translation mmu_descriptor mmu_atc mmu_transparent mmu_walker fpu_state fpu_decoder fpu_convert fpu_round fpu_store_convert fpu_move_controller fpu_control_controller fpu_movem_controller fpu_extract fpu_extract_differential fpu_unary_controller fpu_integer fpu_integer_differential fpu_scale fpu_scale_differential fpu_remainder fpu_remainder_differential fpu_add_subtract fpu_add_differential fpu_multiply fpu_multiply_differential fpu_divide fpu_divide_differential fpu_single_differential fpu_square_root fpu_square_root_differential fpu_binary_controller fpu_system fpu_wrapper synth
 
 analyze:
 	mkdir -p $(BUILD_DIR)
@@ -251,6 +251,12 @@ fpu_divide_differential: analyze generate_fpu_divide_vectors.py fpu_exact_refere
 	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(BUILD_DIR)/tb_tg68k_fpu_divide_differential.vhd
 	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_divide_differential
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_divide_differential $(GHDL_RUN_FLAGS)
+
+fpu_single_differential: analyze generate_fpu_single_vectors.py fpu_exact_reference.py
+	$(PYTHON) generate_fpu_single_vectors.py > $(BUILD_DIR)/tb_tg68k_fpu_single_differential.vhd
+	$(GHDL) -a $(GHDL_FLAGS) --workdir=$(BUILD_DIR) $(BUILD_DIR)/tb_tg68k_fpu_single_differential.vhd
+	$(GHDL) -e $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_single_differential
+	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_single_differential $(GHDL_RUN_FLAGS)
 
 fpu_square_root: analyze
 	$(GHDL) -r $(GHDL_FLAGS) --workdir=$(BUILD_DIR) tb_tg68k_fpu_square_root $(GHDL_RUN_FLAGS)

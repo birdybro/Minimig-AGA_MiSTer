@@ -16,6 +16,7 @@ architecture test of tb_tg68k_fpu_round is
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
+	signal single_extended_range : std_logic := '0';
 	signal result : fpu_extended_t;
 	signal inexact : std_logic;
 	signal overflow : std_logic;
@@ -31,6 +32,7 @@ begin
 			special_value => special_value,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			single_extended_range => single_extended_range,
 			result => result,
 			inexact => inexact,
 			overflow => overflow,
@@ -51,7 +53,8 @@ begin
 			constant expected_inexact : std_logic;
 			constant expected_overflow : std_logic;
 			constant expected_underflow : std_logic;
-			constant expected_snan : std_logic := '0') is
+			constant expected_snan : std_logic := '0';
+			constant single_extended_range_value : std_logic := '0') is
 		begin
 			input_class <= class_value;
 			input_sign <= sign_value;
@@ -60,6 +63,7 @@ begin
 			special_value <= special_data;
 			rounding_precision <= precision_value;
 			rounding_mode <= mode_value;
+			single_extended_range <= single_extended_range_value;
 			wait for 1 ns;
 			assert result = expected_result
 				report "FPU rounded result mismatch" severity failure;
@@ -153,6 +157,31 @@ begin
 			x"8000000000000000" & "000", FPU_RESET_NAN,
 			FPU_PRECISION_EXTENDED, FPU_ROUND_PLUS_INFINITY,
 			x"00000000000000000001", '1', '0', '1');
+
+		check_round(FPU_CLASS_NORMAL, '0', 200,
+			x"8000008000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_NEAREST,
+			x"40C78000000000000000", '1', '0', '0', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', -16383,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_NEAREST,
+			x"00008000000000000000", '0', '0', '0', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', -16384,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_NEAREST,
+			x"00004000000000000000", '0', '0', '1', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', -16447,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_PLUS_INFINITY,
+			x"00000000000000000001", '1', '0', '1', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', 16384,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_ZERO,
+			x"7FFEFFFFFFFFFFFFFFFF", '1', '1', '0', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', 16384,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_SINGLE, FPU_ROUND_NEAREST,
+			x"7FFF8000000000000000", '1', '1', '0', '0', '1');
 
 		check_round(FPU_CLASS_NORMAL, '0', 128,
 			x"8000000000000000" & "000", FPU_RESET_NAN,

@@ -749,6 +749,70 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FDIV system result mismatch" severity failure;
 
+		integer_register_data <= x"00000080";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fpcr = x"00000080"
+			report "FSGL precision-override setup mismatch" severity failure;
+
+		integer_register_data <= x"00000003";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		integer_register_data <= x"00000002";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E27", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"4001C000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FSGLMUL system result mismatch" severity failure;
+
+		integer_register_data <= x"00000001";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E24", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"3FFDAAAAAB0000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "register FSGLDIV system result mismatch" severity failure;
+
+		integer_register_data <= x"00000002";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4627", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"C000C000000000000000" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"00"
+			report "memory single FSGLMUL system result mismatch" severity failure;
+
+		clear_observations;
+		start_instruction(x"F210", x"4624", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"40008000000000000000" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "memory single FSGLDIV system result mismatch" severity failure;
+
+		integer_register_data <= x"00002000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+
 		integer_register_data <= x"00000004";
 		start_instruction(x"F202", x"4180", '1');
 		command_word <= x"0000";
@@ -925,9 +989,9 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
-		start_instruction(x"F200", x"0E24", '0');
+		start_instruction(x"F200", x"0E02", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "FSGLDIV command was not explicitly reported as unimplemented"
+			report "FSINH command was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 

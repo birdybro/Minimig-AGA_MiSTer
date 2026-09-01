@@ -115,6 +115,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal compare_latched : std_logic := '0';
 	signal multiply_latched : std_logic := '0';
 	signal divide_latched : std_logic := '0';
+	signal single_precision_latched : std_logic := '0';
 	signal square_root_latched : std_logic := '0';
 	signal integer_latched : std_logic := '0';
 	signal force_round_zero_latched : std_logic := '0';
@@ -167,6 +168,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
+	signal selected_rounding_precision : fpu_rounding_precision_t;
 	signal rounded_result : fpu_extended_t;
 	signal rounded_inexact : std_logic;
 	signal rounded_overflow : std_logic;
@@ -192,6 +194,8 @@ begin
 	selected_rounding_mode <= FPU_ROUND_ZERO when
 		integer_latched = '1' and force_round_zero_latched = '1' else
 		mode_latched;
+	selected_rounding_precision <= FPU_PRECISION_SINGLE when
+		single_precision_latched = '1' else precision_latched;
 	rounded_condition_codes <= add_subtract_compare_codes
 		when compare_latched = '1' else fpu_condition_codes(rounded_result);
 
@@ -246,6 +250,7 @@ begin
 			destination => destination_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			single_precision_operation => single_precision_latched,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -265,6 +270,7 @@ begin
 			destination => destination_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			single_precision_operation => single_precision_latched,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -362,8 +368,9 @@ begin
 			input_exponent => selected_round_input.exponent,
 			input_significand => selected_round_input.significand,
 			special_value => selected_round_input.special,
-			rounding_precision => precision_latched,
+			rounding_precision => selected_rounding_precision,
 			rounding_mode => selected_rounding_mode,
+			single_extended_range => single_precision_latched,
 			result => rounded_result,
 			inexact => rounded_inexact,
 			overflow => rounded_overflow,
@@ -444,6 +451,7 @@ begin
 				compare_latched <= '0';
 				multiply_latched <= '0';
 				divide_latched <= '0';
+				single_precision_latched <= '0';
 				square_root_latched <= '0';
 				integer_latched <= '0';
 				force_round_zero_latched <= '0';
@@ -483,15 +491,23 @@ begin
 								compare_latched <= '0';
 								write_result_latched <= '1';
 							end if;
-							if operation = FPU_OP_MUL then
+							if operation = FPU_OP_MUL or
+									operation = FPU_OP_SGLMUL then
 								multiply_latched <= '1';
 							else
 								multiply_latched <= '0';
 							end if;
-							if operation = FPU_OP_DIV then
+							if operation = FPU_OP_DIV or
+									operation = FPU_OP_SGLDIV then
 								divide_latched <= '1';
 							else
 								divide_latched <= '0';
+							end if;
+							if operation = FPU_OP_SGLMUL or
+									operation = FPU_OP_SGLDIV then
+								single_precision_latched <= '1';
+							else
+								single_precision_latched <= '0';
 							end if;
 							if operation = FPU_OP_SQRT then
 								square_root_latched <= '1';
