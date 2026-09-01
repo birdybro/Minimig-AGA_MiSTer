@@ -28,6 +28,11 @@ entity TG68K_FPU_Move_Controller is
 		fp_register_data : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		packed_conversion_start : out std_logic;
+		packed_conversion_source : out std_logic_vector(95 downto 0);
+		packed_conversion_done : in std_logic;
+		packed_conversion_result : in fpu_extended_t;
+		packed_conversion_status : in std_logic_vector(7 downto 0);
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -59,6 +64,7 @@ end entity;
 
 architecture rtl of TG68K_FPU_Move_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, LOAD_UNPACK,
+		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION,
 		REGISTER_ROUND, REGISTER_REPACK, REGISTER_COMMIT, STORE_PREPARE,
 		STORE_MEMORY, STORE_DATA_REGISTER, STORE_STATUS, BUS_ERROR_WAIT,
 		COMPLETE);
@@ -215,6 +221,8 @@ begin
 		memory_nuds <= '0';
 		memory_nlds <= '0';
 		memory_function_code <= function_code_latched;
+		packed_conversion_start <= '0';
+		packed_conversion_source <= external_buffer;
 		fp_register_write <= '0';
 		fp_register_write_data <= result_latched;
 		integer_register_write <= '0';
@@ -258,6 +266,7 @@ begin
 		end if;
 
 		case state is
+			when START_PACKED_CONVERSION => packed_conversion_start <= '1';
 			when REGISTER_COMMIT =>
 				fp_register_write <= '1';
 				operation_status_write <= '1';
@@ -353,11 +362,23 @@ begin
 						end if;
 
 					when LOAD_UNPACK =>
-						if unpack_valid = '1' then
+						if format_latched = FPU_FORMAT_PACKED then
+							state <= START_PACKED_CONVERSION;
+						elsif unpack_valid = '1' then
 							source_latched <= unpacked_extended;
 							state <= REGISTER_ROUND;
 						else
 							state <= COMPLETE;
+						end if;
+
+					when START_PACKED_CONVERSION =>
+						state <= WAIT_PACKED_CONVERSION;
+
+					when WAIT_PACKED_CONVERSION =>
+						if packed_conversion_done = '1' then
+							result_latched <= packed_conversion_result;
+							status_latched <= packed_conversion_status;
+							state <= REGISTER_COMMIT;
 						end if;
 
 					when REGISTER_ROUND =>

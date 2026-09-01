@@ -172,6 +172,8 @@ architecture rtl of TG68K_FPU_System is
 	signal move_integer_write : std_logic;
 	signal move_integer_write_data : std_logic_vector(31 downto 0);
 	signal move_integer_write_format : fpu_operand_format_t;
+	signal move_packed_start : std_logic;
+	signal move_packed_source : std_logic_vector(95 downto 0);
 
 	signal control_start : std_logic;
 	signal control_external_to_control : std_logic;
@@ -229,6 +231,8 @@ architecture rtl of TG68K_FPU_System is
 	signal unary_memory_nuds : std_logic;
 	signal unary_memory_nlds : std_logic;
 	signal unary_memory_fc : std_logic_vector(2 downto 0);
+	signal unary_packed_start : std_logic;
+	signal unary_packed_source : std_logic_vector(95 downto 0);
 
 	signal binary_start : std_logic;
 	signal binary_external_source : std_logic;
@@ -252,6 +256,14 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_memory_nuds : std_logic;
 	signal binary_memory_nlds : std_logic;
 	signal binary_memory_fc : std_logic_vector(2 downto 0);
+	signal binary_packed_start : std_logic;
+	signal binary_packed_source : std_logic_vector(95 downto 0);
+
+	signal packed_conversion_start : std_logic;
+	signal packed_conversion_source : std_logic_vector(95 downto 0);
+	signal packed_conversion_result : fpu_extended_t;
+	signal packed_conversion_status : std_logic_vector(7 downto 0);
+	signal packed_conversion_done : std_logic;
 
 	signal constant_implemented : std_logic;
 	signal constant_start : std_logic;
@@ -288,6 +300,25 @@ architecture rtl of TG68K_FPU_System is
 	signal state_condition_codes : std_logic_vector(3 downto 0);
 	signal state_exception_status : std_logic_vector(7 downto 0);
 begin
+	packed_conversion_start <= move_packed_start or unary_packed_start or
+		binary_packed_start;
+	packed_conversion_source <= binary_packed_source when
+		binary_packed_start = '1' else unary_packed_source when
+		unary_packed_start = '1' else move_packed_source;
+
+	packed_converter : entity work.TG68K_FPU_Packed_To_Extended
+		port map(
+			clk => clk,
+			nReset => subsystem_reset,
+			start => packed_conversion_start,
+			source => packed_conversion_source,
+			rounding_mode => rounding_mode,
+			result => packed_conversion_result,
+			exception_status => packed_conversion_status,
+			busy => open,
+			done => packed_conversion_done
+		);
+
 	decoder : entity work.TG68K_FPU_Decoder
 		port map(
 			opcode => opcode,
@@ -312,7 +343,6 @@ begin
 		decoded_operation = FPU_OP_MOVE) or
 		(decoded_family = FPU_FAMILY_EXTERNAL_OPERATION and
 		decoded_operation = FPU_OP_MOVE and
-		decoded_format /= FPU_FORMAT_PACKED and
 		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) or
 		(decoded_family = FPU_FAMILY_MOVE_TO_EXTERNAL and
 		decoded_format /= FPU_FORMAT_PACKED and
@@ -332,8 +362,7 @@ begin
 		decoded_operation = FPU_OP_GETEXP or
 		decoded_operation = FPU_OP_GETMAN or decoded_operation = FPU_OP_TST) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
-		(decoded_format /= FPU_FORMAT_PACKED and
-		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED)) else '0';
+		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) else '0';
 	binary_implemented <= '1' when
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		decoded_family = FPU_FAMILY_EXTERNAL_OPERATION) and
@@ -366,8 +395,7 @@ begin
 		decoded_operation = FPU_OP_TENTOX or
 		decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
-		(decoded_format /= FPU_FORMAT_PACKED and
-		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED)) else '0';
+		decoded_format /= FPU_FORMAT_DYNAMIC_PACKED) else '0';
 	operation_implemented <= move_implemented or control_implemented or
 		movem_implemented or constant_implemented or unary_implemented or
 		binary_implemented;
@@ -594,6 +622,11 @@ begin
 			fp_register_data => fp_data_read,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			packed_conversion_start => move_packed_start,
+			packed_conversion_source => move_packed_source,
+			packed_conversion_done => packed_conversion_done,
+			packed_conversion_result => packed_conversion_result,
+			packed_conversion_status => packed_conversion_status,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -716,6 +749,11 @@ begin
 			integer_register_data => integer_register_data,
 			fp_register_data => fp_data_read,
 			exception_enable => fpcr(15 downto 8),
+			packed_conversion_start => unary_packed_start,
+			packed_conversion_source => unary_packed_source,
+			packed_conversion_done => packed_conversion_done,
+			packed_conversion_result => packed_conversion_result,
+			packed_conversion_status => packed_conversion_status,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -754,6 +792,11 @@ begin
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			exception_enable => fpcr(15 downto 8),
+			packed_conversion_start => binary_packed_start,
+			packed_conversion_source => binary_packed_source,
+			packed_conversion_done => packed_conversion_done,
+			packed_conversion_result => packed_conversion_result,
+			packed_conversion_status => packed_conversion_status,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,

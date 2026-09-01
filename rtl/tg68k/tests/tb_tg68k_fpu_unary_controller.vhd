@@ -24,6 +24,11 @@ architecture test of tb_tg68k_fpu_unary_controller is
 		(others => '0');
 	signal fp_register_data : fpu_extended_t := (others => '0');
 	signal exception_enable : std_logic_vector(7 downto 0) := (others => '0');
+	signal packed_conversion_start : std_logic;
+	signal packed_conversion_source : std_logic_vector(95 downto 0);
+	signal packed_conversion_result : fpu_extended_t;
+	signal packed_conversion_status : std_logic_vector(7 downto 0);
+	signal packed_conversion_done : std_logic;
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal retry : std_logic := '0';
@@ -64,6 +69,10 @@ begin
 			when x"00001000" => memory_read_data <= x"BFC0";
 			when x"00001002" => memory_read_data <= x"0000";
 			when x"00002001" => memory_read_data <= x"AB80";
+			when x"00005000" => memory_read_data <= x"4001";
+			when x"00005002" => memory_read_data <= x"0001";
+			when x"00005004" | x"00005006" | x"00005008" |
+					x"0000500A" => memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -82,6 +91,11 @@ begin
 			integer_register_data => integer_register_data,
 			fp_register_data => fp_register_data,
 			exception_enable => exception_enable,
+			packed_conversion_start => packed_conversion_start,
+			packed_conversion_source => packed_conversion_source,
+			packed_conversion_done => packed_conversion_done,
+			packed_conversion_result => packed_conversion_result,
+			packed_conversion_status => packed_conversion_status,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -102,6 +116,19 @@ begin
 			busy => busy,
 			done => done,
 			bus_error_exception => bus_error_exception
+		);
+
+	packed_converter : entity work.TG68K_FPU_Packed_To_Extended
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => packed_conversion_start,
+			source => packed_conversion_source,
+			rounding_mode => FPU_ROUND_NEAREST,
+			result => packed_conversion_result,
+			exception_status => packed_conversion_status,
+			busy => open,
+			done => packed_conversion_done
 		);
 
 	monitor : process(clk)
@@ -162,7 +189,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 32
+				assert cycle_count < 700
 					report "FPU unary controller did not complete" severity failure;
 			end loop;
 			assert busy = '1'
@@ -297,6 +324,17 @@ begin
 			observed_fp_data = x"BFFFC000000000000000" and
 			observed_cc = "1000" and observed_status = x"00"
 			report "memory single FGETMAN transfer mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_ABS;
+		operand_format <= FPU_FORMAT_PACKED;
+		effective_address <= x"00005000";
+		run_operation;
+		assert trace_count = 6 and trace_address(0) = x"00005000" and
+			trace_address(5) = x"0000500A" and
+			observed_fp_data = x"3FFBCCCCCCCCCCCCCCCD" and
+			observed_status = x"01" and observed_cc = "0000"
+			report "packed memory FABS conversion mismatch" severity failure;
 
 		clear_observations;
 		external_data_register <= '1';

@@ -129,6 +129,15 @@ begin
 			when x"0000B014" => memory_read_data <= x"8000";
 			when x"0000B016" | x"0000B018" | x"0000B01A" =>
 				memory_read_data <= x"0000";
+			when x"0000C000" => memory_read_data <= x"4001";
+			when x"0000C002" => memory_read_data <= x"0001";
+			when x"0000C004" | x"0000C006" | x"0000C008" |
+					x"0000C00A" => memory_read_data <= x"0000";
+			when x"0000C010" => memory_read_data <= x"0000";
+			when x"0000C012" => memory_read_data <= x"0001";
+			when x"0000C014" => memory_read_data <= x"5000";
+			when x"0000C016" | x"0000C018" | x"0000C01A" =>
+				memory_read_data <= x"0000";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -249,7 +258,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 520
+				assert cycle_count < 1600
 					report "FPU system command did not complete" severity failure;
 			end loop;
 			wait until rising_edge(clk);
@@ -642,14 +651,16 @@ begin
 			severity failure;
 
 		clear_observations;
-		start_instruction(x"F210", x"4C00", '0');
-		assert instruction_done = '1' and unimplemented_exception = '1' and
-			memory_request = '0'
-			report "packed FMOVE was not explicitly reported as unimplemented"
-			severity failure;
+		effective_address <= x"0000C000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4C00", '1');
+		command_word <= x"0000";
 		wait_done;
-		assert trace_count = 0
-			report "unimplemented packed FMOVE caused a bus cycle" severity failure;
+		assert trace_count = 6 and trace_address(0) = x"0000C000" and
+			trace_address(5) = x"0000C00A" and trace_fc(5) = "101" and
+			fp_registers(0) = x"3FFBCCCCCCCCCCCCCCCD" and
+			fpsr(15 downto 8) = x"01"
+			report "packed FMOVE system conversion mismatch" severity failure;
 
 		clear_observations;
 		integer_register_data <= x"00000000";
@@ -1511,11 +1522,17 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FSINCOS system result mismatch" severity failure;
 
-		start_instruction(x"F210", x"4E35", '0');
-		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "packed FSINCOS was not explicitly reported as unimplemented"
-			severity failure;
+		clear_observations;
+		effective_address <= x"0000C010";
+		start_instruction(x"F210", x"4E35", '1');
+		command_word <= x"0000";
 		wait_done;
+		assert trace_count = 6 and trace_address(0) = x"0000C010" and
+			trace_address(5) = x"0000C01A" and
+			fp_registers(4) = x"3FFEFF5BD4D9636C56F3" and
+			fp_registers(5) = x"3FFB90DEAA7E2FCD3A20" and
+			fpsr(15 downto 8) = x"02"
+			report "packed FSINCOS system result mismatch" severity failure;
 
 		wait until falling_edge(clk);
 		null_restore <= '1';

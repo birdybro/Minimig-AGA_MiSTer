@@ -28,6 +28,11 @@ entity TG68K_FPU_Unary_Controller is
 		integer_register_data : in std_logic_vector(31 downto 0);
 		fp_register_data : in fpu_extended_t;
 		exception_enable : in std_logic_vector(7 downto 0);
+		packed_conversion_start : out std_logic;
+		packed_conversion_source : out std_logic_vector(95 downto 0);
+		packed_conversion_done : in std_logic;
+		packed_conversion_result : in fpu_extended_t;
+		packed_conversion_status : in std_logic_vector(7 downto 0);
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -55,8 +60,9 @@ entity TG68K_FPU_Unary_Controller is
 end entity;
 
 architecture rtl of TG68K_FPU_Unary_Controller is
-	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND, EXECUTE,
-		COMMIT, BUS_ERROR_WAIT, COMPLETE);
+	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
+		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION, EXECUTE, COMMIT,
+		BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -120,6 +126,8 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 	signal operand_latched : fpu_extended_t := (others => '0');
 	signal result_latched : fpu_extended_t := (others => '0');
 	signal status_latched : std_logic_vector(7 downto 0) := (others => '0');
+	signal conversion_status_latched : std_logic_vector(7 downto 0) :=
+		(others => '0');
 	signal write_result_latched : std_logic := '0';
 	signal transfer_index : natural range 0 to 5 := 0;
 
@@ -163,6 +171,8 @@ begin
 		memory_nuds <= '0';
 		memory_nlds <= '0';
 		memory_function_code <= function_code_latched;
+		packed_conversion_start <= '0';
+		packed_conversion_source <= external_buffer;
 		fp_register_write <= '0';
 		fp_register_write_data <= result_latched;
 		operation_status_write <= '0';
@@ -194,6 +204,7 @@ begin
 			(status_latched(5) = '1' and
 			operand_error_enable_latched = '1');
 		case state is
+			when START_PACKED_CONVERSION => packed_conversion_start <= '1';
 			when COMMIT =>
 				operation_status_write <= '1';
 				condition_codes_write <= '1';
@@ -229,6 +240,7 @@ begin
 				operand_latched <= (others => '0');
 				result_latched <= (others => '0');
 				status_latched <= (others => '0');
+				conversion_status_latched <= (others => '0');
 				write_result_latched <= '0';
 				transfer_index <= 0;
 			else
@@ -263,6 +275,7 @@ begin
 							operand_error_enable_latched <= exception_enable(5);
 							external_buffer <= (others => '0');
 							status_latched <= (others => '0');
+							conversion_status_latched <= (others => '0');
 							write_result_latched <= '0';
 							transfer_index <= 0;
 							if external_source = '0' then
@@ -300,16 +313,31 @@ begin
 						end if;
 
 					when UNPACK_OPERAND =>
-						operand_latched <= unpacked_operand;
-						state <= EXECUTE;
+						if format_latched = FPU_FORMAT_PACKED then
+							state <= START_PACKED_CONVERSION;
+						else
+							operand_latched <= unpacked_operand;
+							state <= EXECUTE;
+						end if;
+
+					when START_PACKED_CONVERSION =>
+						state <= WAIT_PACKED_CONVERSION;
+
+					when WAIT_PACKED_CONVERSION =>
+						if packed_conversion_done = '1' then
+							operand_latched <= packed_conversion_result;
+							conversion_status_latched <= packed_conversion_status;
+							state <= EXECUTE;
+						end if;
 
 					when EXECUTE =>
 						if extract_latched = '1' then
 							result_latched <= extracted_result;
-							status_latched <= extracted_status;
+							status_latched <= extracted_status or
+								conversion_status_latched;
 							write_result_latched <= '1';
 						else
-							status := (others => '0');
+							status := conversion_status_latched;
 							result := operand_latched;
 							if operand_class = FPU_CLASS_SIGNALING_NAN then
 								status(6) := '1';

@@ -27,6 +27,11 @@ architecture test of tb_tg68k_fpu_binary_controller is
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
 	signal exception_enable : std_logic_vector(7 downto 0) := (others => '0');
+	signal packed_conversion_start : std_logic;
+	signal packed_conversion_source : std_logic_vector(95 downto 0);
+	signal packed_conversion_result : fpu_extended_t;
+	signal packed_conversion_status : std_logic_vector(7 downto 0);
+	signal packed_conversion_done : std_logic;
 	signal memory_ready : std_logic;
 	signal memory_error : std_logic := '0';
 	signal retry : std_logic := '0';
@@ -81,6 +86,15 @@ begin
 			when x"00002006" | x"00002008" => memory_read_data <= x"0000";
 			when x"0000200A" => memory_read_data <= x"0123";
 			when x"00003001" => memory_read_data <= x"AB01";
+			when x"00005000" => memory_read_data <= x"0000";
+			when x"00005002" => memory_read_data <= x"0001";
+			when x"00005004" => memory_read_data <= x"5000";
+			when x"00005006" | x"00005008" | x"0000500A" =>
+				memory_read_data <= x"0000";
+			when x"00005200" => memory_read_data <= x"7FFF";
+			when x"00005202" | x"00005204" | x"00005206" |
+					x"00005208" => memory_read_data <= x"0000";
+			when x"0000520A" => memory_read_data <= x"0042";
 			when others => memory_read_data <= x"0000";
 		end case;
 	end process;
@@ -101,6 +115,11 @@ begin
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			exception_enable => exception_enable,
+			packed_conversion_start => packed_conversion_start,
+			packed_conversion_source => packed_conversion_source,
+			packed_conversion_done => packed_conversion_done,
+			packed_conversion_result => packed_conversion_result,
+			packed_conversion_status => packed_conversion_status,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -124,6 +143,19 @@ begin
 			busy => busy,
 			done => done,
 			bus_error_exception => bus_error_exception
+		);
+
+	packed_converter : entity work.TG68K_FPU_Packed_To_Extended
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => packed_conversion_start,
+			source => packed_conversion_source,
+			rounding_mode => rounding_mode,
+			result => packed_conversion_result,
+			exception_status => packed_conversion_status,
+			busy => open,
+			done => packed_conversion_done
 		);
 
 	monitor : process(clk)
@@ -580,7 +612,33 @@ begin
 			report "memory single FADD controller mismatch" severity failure;
 
 		clear_observations;
+		operand_format <= FPU_FORMAT_PACKED;
+		effective_address <= x"00005000";
+		fp_register_data <= x"40008000000000000000";
+		start_operation;
+		finish_operation;
+		assert trace_count = 6 and trace_address(0) = x"00005000" and
+			trace_address(5) = x"0000500A" and
+			observed_fp_data = x"4000E000000000000000" and
+			observed_status = x"00"
+			report "packed memory FADD controller mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00005200";
+		exception_enable <= x"40";
+		start_operation;
+		finish_operation;
+		assert trace_count = 6 and trace_address(0) = x"00005200" and
+			trace_address(5) = x"0000520A" and fp_write_count = 0 and
+			observed_status = x"40" and observed_cc = "0001"
+			report "packed signaling-NaN FADD controller mismatch"
+			severity failure;
+		exception_enable <= x"00";
+
+		clear_observations;
 		operation <= FPU_OP_MUL;
+		operand_format <= FPU_FORMAT_SINGLE;
+		effective_address <= x"00001000";
 		fp_register_data <= x"40008000000000000000";
 		start_operation;
 		finish_operation;

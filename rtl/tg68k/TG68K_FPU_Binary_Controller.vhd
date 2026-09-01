@@ -30,6 +30,11 @@ entity TG68K_FPU_Binary_Controller is
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 		exception_enable : in std_logic_vector(7 downto 0);
+		packed_conversion_start : out std_logic;
+		packed_conversion_source : out std_logic_vector(95 downto 0);
+		packed_conversion_done : in std_logic;
+		packed_conversion_result : in fpu_extended_t;
+		packed_conversion_status : in std_logic_vector(7 downto 0);
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -61,6 +66,7 @@ end entity;
 
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
+		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION,
 		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
 		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT,
 		WAIT_SINE_COSINE, WAIT_SINE_COSINE_SECONDARY, COMMIT_COSINE,
@@ -160,6 +166,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal condition_codes_latched : std_logic_vector(3 downto 0) :=
 		(others => '0');
 	signal status_latched : std_logic_vector(7 downto 0) := (others => '0');
+	signal conversion_status_latched : std_logic_vector(7 downto 0) :=
+		(others => '0');
 	signal quotient_latched : std_logic_vector(7 downto 0) := (others => '0');
 	signal write_result_latched : std_logic := '0';
 	signal transfer_index : natural range 0 to 5 := 0;
@@ -248,11 +256,12 @@ begin
 	rounded_condition_codes <= add_subtract_compare_codes
 		when compare_latched = '1' else fpu_condition_codes(rounded_result);
 
-	rounded_exceptions : process(selected_base_status, compare_latched,
+	rounded_exceptions : process(selected_base_status, conversion_status_latched,
+			compare_latched,
 			rounded_inexact, rounded_overflow, rounded_underflow)
 		variable status : std_logic_vector(7 downto 0);
 	begin
-		status := selected_base_status;
+		status := selected_base_status or conversion_status_latched;
 		if compare_latched = '0' then
 			status(4) := rounded_overflow;
 			status(3) := rounded_underflow;
@@ -550,6 +559,8 @@ begin
 		memory_nuds <= '0';
 		memory_nlds <= '0';
 		memory_function_code <= function_code_latched;
+		packed_conversion_start <= '0';
+		packed_conversion_source <= external_buffer;
 		fp_register_write <= '0';
 		fp_register_write_data <= result_latched;
 		fp_register_write_cosine <= '0';
@@ -584,6 +595,7 @@ begin
 			(status_latched(5) = '1' and operr_enable_latched = '1') or
 			(status_latched(2) = '1' and dz_enable_latched = '1');
 		case state is
+			when START_PACKED_CONVERSION => packed_conversion_start <= '1';
 			when COMMIT_COSINE =>
 				fp_register_write_data <= cosine_result_latched;
 				fp_register_write_cosine <= '1';
@@ -654,6 +666,7 @@ begin
 				cosine_result_latched <= (others => '0');
 				condition_codes_latched <= (others => '0');
 				status_latched <= (others => '0');
+				conversion_status_latched <= (others => '0');
 				quotient_latched <= (others => '0');
 				write_result_latched <= '0';
 				transfer_index <= 0;
@@ -840,6 +853,7 @@ begin
 							dz_enable_latched <= exception_enable(2);
 							external_buffer <= (others => '0');
 							status_latched <= (others => '0');
+							conversion_status_latched <= (others => '0');
 							transfer_index <= 0;
 							if external_source = '0' then
 								source_latched <= fp_register_data;
@@ -879,8 +893,22 @@ begin
 						end if;
 
 					when UNPACK_OPERAND =>
-						source_latched <= unpacked_operand;
-						state <= CAPTURE_DESTINATION;
+						if format_latched = FPU_FORMAT_PACKED then
+							state <= START_PACKED_CONVERSION;
+						else
+							source_latched <= unpacked_operand;
+							state <= CAPTURE_DESTINATION;
+						end if;
+
+					when START_PACKED_CONVERSION =>
+						state <= WAIT_PACKED_CONVERSION;
+
+					when WAIT_PACKED_CONVERSION =>
+						if packed_conversion_done = '1' then
+							source_latched <= packed_conversion_result;
+							conversion_status_latched <= packed_conversion_status;
+							state <= CAPTURE_DESTINATION;
+						end if;
 
 					when CAPTURE_DESTINATION =>
 						destination_latched <= fp_register_data;
