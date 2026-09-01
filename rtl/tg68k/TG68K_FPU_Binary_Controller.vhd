@@ -61,8 +61,8 @@ end entity;
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
-		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT, COMMIT,
-		BUS_ERROR_WAIT, COMPLETE);
+		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT,
+		WAIT_SINE_COSINE, COMMIT, BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -137,6 +137,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal arc_tangent_latched : std_logic := '0';
 	signal arc_sine_latched : std_logic := '0';
 	signal arc_cosine_latched : std_logic := '0';
+	signal sine_cosine_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -192,6 +193,10 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal arc_tangent_done : std_logic;
 	signal arc_tangent_round_input : fpu_round_input_t;
 	signal arc_tangent_base_status : std_logic_vector(7 downto 0);
+	signal sine_cosine_start : std_logic;
+	signal sine_cosine_done : std_logic;
+	signal sine_cosine_round_input : fpu_round_input_t;
+	signal sine_cosine_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -210,6 +215,7 @@ begin
 		exponential_round_input when exponential_latched = '1' else
 		logarithm_round_input when logarithm_latched = '1' else
 		arc_tangent_round_input when arc_tangent_latched = '1' else
+		sine_cosine_round_input when sine_cosine_latched = '1' else
 		integer_round_input when integer_latched = '1' else
 		scale_round_input when scale_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
@@ -220,6 +226,7 @@ begin
 		exponential_base_status when exponential_latched = '1' else
 		logarithm_base_status when logarithm_latched = '1' else
 		arc_tangent_base_status when arc_tangent_latched = '1' else
+		sine_cosine_base_status when sine_cosine_latched = '1' else
 		integer_base_status when integer_latched = '1' else
 		scale_base_status when scale_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
@@ -442,6 +449,29 @@ begin
 			base_exception_status => arc_tangent_base_status
 		);
 
+	sine_cosine_start <= '1' when state = EXECUTE and
+		sine_cosine_latched = '1' else '0';
+
+	sine_cosine : entity work.TG68K_FPU_Sine_Cosine
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => sine_cosine_start,
+			source => source_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			busy => open,
+			done => sine_cosine_done,
+			round_input => sine_cosine_round_input,
+			base_exception_status => sine_cosine_base_status
+		);
+
 	integral_value : entity work.TG68K_FPU_Integer
 		generic map(
 			INCLUDE_ROUNDING_STAGE => false
@@ -584,6 +614,7 @@ begin
 				arc_tangent_latched <= '0';
 				arc_sine_latched <= '0';
 				arc_cosine_latched <= '0';
+				sine_cosine_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -751,6 +782,11 @@ begin
 							else
 								arc_cosine_latched <= '0';
 							end if;
+							if operation = FPU_OP_SIN then
+								sine_cosine_latched <= '1';
+							else
+								sine_cosine_latched <= '0';
+							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
 							function_code_latched <= function_code;
@@ -820,6 +856,8 @@ begin
 							state <= WAIT_LOGARITHM;
 						elsif arc_tangent_latched = '1' then
 							state <= WAIT_ARC_TANGENT;
+						elsif sine_cosine_latched = '1' then
+							state <= WAIT_SINE_COSINE;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -870,6 +908,14 @@ begin
 
 					when WAIT_ARC_TANGENT =>
 						if arc_tangent_done = '1' then
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_SINE_COSINE =>
+						if sine_cosine_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;

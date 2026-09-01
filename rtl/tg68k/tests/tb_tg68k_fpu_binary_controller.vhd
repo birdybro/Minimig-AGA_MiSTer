@@ -381,6 +381,16 @@ begin
 			report "register FACOS controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_SIN;
+		run_register_operation(x"3FFE8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFDF57743A2582F7F44" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FSIN controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_ATANH;
 		run_register_operation(x"3FFE8000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");
@@ -669,6 +679,16 @@ begin
 		assert fp_write_count = 0 and observed_status = x"04" and
 			observed_cc = "1010"
 			report "enabled FLOGN DZ suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SIN;
+		exception_enable <= x"20";
+		run_register_operation(x"7FFF8000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001"
+			report "enabled FSIN OPERR suppression mismatch"
 			severity failure;
 
 		clear_observations;

@@ -361,8 +361,16 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08BD#) := x"6580";
 		result(16#08BE#) := x"0000";
 		result(16#08BF#) := x"0B8C";
-		result(16#08C0#) := x"4E72";
-		result(16#08C1#) := x"2700";
+		result(16#08C0#) := x"F239";
+		result(16#08C1#) := x"458E";
+		result(16#08C2#) := x"0000";
+		result(16#08C3#) := x"1800";
+		result(16#08C4#) := x"F239";
+		result(16#08C5#) := x"6580";
+		result(16#08C6#) := x"0000";
+		result(16#08C7#) := x"0B90";
+		result(16#08C8#) := x"4E72";
+		result(16#08C9#) := x"2700";
 		return result;
 	end function;
 
@@ -405,6 +413,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal inverse_hyperbolic_tangent_result_write_count : natural range 0 to 2 := 0;
 	signal arc_sine_result_write_count : natural range 0 to 2 := 0;
 	signal arc_cosine_result_write_count : natural range 0 to 2 := 0;
+	signal sine_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -590,8 +599,11 @@ begin
 				if addr_out = x"00000B8C" or addr_out = x"00000B8E" then
 					arc_cosine_result_write_count <= arc_cosine_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B90" or addr_out = x"00000B92" then
+					sine_result_write_count <= sine_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001182" then
+			if busstate = "00" and addr_out = x"00001192" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -628,6 +640,7 @@ begin
 				inverse_hyperbolic_tangent_result_write_count = 2 and
 				arc_sine_result_write_count = 2 and
 				arc_cosine_result_write_count = 2 and
+				sine_result_write_count = 2 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -829,7 +842,13 @@ begin
 				to_hstring(memory(16#05C6#)) &
 				to_hstring(memory(16#05C7#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, arc sine, arc cosine, hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
+		assert sine_result_write_count = 2 and
+			memory(16#05C8#) = x"3EF5" and memory(16#05C9#) = x"7744"
+			report "TG68K FSIN instruction stream mismatch: " &
+				to_hstring(memory(16#05C8#)) &
+				to_hstring(memory(16#05C9#))
+			severity failure;
+		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, trigonometric and hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;
