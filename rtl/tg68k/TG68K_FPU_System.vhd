@@ -238,6 +238,8 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_status_write : std_logic;
 	signal binary_condition_codes_write : std_logic;
 	signal binary_condition_codes : std_logic_vector(3 downto 0);
+	signal binary_quotient_write : std_logic;
+	signal binary_quotient : std_logic_vector(7 downto 0);
 	signal binary_exception_status : std_logic_vector(7 downto 0);
 	signal binary_busy : std_logic;
 	signal binary_done : std_logic;
@@ -323,6 +325,7 @@ begin
 		decoded_operation = FPU_OP_SQRT or decoded_operation = FPU_OP_ADD or
 		decoded_operation = FPU_OP_SUB or
 		decoded_operation = FPU_OP_MUL or decoded_operation = FPU_OP_DIV or
+		decoded_operation = FPU_OP_MOD or decoded_operation = FPU_OP_REM or
 		decoded_operation = FPU_OP_SCALE or decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		(decoded_format /= FPU_FORMAT_PACKED and
@@ -697,6 +700,8 @@ begin
 			operation_status_write => binary_status_write,
 			condition_codes_write => binary_condition_codes_write,
 			operation_condition_codes => binary_condition_codes,
+			quotient_write => binary_quotient_write,
+			operation_quotient => binary_quotient,
 			operation_exception_status => binary_exception_status,
 			busy => binary_busy,
 			done => binary_done,
@@ -719,8 +724,8 @@ begin
 			operation_status_write => state_status_write,
 			condition_codes_write => state_condition_codes_write,
 			operation_condition_codes => state_condition_codes,
-			quotient_write => '0',
-			operation_quotient => (others => '0'),
+			quotient_write => binary_quotient_write,
+			operation_quotient => binary_quotient,
 			operation_exception_status => state_exception_status,
 			fp_registers_out => fp_registers_out,
 			fpcr_out => fpcr,

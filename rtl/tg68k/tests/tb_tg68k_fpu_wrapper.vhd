@@ -202,15 +202,32 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#0820#) := x"0000";
 		result(16#0821#) := x"0B38";
 		result(16#0822#) := x"F200";
-		result(16#0823#) := x"1FA8";
-		result(16#0824#) := x"F200";
-		result(16#0825#) := x"1FB8";
-		result(16#0826#) := x"F239";
-		result(16#0827#) := x"6780";
-		result(16#0828#) := x"0000";
-		result(16#0829#) := x"0B14";
-		result(16#082A#) := x"4E72";
-		result(16#082B#) := x"2700";
+		result(16#0823#) := x"12A1";
+		result(16#0824#) := x"F239";
+		result(16#0825#) := x"6680";
+		result(16#0826#) := x"0000";
+		result(16#0827#) := x"0B3C";
+		result(16#0828#) := x"F200";
+		result(16#0829#) := x"0E25";
+		result(16#082A#) := x"F239";
+		result(16#082B#) := x"6600";
+		result(16#082C#) := x"0000";
+		result(16#082D#) := x"0B40";
+		result(16#082E#) := x"F200";
+		result(16#082F#) := x"A800";
+		result(16#0830#) := x"23C0";
+		result(16#0831#) := x"0000";
+		result(16#0832#) := x"0B44";
+		result(16#0833#) := x"F200";
+		result(16#0834#) := x"1FA8";
+		result(16#0835#) := x"F200";
+		result(16#0836#) := x"1FB8";
+		result(16#0837#) := x"F239";
+		result(16#0838#) := x"6780";
+		result(16#0839#) := x"0000";
+		result(16#083A#) := x"0B14";
+		result(16#083B#) := x"4E72";
+		result(16#083C#) := x"2700";
 		return result;
 	end function;
 
@@ -239,6 +256,8 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal extraction_result_write_count : natural range 0 to 4 := 0;
 	signal integer_result_write_count : natural range 0 to 4 := 0;
 	signal scale_result_write_count : natural range 0 to 2 := 0;
+	signal remainder_result_write_count : natural range 0 to 4 := 0;
+	signal fpsr_result_write_count : natural range 0 to 2 := 0;
 	signal binary_result_write_count : natural range 0 to 8 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
@@ -364,6 +383,14 @@ begin
 				if addr_out = x"00000B38" or addr_out = x"00000B3A" then
 					scale_result_write_count <= scale_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B3C" or addr_out = x"00000B3E" or
+						addr_out = x"00000B40" or addr_out = x"00000B42" then
+					remainder_result_write_count <=
+						remainder_result_write_count + 1;
+				end if;
+				if addr_out = x"00000B44" or addr_out = x"00000B46" then
+					fpsr_result_write_count <= fpsr_result_write_count + 1;
+				end if;
 				if addr_out = x"00000B10" or addr_out = x"00000B12" or
 						addr_out = x"00000B14" or addr_out = x"00000B16" or
 						addr_out = x"00000B18" or addr_out = x"00000B1A" or
@@ -371,7 +398,7 @@ begin
 					binary_result_write_count <= binary_result_write_count + 1;
 				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001054" then
+			if busstate = "00" and addr_out = x"00001076" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -394,6 +421,8 @@ begin
 				extraction_result_write_count = 4 and
 				integer_result_write_count = 4 and
 				scale_result_write_count = 2 and
+				remainder_result_write_count = 4 and
+				fpsr_result_write_count = 2 and
 				binary_result_write_count = 8 and post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -477,6 +506,18 @@ begin
 			report "TG68K FPU scale instruction stream mismatch: " &
 				to_hstring(memory(16#059C#)) & to_hstring(memory(16#059D#))
 			severity failure;
+		assert remainder_result_write_count = 4 and
+			memory(16#059E#) = x"0000" and memory(16#059F#) = x"0000" and
+			memory(16#05A0#) = x"0000" and memory(16#05A1#) = x"0000"
+			report "TG68K FPU remainder instruction stream mismatch: " &
+				to_hstring(memory(16#059E#)) & to_hstring(memory(16#059F#)) &
+				" " & to_hstring(memory(16#05A0#)) &
+				to_hstring(memory(16#05A1#))
+			severity failure;
+		assert fpsr_result_write_count = 2 and memory(16#05A2#) = x"4582"
+			report "TG68K FPU remainder quotient byte mismatch: " &
+				to_hstring(memory(16#05A2#)) & to_hstring(memory(16#05A3#))
+			severity failure;
 		assert binary_result_write_count = 8 and
 			memory(16#0588#) = x"4320" and memory(16#0589#) = x"0001" and
 			memory(16#058A#) = x"0000" and memory(16#058B#) = x"0000" and
@@ -490,7 +531,7 @@ begin
 				" " & to_hstring(memory(16#058E#)) &
 				to_hstring(memory(16#058F#))
 			severity failure;
-		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, arithmetic, FMOVEM, and control state"
+		report "PASS: TG68K instruction-level FPU moves, extraction, integral rounding, scaling, remainder, arithmetic, FMOVEM, and control state"
 			severity note;
 		stop;
 	end process;

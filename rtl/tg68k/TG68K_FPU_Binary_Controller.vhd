@@ -48,6 +48,8 @@ entity TG68K_FPU_Binary_Controller is
 		operation_status_write : out std_logic;
 		condition_codes_write : out std_logic;
 		operation_condition_codes : out std_logic_vector(3 downto 0);
+		quotient_write : out std_logic;
+		operation_quotient : out std_logic_vector(7 downto 0);
 		operation_exception_status : out std_logic_vector(7 downto 0);
 
 		busy : out std_logic;
@@ -58,8 +60,8 @@ end entity;
 
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
-		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT, COMMIT,
-		BUS_ERROR_WAIT, COMPLETE);
+		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
+		WAIT_REMAINDER, COMMIT, BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -117,6 +119,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal integer_latched : std_logic := '0';
 	signal force_round_zero_latched : std_logic := '0';
 	signal scale_latched : std_logic := '0';
+	signal remainder_latched : std_logic := '0';
+	signal ieee_remainder_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -133,6 +137,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal condition_codes_latched : std_logic_vector(3 downto 0) :=
 		(others => '0');
 	signal status_latched : std_logic_vector(7 downto 0) := (others => '0');
+	signal quotient_latched : std_logic_vector(7 downto 0) := (others => '0');
 	signal write_result_latched : std_logic := '0';
 	signal transfer_index : natural range 0 to 5 := 0;
 
@@ -154,6 +159,11 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal integer_base_status : std_logic_vector(7 downto 0);
 	signal scale_round_input : fpu_round_input_t;
 	signal scale_base_status : std_logic_vector(7 downto 0);
+	signal remainder_start : std_logic;
+	signal remainder_done : std_logic;
+	signal remainder_round_input : fpu_round_input_t;
+	signal remainder_base_status : std_logic_vector(7 downto 0);
+	signal remainder_quotient : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -167,12 +177,14 @@ begin
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
 	selected_round_input <= divide_round_input when divide_latched = '1' else
 		square_root_round_input when square_root_latched = '1' else
+		remainder_round_input when remainder_latched = '1' else
 		integer_round_input when integer_latched = '1' else
 		scale_round_input when scale_latched = '1' else
 		multiply_round_input when multiply_latched = '1' else
 		add_subtract_round_input;
 	selected_base_status <= divide_base_status when divide_latched = '1' else
 		square_root_base_status when square_root_latched = '1' else
+		remainder_base_status when remainder_latched = '1' else
 		integer_base_status when integer_latched = '1' else
 		scale_base_status when scale_latched = '1' else
 		multiply_base_status when multiply_latched = '1' else
@@ -285,6 +297,32 @@ begin
 			base_exception_status => square_root_base_status
 		);
 
+	remainder_start <= '1' when state = EXECUTE and
+		remainder_latched = '1' else '0';
+
+	remainder : entity work.TG68K_FPU_Remainder
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => remainder_start,
+			ieee_remainder => ieee_remainder_latched,
+			source => source_latched,
+			destination => destination_latched,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			quotient => remainder_quotient,
+			busy => open,
+			done => remainder_done,
+			round_input => remainder_round_input,
+			base_exception_status => remainder_base_status
+		);
+
 	integral_value : entity work.TG68K_FPU_Integer
 		generic map(
 			INCLUDE_ROUNDING_STAGE => false
@@ -336,7 +374,8 @@ begin
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, result_latched,
 		condition_codes_latched, status_latched, write_result_latched,
-		snan_enable_latched, operr_enable_latched, dz_enable_latched)
+		quotient_latched, remainder_latched, snan_enable_latched,
+		operr_enable_latched, dz_enable_latched)
 		variable suppress_write : boolean;
 	begin
 		memory_request <= '0';
@@ -352,6 +391,8 @@ begin
 		operation_status_write <= '0';
 		condition_codes_write <= '0';
 		operation_condition_codes <= condition_codes_latched;
+		quotient_write <= '0';
+		operation_quotient <= quotient_latched;
 		operation_exception_status <= status_latched;
 		done <= '0';
 		bus_error_exception <= '0';
@@ -381,6 +422,7 @@ begin
 			when COMMIT =>
 				operation_status_write <= '1';
 				condition_codes_write <= '1';
+				quotient_write <= remainder_latched;
 				if write_result_latched = '1' and not suppress_write then
 					fp_register_write <= '1';
 				end if;
@@ -406,6 +448,8 @@ begin
 				integer_latched <= '0';
 				force_round_zero_latched <= '0';
 				scale_latched <= '0';
+				remainder_latched <= '0';
+				ieee_remainder_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -420,6 +464,7 @@ begin
 				result_latched <= (others => '0');
 				condition_codes_latched <= (others => '0');
 				status_latched <= (others => '0');
+				quotient_latched <= (others => '0');
 				write_result_latched <= '0';
 				transfer_index <= 0;
 			else
@@ -468,6 +513,16 @@ begin
 								scale_latched <= '1';
 							else
 								scale_latched <= '0';
+							end if;
+							if operation = FPU_OP_MOD or operation = FPU_OP_REM then
+								remainder_latched <= '1';
+							else
+								remainder_latched <= '0';
+							end if;
+							if operation = FPU_OP_REM then
+								ieee_remainder_latched <= '1';
+							else
+								ieee_remainder_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
@@ -530,6 +585,8 @@ begin
 							state <= WAIT_DIVIDE;
 						elsif square_root_latched = '1' then
 							state <= WAIT_SQUARE_ROOT;
+						elsif remainder_latched = '1' then
+							state <= WAIT_REMAINDER;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -550,6 +607,15 @@ begin
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_REMAINDER =>
+						if remainder_done = '1' then
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							quotient_latched <= remainder_quotient;
 							state <= COMMIT;
 						end if;
 

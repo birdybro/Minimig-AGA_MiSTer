@@ -180,6 +180,26 @@ def round_scale(source: Fraction, destination: Fraction, precision: int,
                         precision, mode)
 
 
+def round_remainder(source: Fraction, destination: Fraction, precision: int,
+                    mode: int, ieee_remainder: bool) -> tuple[int, int, int, int]:
+    ratio = abs(destination / source)
+    quotient, remainder = divmod(ratio.numerator, ratio.denominator)
+    if ieee_remainder and rounding_increment(
+            0, 0, quotient, remainder, ratio.denominator):
+        quotient += 1
+    quotient_sign = int((source < 0) != (destination < 0))
+    signed_quotient = -quotient if quotient_sign else quotient
+    exact_result = destination - source * signed_quotient
+    quotient_byte = (quotient_sign << 7) | (quotient & 0x7F)
+    if exact_result == 0:
+        result_sign = int(destination < 0)
+        result = result_sign << 79
+        return result, (result_sign << 3) | 4, 0, quotient_byte
+    result, condition_codes, status = round_binary(
+        exact_result, precision, mode)
+    return result, condition_codes, status, quotient_byte
+
+
 def precision_name(index: int) -> tuple[str, int]:
     return (
         ("FPU_PRECISION_EXTENDED", 64),

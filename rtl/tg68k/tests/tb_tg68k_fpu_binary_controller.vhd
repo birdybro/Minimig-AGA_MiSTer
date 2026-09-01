@@ -43,6 +43,8 @@ architecture test of tb_tg68k_fpu_binary_controller is
 	signal operation_status_write : std_logic;
 	signal condition_codes_write : std_logic;
 	signal operation_condition_codes : std_logic_vector(3 downto 0);
+	signal quotient_write : std_logic;
+	signal operation_quotient : std_logic_vector(7 downto 0);
 	signal operation_exception_status : std_logic_vector(7 downto 0);
 	signal busy : std_logic;
 	signal done : std_logic;
@@ -58,6 +60,8 @@ architecture test of tb_tg68k_fpu_binary_controller is
 	signal observed_fp_data : fpu_extended_t := (others => '0');
 	signal observed_status : std_logic_vector(7 downto 0) := (others => '0');
 	signal observed_cc : std_logic_vector(3 downto 0) := (others => '0');
+	signal quotient_write_count : natural range 0 to 2 := 0;
+	signal observed_quotient : std_logic_vector(7 downto 0) := (others => '0');
 	signal observed_bus_error : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -110,6 +114,8 @@ begin
 			operation_status_write => operation_status_write,
 			condition_codes_write => condition_codes_write,
 			operation_condition_codes => operation_condition_codes,
+			quotient_write => quotient_write,
+			operation_quotient => operation_quotient,
 			operation_exception_status => operation_exception_status,
 			busy => busy,
 			done => done,
@@ -125,6 +131,7 @@ begin
 				observed_nlds <= '0';
 				fp_write_count <= 0;
 				status_write_count <= 0;
+				quotient_write_count <= 0;
 				observed_bus_error <= '0';
 			else
 				if memory_ready = '1' then
@@ -144,6 +151,10 @@ begin
 					assert condition_codes_write = '1'
 						report "binary operation did not write FP condition codes"
 						severity failure;
+				end if;
+				if quotient_write = '1' then
+					quotient_write_count <= quotient_write_count + 1;
+					observed_quotient <= operation_quotient;
 				end if;
 				if bus_error_exception = '1' then
 					observed_bus_error <= '1';
@@ -279,6 +290,26 @@ begin
 			report "register FSCALE controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_MOD;
+		run_register_operation(x"40008000000000000000",
+			x"4001E000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFF8000000000000000" and
+			observed_status = x"00" and observed_cc = "0000" and
+			quotient_write_count = 1 and observed_quotient = x"03"
+			report "register FMOD controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_REM;
+		run_register_operation(x"40008000000000000000",
+			x"4001E000000000000000");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"BFFF8000000000000000" and
+			observed_status = x"00" and observed_cc = "1000" and
+			quotient_write_count = 1 and observed_quotient = x"04"
+			report "register FREM controller mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_CMP;
 		run_register_operation(x"4000C000000000000000",
 			x"40008000000000000000");
@@ -388,6 +419,16 @@ begin
 		assert fp_write_count = 0 and observed_status = x"20" and
 			observed_cc = "0001"
 			report "enabled OPERR destination suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_MOD;
+		run_register_operation(x"00000000000000000000",
+			x"3FFF8000000000000000");
+		assert fp_write_count = 0 and observed_status = x"20" and
+			observed_cc = "0001" and quotient_write_count = 1 and
+			observed_quotient = x"00"
+			report "enabled FMOD operand-error suppression mismatch"
 			severity failure;
 
 		clear_observations;

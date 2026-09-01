@@ -702,6 +702,23 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
+		start_instruction(x"F200", x"1321", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(6) = x"7FFF8000000000000000" and
+			fpsr(23 downto 16) = x"00" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FMOD operand-error exception mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
 		start_instruction(x"F200", x"1A26", '1');
 		command_word <= x"0000";
 		while instruction_done = '0' loop
@@ -767,6 +784,49 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "memory single FSCALE system result mismatch" severity failure;
 
+		integer_register_data <= x"00000007";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E21", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"3FFF8000000000000000" and
+			fpsr(23 downto 16) = x"03" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "register FMOD system result mismatch" severity failure;
+
+		integer_register_data <= x"00000007";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		start_instruction(x"F200", x"0E25", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert fp_registers(4) = x"BFFF8000000000000000" and
+			fpsr(23 downto 16) = x"04" and
+			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"00"
+			report "register FREM system result mismatch" severity failure;
+
+		integer_register_data <= x"00000007";
+		start_instruction(x"F202", x"4200", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		effective_address <= x"00009000";
+		function_code <= "101";
+		start_instruction(x"F210", x"4621", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009000" and
+			trace_address(1) = x"00009002" and trace_fc(1) = "101" and
+			fp_registers(4) = x"3FFF8000000000000000" and
+			fpsr(23 downto 16) = x"84" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
+			report "memory single FMOD system result mismatch" severity failure;
+
+		integer_register_data <= x"00000002";
 		start_instruction(x"F202", x"4200", '1');
 		command_word <= x"0000";
 		wait_done;
@@ -865,9 +925,9 @@ begin
 		wait until rising_edge(clk);
 		wait for 1 ns;
 
-		start_instruction(x"F200", x"0E21", '0');
+		start_instruction(x"F200", x"0E24", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "FMOD command was not explicitly reported as unimplemented"
+			report "FSGLDIV command was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 
