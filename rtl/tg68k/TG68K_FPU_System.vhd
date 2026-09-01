@@ -344,6 +344,7 @@ begin
 		decoded_operation = FPU_OP_SCALE or
 		decoded_operation = FPU_OP_ETOX or
 		decoded_operation = FPU_OP_TWOTOX or
+		decoded_operation = FPU_OP_TENTOX or
 		decoded_operation = FPU_OP_CMP) and
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION or
 		(decoded_format /= FPU_FORMAT_PACKED and

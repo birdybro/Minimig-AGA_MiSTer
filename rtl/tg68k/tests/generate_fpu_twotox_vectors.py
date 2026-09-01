@@ -115,7 +115,7 @@ begin
             nReset => nReset,
             start => start,
             source => source,
-            natural_base => '0',
+            exponential_base => FPU_EXP_BASE_TWO,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
             result => result,

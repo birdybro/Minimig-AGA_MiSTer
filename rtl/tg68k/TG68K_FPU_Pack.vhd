@@ -27,6 +27,8 @@ package TG68K_FPU_Pack is
 	type fpu_rounding_mode_t is (FPU_ROUND_NEAREST,
 		FPU_ROUND_ZERO, FPU_ROUND_MINUS_INFINITY,
 		FPU_ROUND_PLUS_INFINITY);
+	type fpu_exponential_base_t is (FPU_EXP_BASE_TWO, FPU_EXP_BASE_E,
+		FPU_EXP_BASE_TEN);
 	type fpu_data_class_t is (FPU_CLASS_ZERO, FPU_CLASS_NORMAL,
 		FPU_CLASS_INFINITY, FPU_CLASS_QUIET_NAN, FPU_CLASS_SIGNALING_NAN);
 	type fpu_round_input_t is record

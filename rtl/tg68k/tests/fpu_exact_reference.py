@@ -119,6 +119,76 @@ def round_binary(value: Fraction, precision: int, mode: int) -> tuple[int, int, 
     return encoded, condition_codes, status
 
 
+def binary_overflow_result(sign: int, precision: int, mode: int,
+                           maximum_exponent: int) -> tuple[int, int, int]:
+    overflow_to_infinity = mode == 0 or (
+        mode == 2 and sign == 1) or (mode == 3 and sign == 0)
+    if overflow_to_infinity:
+        encoded = (sign << 79) | (0x7FFF << 64) | (1 << 63)
+        condition_codes = (sign << 3) | 2
+    else:
+        significand = ((1 << precision) - 1) << (64 - precision)
+        encoded = encode_extended(sign, maximum_exponent, significand)
+        condition_codes = sign << 3
+    return encoded, condition_codes, 0x12
+
+
+def round_binary_precision(value: Fraction, precision: int,
+                           mode: int) -> tuple[int, int, int]:
+    exponent_ranges = {
+        24: (-126, 127),
+        53: (-1022, 1023),
+        64: (-16383, 16383),
+    }
+    minimum_exponent, maximum_exponent = exponent_ranges[precision]
+    sign = int(value < 0)
+    magnitude = abs(value)
+    if magnitude == 0:
+        return sign << 79, (sign << 3) | 4, 0
+
+    exponent = (
+        magnitude.numerator.bit_length() -
+        magnitude.denominator.bit_length()
+    )
+    if magnitude < power_of_two(exponent):
+        exponent -= 1
+    underflow = exponent < minimum_exponent or (
+        precision != 64 and exponent == minimum_exponent)
+    if exponent > maximum_exponent:
+        return binary_overflow_result(
+            sign, precision, mode, maximum_exponent)
+
+    if exponent < minimum_exponent:
+        quantum = power_of_two(minimum_exponent - (precision - 1))
+        scaled = magnitude / quantum
+        quotient, remainder = divmod(scaled.numerator, scaled.denominator)
+        if rounding_increment(mode, sign, quotient, remainder,
+                              scaled.denominator):
+            quotient += 1
+        rounded_magnitude = quotient * quantum
+        rounded_value = -rounded_magnitude if sign else rounded_magnitude
+        if rounded_value == 0:
+            encoded = sign << 79
+            condition_codes = (sign << 3) | 4
+        elif precision == 64:
+            encoded = (sign << 79) | quotient
+            condition_codes = sign << 3
+        else:
+            encoded, condition_codes, _ = round_binary(
+                rounded_value, 64, mode)
+        status = 0x08 | (0x02 if remainder != 0 else 0)
+        return encoded, condition_codes, status
+
+    encoded, condition_codes, status = round_binary(value, precision, mode)
+    rounded_exponent = ((encoded >> 64) & 0x7FFF) - 16383
+    if rounded_exponent > maximum_exponent:
+        return binary_overflow_result(
+            sign, precision, mode, maximum_exponent)
+    elif underflow:
+        status |= 0x08
+    return encoded, condition_codes, status
+
+
 def round_square_root(value: Fraction, precision: int,
                       mode: int) -> tuple[int, int, int]:
     if value <= 0:

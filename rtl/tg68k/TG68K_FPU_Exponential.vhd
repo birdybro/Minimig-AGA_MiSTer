@@ -23,7 +23,7 @@ entity TG68K_FPU_Exponential is
 		nReset : in std_logic;
 		start : in std_logic;
 		source : in fpu_extended_t;
-		natural_base : in std_logic;
+		exponential_base : in fpu_exponential_base_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -42,8 +42,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant FIXED_WIDTH : natural := FRACTION_BITS + 16;
 	type exponential_state_t is
-		(IDLE, SCALE_TO_BASE_TWO, MULTIPLY_LOG2, LOAD_CORDIC_ANGLE,
-			CORDIC, COMPLETE);
+		(IDLE, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO, MULTIPLY_LOG2,
+			LOAD_CORDIC_ANGLE, CORDIC, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
@@ -51,6 +51,8 @@ architecture rtl of TG68K_FPU_Exponential is
 		x"B17217F7D1CF79ABC9E3B398";
 	constant LOG2_E_FIXED : unsigned(FIXED_WIDTH downto 0) :=
 		unsigned'("1" & x"71547652B82FE1777D0FFDA0D23A");
+	constant LOG2_TEN_FIXED : unsigned(FIXED_WIDTH + 1 downto 0) :=
+		unsigned'("11" & x"5269E12F346E2BF924AFDBFD36BF");
 	constant CORDIC_INVERSE_GAIN : cordic_value_t :=
 		signed'(x"1351E87200EEC232964A4EC8F");
 	signal cordic_angle_rom : cordic_angle_rom_t := (
@@ -118,7 +120,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal multiply_index : natural range 0 to FRACTION_BITS - 1 := 0;
 	signal scale_magnitude_register : unsigned(FIXED_WIDTH - 1 downto 0) :=
 		(others => '0');
-	signal scale_accumulator : unsigned(FIXED_WIDTH + 1 downto 0) :=
+	signal scale_accumulator : unsigned(FIXED_WIDTH + 2 downto 0) :=
 		(others => '0');
 	signal scale_index : natural range 0 to FIXED_WIDTH - 1 := 0;
 	signal source_sign_latched : std_logic := '0';
@@ -244,8 +246,8 @@ begin
 		variable selected_nan : fpu_extended_t;
 		variable multiply_sum : unsigned(FRACTION_BITS downto 0);
 		variable next_accumulator : unsigned(FRACTION_BITS downto 0);
-		variable scale_sum : unsigned(FIXED_WIDTH + 1 downto 0);
-		variable next_scale : unsigned(FIXED_WIDTH + 1 downto 0);
+		variable scale_sum : unsigned(FIXED_WIDTH + 2 downto 0);
+		variable next_scale : unsigned(FIXED_WIDTH + 2 downto 0);
 		variable next_x : cordic_value_t;
 		variable next_y : cordic_value_t;
 		variable next_z : cordic_value_t;
@@ -340,8 +342,12 @@ begin
 									normalization_shift;
 								magnitude_fixed := (others => '0');
 								shift_amount := source_exponent + FRACTION_BITS - 63;
-								if (natural_base = '0' and source_exponent > 15) or
-										(natural_base = '1' and source_exponent > 13) then
+								if (exponential_base = FPU_EXP_BASE_TWO and
+										source_exponent > 15) or
+										(exponential_base = FPU_EXP_BASE_E and
+										source_exponent > 13) or
+										(exponential_base = FPU_EXP_BASE_TEN and
+										source_exponent > 12) then
 									if source(79) = '1' then
 										exponent_value := -65536;
 									else
@@ -372,11 +378,16 @@ begin
 										end if;
 										state <= COMPLETE;
 									else
-										if natural_base = '1' then
+										if exponential_base = FPU_EXP_BASE_E then
 											scale_magnitude_register <= magnitude_fixed;
 											scale_accumulator <= (others => '0');
 											scale_index <= 0;
-											state <= SCALE_TO_BASE_TWO;
+											state <= SCALE_E_TO_BASE_TWO;
+										elsif exponential_base = FPU_EXP_BASE_TEN then
+											scale_magnitude_register <= magnitude_fixed;
+											scale_accumulator <= (others => '0');
+											scale_index <= 0;
+											state <= SCALE_TEN_TO_BASE_TWO;
 										else
 											begin_reduced_exponential(
 												magnitude_fixed, source(79));
@@ -386,11 +397,16 @@ begin
 							end if;
 						end if;
 
-					when SCALE_TO_BASE_TWO =>
+					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
 						scale_sum := scale_accumulator;
 						if scale_magnitude_register(scale_index) = '1' then
-							scale_sum := scale_sum + resize(LOG2_E_FIXED,
-								FIXED_WIDTH + 2);
+							if state = SCALE_E_TO_BASE_TWO then
+								scale_sum := scale_sum + resize(LOG2_E_FIXED,
+									FIXED_WIDTH + 3);
+							else
+								scale_sum := scale_sum + resize(LOG2_TEN_FIXED,
+									FIXED_WIDTH + 3);
+							end if;
 						end if;
 						next_scale := shift_right(scale_sum, 1);
 						scale_accumulator <= next_scale;
