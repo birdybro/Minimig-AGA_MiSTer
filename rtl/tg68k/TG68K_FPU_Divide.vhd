@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Divide is
+	generic(
+		INCLUDE_ROUNDING_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -28,7 +31,9 @@ entity TG68K_FPU_Divide is
 		condition_codes : out std_logic_vector(3 downto 0);
 		exception_status : out std_logic_vector(7 downto 0);
 		busy : out std_logic;
-		done : out std_logic
+		done : out std_logic;
+		round_input : out fpu_round_input_t;
+		base_exception_status : out std_logic_vector(7 downto 0)
 	);
 end entity;
 
@@ -68,22 +73,38 @@ architecture rtl of TG68K_FPU_Divide is
 begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
+	round_input.data_class <= intermediate_class;
+	round_input.sign <= intermediate_sign;
+	round_input.exponent <= intermediate_exponent;
+	round_input.significand <= intermediate_significand;
+	round_input.special <= intermediate_special;
+	base_exception_status <= "0" & signaling_nan_detected &
+		operand_error_detected & "00" & divide_by_zero_detected & "00";
 
-	round_result : entity work.TG68K_FPU_Round
-		port map(
-			input_class => intermediate_class,
-			input_sign => intermediate_sign,
-			input_exponent => intermediate_exponent,
-			input_significand => intermediate_significand,
-			special_value => intermediate_special,
-			rounding_precision => rounding_precision,
-			rounding_mode => rounding_mode,
-			result => rounded_result,
-			inexact => rounded_inexact,
-			overflow => rounded_overflow,
-			underflow => rounded_underflow,
-			signaling_nan => open
-		);
+	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		round_result : entity work.TG68K_FPU_Round
+			port map(
+				input_class => intermediate_class,
+				input_sign => intermediate_sign,
+				input_exponent => intermediate_exponent,
+				input_significand => intermediate_significand,
+				special_value => intermediate_special,
+				rounding_precision => rounding_precision,
+				rounding_mode => rounding_mode,
+				result => rounded_result,
+				inexact => rounded_inexact,
+				overflow => rounded_overflow,
+				underflow => rounded_underflow,
+				signaling_nan => open
+			);
+	end generate;
+
+	without_rounding : if not INCLUDE_ROUNDING_STAGE generate
+		rounded_result <= (others => '0');
+		rounded_inexact <= '0';
+		rounded_overflow <= '0';
+		rounded_underflow <= '0';
+	end generate;
 
 	outputs : process(rounded_result, signaling_nan_detected,
 			operand_error_detected, divide_by_zero_detected, rounded_inexact,

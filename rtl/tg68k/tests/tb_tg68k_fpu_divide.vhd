@@ -37,7 +37,9 @@ begin
 			condition_codes => condition_codes,
 			exception_status => exception_status,
 			busy => busy,
-			done => done
+			done => done,
+			round_input => open,
+			base_exception_status => open
 		);
 
 	stimulus : process

@@ -133,19 +133,46 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal transfer_index : natural range 0 to 5 := 0;
 
 	signal unpacked_operand : fpu_extended_t;
-	signal add_subtract_result : fpu_extended_t;
-	signal add_subtract_condition_codes : std_logic_vector(3 downto 0);
-	signal add_subtract_status : std_logic_vector(7 downto 0);
-	signal multiply_result : fpu_extended_t;
-	signal multiply_condition_codes : std_logic_vector(3 downto 0);
-	signal multiply_status : std_logic_vector(7 downto 0);
+	signal add_subtract_round_input : fpu_round_input_t;
+	signal add_subtract_base_status : std_logic_vector(7 downto 0);
+	signal add_subtract_compare_codes : std_logic_vector(3 downto 0);
+	signal multiply_round_input : fpu_round_input_t;
+	signal multiply_base_status : std_logic_vector(7 downto 0);
 	signal divide_start : std_logic;
 	signal divide_done : std_logic;
-	signal divide_result : fpu_extended_t;
-	signal divide_condition_codes : std_logic_vector(3 downto 0);
-	signal divide_status : std_logic_vector(7 downto 0);
+	signal divide_round_input : fpu_round_input_t;
+	signal divide_base_status : std_logic_vector(7 downto 0);
+	signal selected_round_input : fpu_round_input_t;
+	signal selected_base_status : std_logic_vector(7 downto 0);
+	signal rounded_result : fpu_extended_t;
+	signal rounded_inexact : std_logic;
+	signal rounded_overflow : std_logic;
+	signal rounded_underflow : std_logic;
+	signal rounded_condition_codes : std_logic_vector(3 downto 0);
+	signal rounded_status : std_logic_vector(7 downto 0);
 begin
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
+	selected_round_input <= divide_round_input when divide_latched = '1' else
+		multiply_round_input when multiply_latched = '1' else
+		add_subtract_round_input;
+	selected_base_status <= divide_base_status when divide_latched = '1' else
+		multiply_base_status when multiply_latched = '1' else
+		add_subtract_base_status;
+	rounded_condition_codes <= add_subtract_compare_codes
+		when compare_latched = '1' else fpu_condition_codes(rounded_result);
+
+	rounded_exceptions : process(selected_base_status, compare_latched,
+			rounded_inexact, rounded_overflow, rounded_underflow)
+		variable status : std_logic_vector(7 downto 0);
+	begin
+		status := selected_base_status;
+		if compare_latched = '0' then
+			status(4) := rounded_overflow;
+			status(3) := rounded_underflow;
+			status(1) := rounded_inexact;
+		end if;
+		rounded_status <= status;
+	end process;
 
 	unpack : entity work.TG68K_FPU_Convert
 		port map(
@@ -158,6 +185,9 @@ begin
 		);
 
 	add_subtract : entity work.TG68K_FPU_Add_Subtract
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			source => source_latched,
 			destination => destination_latched,
@@ -165,23 +195,34 @@ begin
 			compare_only => compare_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
-			result => add_subtract_result,
-			condition_codes => add_subtract_condition_codes,
-			exception_status => add_subtract_status
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			round_input => add_subtract_round_input,
+			base_exception_status => add_subtract_base_status,
+			compare_result_condition_codes => add_subtract_compare_codes
 		);
 
 	multiply : entity work.TG68K_FPU_Multiply
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			source => source_latched,
 			destination => destination_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
-			result => multiply_result,
-			condition_codes => multiply_condition_codes,
-			exception_status => multiply_status
+			result => open,
+			condition_codes => open,
+			exception_status => open,
+			round_input => multiply_round_input,
+			base_exception_status => multiply_base_status
 		);
 
 	divide : entity work.TG68K_FPU_Divide
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => nReset,
@@ -190,11 +231,29 @@ begin
 			destination => destination_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
-			result => divide_result,
-			condition_codes => divide_condition_codes,
-			exception_status => divide_status,
+			result => open,
+			condition_codes => open,
+			exception_status => open,
 			busy => open,
-			done => divide_done
+			done => divide_done,
+			round_input => divide_round_input,
+			base_exception_status => divide_base_status
+		);
+
+	shared_round : entity work.TG68K_FPU_Round
+		port map(
+			input_class => selected_round_input.data_class,
+			input_sign => selected_round_input.sign,
+			input_exponent => selected_round_input.exponent,
+			input_significand => selected_round_input.significand,
+			special_value => selected_round_input.special,
+			rounding_precision => precision_latched,
+			rounding_mode => mode_latched,
+			result => rounded_result,
+			inexact => rounded_inexact,
+			overflow => rounded_overflow,
+			underflow => rounded_underflow,
+			signaling_nan => open
 		);
 
 	outputs : process(state, format_latched, address_latched,
@@ -367,24 +426,18 @@ begin
 					when EXECUTE =>
 						if divide_latched = '1' then
 							state <= WAIT_DIVIDE;
-						elsif multiply_latched = '1' then
-							result_latched <= multiply_result;
-							condition_codes_latched <= multiply_condition_codes;
-							status_latched <= multiply_status;
-							state <= COMMIT;
 						else
-							result_latched <= add_subtract_result;
-							condition_codes_latched <=
-								add_subtract_condition_codes;
-							status_latched <= add_subtract_status;
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
 							state <= COMMIT;
 						end if;
 
 					when WAIT_DIVIDE =>
 						if divide_done = '1' then
-							result_latched <= divide_result;
-							condition_codes_latched <= divide_condition_codes;
-							status_latched <= divide_status;
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
 							state <= COMMIT;
 						end if;
 

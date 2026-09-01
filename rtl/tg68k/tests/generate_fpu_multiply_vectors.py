@@ -94,17 +94,48 @@ architecture test of tb_tg68k_fpu_multiply_differential is
     signal result_value : fpu_extended_t;
     signal condition_codes : std_logic_vector(3 downto 0);
     signal exception_status : std_logic_vector(7 downto 0);
+    signal round_input_value : fpu_round_input_t;
+    signal base_exception_status : std_logic_vector(7 downto 0);
+    signal rounded_inexact : std_logic;
+    signal rounded_overflow : std_logic;
+    signal rounded_underflow : std_logic;
 begin
     dut : entity work.TG68K_FPU_Multiply
+        generic map(
+            INCLUDE_ROUNDING_STAGE => false
+        )
         port map(
             source => source_value,
             destination => destination_value,
             rounding_precision => precision_value,
             rounding_mode => mode_value,
-            result => result_value,
-            condition_codes => condition_codes,
-            exception_status => exception_status
+            result => open,
+            condition_codes => open,
+            exception_status => open,
+            round_input => round_input_value,
+            base_exception_status => base_exception_status
         );
+
+    shared_round : entity work.TG68K_FPU_Round
+        port map(
+            input_class => round_input_value.data_class,
+            input_sign => round_input_value.sign,
+            input_exponent => round_input_value.exponent,
+            input_significand => round_input_value.significand,
+            special_value => round_input_value.special,
+            rounding_precision => precision_value,
+            rounding_mode => mode_value,
+            result => result_value,
+            inexact => rounded_inexact,
+            overflow => rounded_overflow,
+            underflow => rounded_underflow,
+            signaling_nan => open
+        );
+
+    condition_codes <= fpu_condition_codes(result_value);
+    exception_status <= base_exception_status(7 downto 5) &
+        rounded_overflow & rounded_underflow & base_exception_status(2) &
+        rounded_inexact & base_exception_status(0);
 
     stimulus : process
     begin

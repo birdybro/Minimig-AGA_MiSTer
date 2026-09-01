@@ -24,7 +24,9 @@ begin
 			rounding_mode => rounding_mode,
 			result => result,
 			condition_codes => condition_codes,
-			exception_status => exception_status
+			exception_status => exception_status,
+			round_input => open,
+			base_exception_status => open
 		);
 
 	stimulus : process

@@ -29,6 +29,13 @@ package TG68K_FPU_Pack is
 		FPU_ROUND_PLUS_INFINITY);
 	type fpu_data_class_t is (FPU_CLASS_ZERO, FPU_CLASS_NORMAL,
 		FPU_CLASS_INFINITY, FPU_CLASS_QUIET_NAN, FPU_CLASS_SIGNALING_NAN);
+	type fpu_round_input_t is record
+		data_class : fpu_data_class_t;
+		sign : std_logic;
+		exponent : signed(16 downto 0);
+		significand : fpu_significand_grs_t;
+		special : fpu_extended_t;
+	end record;
 	type fpu_exception_t is (FPU_EXCEPTION_NONE, FPU_EXCEPTION_BSUN,
 		FPU_EXCEPTION_SNAN, FPU_EXCEPTION_OPERR, FPU_EXCEPTION_OVFL,
 		FPU_EXCEPTION_UNFL, FPU_EXCEPTION_DZ, FPU_EXCEPTION_INEX2,
