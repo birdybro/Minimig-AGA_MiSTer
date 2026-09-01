@@ -349,6 +349,7 @@ begin
 		decoded_operation = FPU_OP_ATAN or
 		decoded_operation = FPU_OP_SINH or
 		decoded_operation = FPU_OP_COSH or
+		decoded_operation = FPU_OP_TANH or
 		decoded_operation = FPU_OP_ETOXM1 or
 		decoded_operation = FPU_OP_ETOX or
 		decoded_operation = FPU_OP_TWOTOX or

@@ -27,6 +27,7 @@ entity TG68K_FPU_Exponential is
 		subtract_one : in std_logic;
 		hyperbolic_sine : in std_logic := '0';
 		hyperbolic_cosine : in std_logic := '0';
+		hyperbolic_tangent : in std_logic := '0';
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 
@@ -50,6 +51,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant SERIES_CUBIC_MIN_EXPONENT : integer := -32;
 	constant SINH_TINY_MAX_EXPONENT : integer := -33;
 	constant COSH_TINY_MAX_EXPONENT : integer := -34;
+	constant TANH_TINY_MAX_EXPONENT : integer := -33;
 	constant CUBE_SQUARE_LOW_BIT : natural := 112;
 	constant CUBE_ALIGNMENT_BASE : integer := 118;
 	constant NEGATIVE_REMAINDER_BOUND_BIT : natural := 118;
@@ -57,7 +59,9 @@ architecture rtl of TG68K_FPU_Exponential is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
 			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
 			MULTIPLY_LOG2, LOAD_CORDIC_ANGLE, CORDIC,
-			ALIGN_HYPERBOLIC, ALIGN_SUBTRACTION, NORMALIZE_SUBTRACTION,
+			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
+			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
+			NORMALIZE_SUBTRACTION,
 			WRITE_PENDING_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
@@ -142,6 +146,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal subtract_one_latched : std_logic := '0';
 	signal hyperbolic_sine_latched : std_logic := '0';
 	signal hyperbolic_cosine_latched : std_logic := '0';
+	signal hyperbolic_tangent_latched : std_logic := '0';
 	signal series_source_significand : unsigned(63 downto 0) :=
 		(others => '0');
 	signal series_exponent : signed(16 downto 0) := (others => '0');
@@ -158,6 +163,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal subtraction_exponent : signed(16 downto 0) := (others => '0');
 	signal subtraction_shift_count : natural range 0 to CORDIC_WIDTH := 0;
 	signal subtraction_sticky : std_logic := '0';
+	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
+	signal tangent_iteration : natural range 0 to 64 := 0;
 	signal pending_sign : std_logic := '0';
 	signal pending_exponent : signed(16 downto 0) := (others => '0');
 	signal pending_significand : fpu_significand_grs_t := (others => '0');
@@ -352,6 +359,51 @@ begin
 			end if;
 		end procedure;
 
+		procedure begin_hyperbolic_tangent_division(
+				constant numerator : in unsigned(CORDIC_WIDTH downto 0);
+				constant denominator : in unsigned(CORDIC_WIDTH downto 0);
+				constant prior_sticky : in std_logic) is
+		begin
+			subtraction_value <= numerator;
+			subtraction_one <= denominator;
+			subtraction_exponent <= (others => '0');
+			subtraction_sticky <= prior_sticky;
+			intermediate_sign <= source_sign_latched;
+			state <= NORMALIZE_HYPERBOLIC_TANGENT;
+		end procedure;
+
+		procedure complete_hyperbolic_tangent(
+				constant positive_exponential : in unsigned(CORDIC_WIDTH downto 0);
+				constant reciprocal_exponential : in unsigned(CORDIC_WIDTH downto 0);
+				constant binary_exponent : in signed(16 downto 0);
+				constant prior_sticky : in std_logic) is
+			variable numerator : unsigned(CORDIC_WIDTH downto 0);
+			variable denominator : unsigned(CORDIC_WIDTH downto 0);
+			variable exponent_integer : integer range 0 to 65535;
+		begin
+			exponent_integer := to_integer(binary_exponent);
+			if exponent_integer > CORDIC_WIDTH / 2 then
+				intermediate_class <= FPU_CLASS_NORMAL;
+				intermediate_sign <= source_sign_latched;
+				intermediate_exponent <= to_signed(-1, 17);
+				intermediate_significand <= (others => '1');
+				state <= COMPLETE;
+			elsif exponent_integer = 0 then
+				numerator := positive_exponential - reciprocal_exponential;
+				denominator := positive_exponential + reciprocal_exponential;
+				begin_hyperbolic_tangent_division(numerator, denominator,
+					prior_sticky);
+			else
+				subtraction_value <= positive_exponential;
+				subtraction_one <= reciprocal_exponential;
+				subtraction_exponent <= binary_exponent;
+				subtraction_shift_count <= 2 * exponent_integer;
+				subtraction_sticky <= prior_sticky;
+				intermediate_sign <= source_sign_latched;
+				state <= ALIGN_HYPERBOLIC;
+			end if;
+		end procedure;
+
 		procedure complete_exponential(
 			constant exponential_significand : in unsigned(CORDIC_WIDTH downto 0);
 			constant exponential_exponent : in signed(16 downto 0);
@@ -467,6 +519,9 @@ begin
 				elsif hyperbolic_cosine_latched = '1' then
 					complete_hyperbolic_cosine(unit_value, unit_value,
 						to_signed(exponent_value, 17), '0');
+				elsif hyperbolic_tangent_latched = '1' then
+					complete_hyperbolic_tangent(unit_value, unit_value,
+						to_signed(exponent_value, 17), '0');
 				else
 					complete_exponential(unit_value,
 						to_signed(exponent_value, 17), minus_one);
@@ -532,11 +587,15 @@ begin
 		variable next_cube : unsigned(79 downto 0);
 		variable next_cube_quotient : unsigned(79 downto 0);
 		variable division_trial : natural range 0 to 11;
+		variable cube_divisor : natural range 3 to 6;
 		variable next_subtraction : unsigned(CORDIC_WIDTH downto 0);
 		variable next_subtraction_one : unsigned(CORDIC_WIDTH downto 0);
 		variable subtraction_difference : unsigned(CORDIC_WIDTH downto 0);
 		variable next_subtraction_sticky : std_logic;
 		variable next_subtraction_exponent : signed(16 downto 0);
+		variable tangent_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable tangent_next_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable tangent_next_quotient : unsigned(65 downto 0);
 		variable series_base : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
@@ -559,6 +618,7 @@ begin
 				subtract_one_latched <= '0';
 				hyperbolic_sine_latched <= '0';
 				hyperbolic_cosine_latched <= '0';
+				hyperbolic_tangent_latched <= '0';
 				series_source_significand <= (others => '0');
 				series_exponent <= (others => '0');
 				series_multiplier <= (others => '0');
@@ -572,6 +632,8 @@ begin
 				subtraction_exponent <= (others => '0');
 				subtraction_shift_count <= 0;
 				subtraction_sticky <= '0';
+				tangent_quotient <= (others => '0');
+				tangent_iteration <= 0;
 				pending_sign <= '0';
 				pending_exponent <= (others => '0');
 				pending_significand <= (others => '0');
@@ -607,6 +669,7 @@ begin
 							subtract_one_latched <= subtract_one;
 							hyperbolic_sine_latched <= hyperbolic_sine;
 							hyperbolic_cosine_latched <= hyperbolic_cosine;
+							hyperbolic_tangent_latched <= hyperbolic_tangent;
 							series_source_significand <= (others => '0');
 							series_exponent <= (others => '0');
 							series_multiplier <= (others => '0');
@@ -620,6 +683,8 @@ begin
 							subtraction_exponent <= (others => '0');
 							subtraction_shift_count <= 0;
 							subtraction_sticky <= '0';
+							tangent_quotient <= (others => '0');
+							tangent_iteration <= 0;
 							pending_sign <= '0';
 							pending_exponent <= (others => '0');
 							pending_significand <= (others => '0');
@@ -649,7 +714,8 @@ begin
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
 									source_significand = 0 then
-								if subtract_one = '1' or hyperbolic_sine = '1' then
+								if subtract_one = '1' or hyperbolic_sine = '1' or
+										hyperbolic_tangent = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 									intermediate_sign <= source(79);
 								else
@@ -658,7 +724,11 @@ begin
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
-								if hyperbolic_cosine = '1' then
+								if hyperbolic_tangent = '1' then
+									intermediate_class <= FPU_CLASS_NORMAL;
+									intermediate_sign <= source(79);
+									intermediate_significand(66) <= '1';
+								elsif hyperbolic_cosine = '1' then
 									intermediate_class <= FPU_CLASS_INFINITY;
 								elsif hyperbolic_sine = '1' then
 									intermediate_class <= FPU_CLASS_INFINITY;
@@ -681,7 +751,35 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
-								if hyperbolic_cosine = '1' and
+								if hyperbolic_tangent = '1' and
+										source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
+									base_status(1) <= '1';
+									if source_exponent <= TANH_TINY_MAX_EXPONENT then
+										tiny_significand := shift_left(resize(
+											source_significand, 67), 3) - 1;
+										intermediate_class <= FPU_CLASS_NORMAL;
+										intermediate_sign <= source(79);
+										if tiny_significand(66) = '0' then
+											intermediate_exponent <= to_signed(
+												source_exponent - 1, 17);
+											intermediate_significand <= shift_left(
+												tiny_significand, 1);
+										else
+											intermediate_exponent <= to_signed(
+												source_exponent, 17);
+											intermediate_significand <= tiny_significand;
+										end if;
+										state <= COMPLETE;
+									else
+										series_source_significand <= source_significand;
+										series_exponent <= to_signed(source_exponent, 17);
+										series_multiplier <= source_significand;
+										series_multiplicand <= resize(source_significand, 128);
+										series_product <= (others => '0');
+										series_index <= 0;
+										state <= SQUARE_SMALL_ARGUMENT;
+									end if;
+								elsif hyperbolic_cosine = '1' and
 										source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
 									base_status(1) <= '1';
 									if source_exponent <= COSH_TINY_MAX_EXPONENT then
@@ -752,7 +850,11 @@ begin
 											source_exponent > 12) then
 										intermediate_class <= FPU_CLASS_NORMAL;
 										base_status(1) <= '1';
-										if hyperbolic_sine = '1' then
+										if hyperbolic_tangent = '1' then
+											intermediate_sign <= source(79);
+											intermediate_exponent <= to_signed(-1, 17);
+											intermediate_significand <= (others => '1');
+										elsif hyperbolic_sine = '1' then
 											intermediate_sign <= source(79);
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
@@ -803,6 +905,7 @@ begin
 										else
 											if hyperbolic_sine = '1' or
 													hyperbolic_cosine = '1' or
+													hyperbolic_tangent = '1' or
 													exponential_base = FPU_EXP_BASE_E then
 												scale_magnitude_register <= magnitude_fixed;
 												scale_accumulator <= (others => '0');
@@ -922,14 +1025,19 @@ begin
 						end if;
 
 					when DIVIDE_CUBE_TERM =>
+						if hyperbolic_tangent_latched = '1' then
+							cube_divisor := 3;
+						else
+							cube_divisor := 6;
+						end if;
 						division_trial := cube_remainder * 2;
 						if series_multiplicand(79 - series_index) = '1' then
 							division_trial := division_trial + 1;
 						end if;
 						next_cube_quotient := cube_accumulator;
-						if division_trial >= 6 then
+						if division_trial >= cube_divisor then
 							next_cube_quotient(79 - series_index) := '1';
-							division_trial := division_trial - 6;
+							division_trial := division_trial - cube_divisor;
 						end if;
 						if series_index = 79 then
 							series_base := shift_left(resize(
@@ -943,7 +1051,15 @@ begin
 							series_cube_correction := shift_left(resize(
 								next_cube_quotient, SERIES_WIDTH),
 								cube_alignment_shift);
-							if hyperbolic_sine_latched = '1' then
+							if hyperbolic_tangent_latched = '1' then
+								if division_trial = 0 then
+									series_value := series_base -
+										series_cube_correction + 1;
+								else
+									series_value := series_base -
+										series_cube_correction - 1;
+								end if;
+							elsif hyperbolic_sine_latched = '1' then
 								series_value := series_base + series_cube_correction;
 							elsif source_sign_latched = '0' then
 								series_value := series_base + series_correction +
@@ -978,7 +1094,8 @@ begin
 						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
 							if hyperbolic_sine_latched = '1' or
-									hyperbolic_cosine_latched = '1' then
+									hyperbolic_cosine_latched = '1' or
+									hyperbolic_tangent_latched = '1' then
 								begin_reduced_exponential(next_scale(
 									FIXED_WIDTH - 1 downto 0), '0', '0');
 							else
@@ -1007,6 +1124,9 @@ begin
 										result_exponent, '1');
 								elsif hyperbolic_cosine_latched = '1' then
 									complete_hyperbolic_cosine(unit_result, unit_result,
+										result_exponent, '1');
+								elsif hyperbolic_tangent_latched = '1' then
+									complete_hyperbolic_tangent(unit_result, unit_result,
 										result_exponent, '1');
 								else
 									if subtract_one_latched = '0' then
@@ -1071,6 +1191,11 @@ begin
 									resize(next_y, CORDIC_WIDTH + 1);
 								complete_hyperbolic_cosine(unsigned(cordic_sum),
 									unsigned(cordic_difference), result_exponent, '0');
+							elsif hyperbolic_tangent_latched = '1' then
+								cordic_difference := resize(next_x, CORDIC_WIDTH + 1) -
+									resize(next_y, CORDIC_WIDTH + 1);
+								complete_hyperbolic_tangent(unsigned(cordic_sum),
+									unsigned(cordic_difference), result_exponent, '0');
 							else
 								complete_exponential(unsigned(cordic_sum), result_exponent,
 									subtract_one_latched);
@@ -1096,7 +1221,8 @@ begin
 						next_subtraction_sticky := subtraction_sticky or
 							subtraction_one(0);
 						if subtraction_shift_count = 1 then
-							if hyperbolic_sine_latched = '1' and
+							if (hyperbolic_sine_latched = '1' or
+									hyperbolic_tangent_latched = '1') and
 									next_subtraction_sticky = '1' then
 								next_subtraction_one := next_subtraction_one + 1;
 							end if;
@@ -1105,6 +1231,14 @@ begin
 									next_subtraction_one;
 								complete_hyperbolic_sum(subtraction_difference,
 									subtraction_exponent, next_subtraction_sticky);
+							elsif hyperbolic_tangent_latched = '1' then
+								subtraction_difference := subtraction_value -
+									next_subtraction_one;
+								next_subtraction := subtraction_value +
+									next_subtraction_one;
+								begin_hyperbolic_tangent_division(
+									subtraction_difference, next_subtraction,
+									next_subtraction_sticky);
 							else
 								subtraction_difference := subtraction_value -
 									next_subtraction_one;
@@ -1122,6 +1256,51 @@ begin
 							subtraction_one <= next_subtraction_one;
 							subtraction_shift_count <= subtraction_shift_count - 1;
 							subtraction_sticky <= next_subtraction_sticky;
+						end if;
+
+					when NORMALIZE_HYPERBOLIC_TANGENT =>
+						if subtraction_value >= subtraction_one then
+							subtraction_value <= subtraction_value - subtraction_one;
+							tangent_quotient <= (0 => '1', others => '0');
+							tangent_iteration <= 0;
+							intermediate_class <= FPU_CLASS_NORMAL;
+							intermediate_exponent <= subtraction_exponent;
+							state <= DIVIDE_HYPERBOLIC_TANGENT;
+						else
+							subtraction_value <= shift_left(subtraction_value, 1);
+							subtraction_exponent <= subtraction_exponent - 1;
+						end if;
+
+					when DIVIDE_HYPERBOLIC_TANGENT =>
+						tangent_shifted_remainder := shift_left(
+							subtraction_value, 1);
+						tangent_next_quotient := shift_left(tangent_quotient, 1);
+						if tangent_shifted_remainder >= subtraction_one then
+							tangent_next_remainder := tangent_shifted_remainder -
+								subtraction_one;
+							tangent_next_quotient(0) := '1';
+						else
+							tangent_next_remainder := tangent_shifted_remainder;
+							tangent_next_quotient(0) := '0';
+						end if;
+						subtraction_value <= tangent_next_remainder;
+						tangent_quotient <= tangent_next_quotient;
+						if tangent_iteration = 64 then
+							intermediate_significand(66 downto 3) <=
+								tangent_next_quotient(65 downto 2);
+							intermediate_significand(2) <=
+								tangent_next_quotient(1);
+							intermediate_significand(1) <=
+								tangent_next_quotient(0);
+							if tangent_next_remainder /= 0 or
+									subtraction_sticky = '1' then
+								intermediate_significand(0) <= '1';
+							else
+								intermediate_significand(0) <= '0';
+							end if;
+							state <= COMPLETE;
+						else
+							tangent_iteration <= tangent_iteration + 1;
 						end if;
 
 					when ALIGN_SUBTRACTION =>

@@ -129,6 +129,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_minus_one_latched : std_logic := '0';
 	signal hyperbolic_sine_latched : std_logic := '0';
 	signal hyperbolic_cosine_latched : std_logic := '0';
+	signal hyperbolic_tangent_latched : std_logic := '0';
 	signal logarithm_latched : std_logic := '0';
 	signal logarithm_add_one_latched : std_logic := '0';
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
@@ -374,6 +375,7 @@ begin
 			subtract_one => exponential_minus_one_latched,
 			hyperbolic_sine => hyperbolic_sine_latched,
 			hyperbolic_cosine => hyperbolic_cosine_latched,
+			hyperbolic_tangent => hyperbolic_tangent_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -567,6 +569,7 @@ begin
 				exponential_minus_one_latched <= '0';
 				hyperbolic_sine_latched <= '0';
 				hyperbolic_cosine_latched <= '0';
+				hyperbolic_tangent_latched <= '0';
 				logarithm_latched <= '0';
 				logarithm_add_one_latched <= '0';
 				logarithm_base_latched <= FPU_LOG_BASE_E;
@@ -658,7 +661,8 @@ begin
 									operation = FPU_OP_TENTOX or
 									operation = FPU_OP_ETOXM1 or
 									operation = FPU_OP_SINH or
-									operation = FPU_OP_COSH then
+									operation = FPU_OP_COSH or
+									operation = FPU_OP_TANH then
 								exponential_latched <= '1';
 							else
 								exponential_latched <= '0';
@@ -666,7 +670,8 @@ begin
 							if operation = FPU_OP_ETOX or
 									operation = FPU_OP_ETOXM1 or
 									operation = FPU_OP_SINH or
-									operation = FPU_OP_COSH then
+									operation = FPU_OP_COSH or
+									operation = FPU_OP_TANH then
 								exponential_base_latched <= FPU_EXP_BASE_E;
 							elsif operation = FPU_OP_TENTOX then
 								exponential_base_latched <= FPU_EXP_BASE_TEN;
@@ -687,6 +692,11 @@ begin
 								hyperbolic_cosine_latched <= '1';
 							else
 								hyperbolic_cosine_latched <= '0';
+							end if;
+							if operation = FPU_OP_TANH then
+								hyperbolic_tangent_latched <= '1';
+							else
+								hyperbolic_tangent_latched <= '0';
 							end if;
 							if operation = FPU_OP_LOGNP1 or
 									operation = FPU_OP_LOGN or

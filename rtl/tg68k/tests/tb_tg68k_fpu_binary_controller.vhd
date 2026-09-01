@@ -189,7 +189,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 400
+				assert cycle_count < 520
 					report "FPU binary controller did not complete"
 					severity failure;
 			end loop;
@@ -379,6 +379,16 @@ begin
 			status_write_count = 1 and observed_status = x"02" and
 			observed_cc = "0000" and trace_count = 0
 			report "register FCOSH controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_TANH;
+		run_register_operation(x"3FFF8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FFEC2F7D5A8A79CA2AC" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FTANH controller mismatch" severity failure;
 
 		clear_observations;
 		operation <= FPU_OP_INT;

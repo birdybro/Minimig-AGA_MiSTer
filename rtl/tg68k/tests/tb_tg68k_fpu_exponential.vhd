@@ -17,6 +17,7 @@ architecture test of tb_tg68k_fpu_exponential is
 	signal subtract_one : std_logic := '0';
 	signal hyperbolic_sine : std_logic := '0';
 	signal hyperbolic_cosine : std_logic := '0';
+	signal hyperbolic_tangent : std_logic := '0';
 	signal rounding_precision : fpu_rounding_precision_t :=
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
@@ -38,6 +39,7 @@ begin
 			subtract_one => subtract_one,
 			hyperbolic_sine => hyperbolic_sine,
 			hyperbolic_cosine => hyperbolic_cosine,
+			hyperbolic_tangent => hyperbolic_tangent,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			result => result,
@@ -61,7 +63,8 @@ begin
 				FPU_EXP_BASE_TWO;
 			constant subtract_one_value : std_logic := '0';
 			constant hyperbolic_sine_value : std_logic := '0';
-			constant hyperbolic_cosine_value : std_logic := '0') is
+			constant hyperbolic_cosine_value : std_logic := '0';
+			constant hyperbolic_tangent_value : std_logic := '0') is
 			variable iteration_count : natural := 0;
 		begin
 			wait until falling_edge(clk);
@@ -70,6 +73,7 @@ begin
 			subtract_one <= subtract_one_value;
 			hyperbolic_sine <= hyperbolic_sine_value;
 			hyperbolic_cosine <= hyperbolic_cosine_value;
+			hyperbolic_tangent <= hyperbolic_tangent_value;
 			rounding_precision <= precision_value;
 			rounding_mode <= mode_value;
 			start <= '1';
@@ -80,7 +84,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				iteration_count := iteration_count + 1;
-				assert iteration_count < 370
+				assert iteration_count < 520
 					report "exponential operation did not complete" severity failure;
 			end loop;
 			assert iteration_count = expected_iterations
@@ -306,6 +310,43 @@ begin
 		execute(x"3FDD8000000000000000", FPU_PRECISION_EXTENDED,
 			FPU_ROUND_PLUS_INFINITY, x"3FFF8000000000000001", x"02", 0,
 			FPU_EXP_BASE_E, '0', '0', '1');
+
+		execute(x"00000000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"00000000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"80000000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"80000000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"7FFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFF8000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"FFFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFFF8000000000000000", x"00", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"7FFFC123456789ABCDEF", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"7FFFC123456789ABCDEF", x"00", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"7FFFA123456789ABCDEF", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"7FFFE123456789ABCDEF", x"40", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"3FFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFEC2F7D5A8A79CA2AC", x"02", 407,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"BFFF8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"BFFEC2F7D5A8A79CA2AC", x"02", 407,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"3FFE8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFDEC9A9EBAB4579B29", x"02", 406,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"3FFFC000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FFEE7B7CBC36FABBB07", x"02", 409,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"3FE58000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_NEAREST, x"3FE4FFFFFFFFFFFFFAAB", x"02", 209,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
+		execute(x"3FDE8000000000000000", FPU_PRECISION_EXTENDED,
+			FPU_ROUND_ZERO, x"3FDDFFFFFFFFFFFFFFFF", x"02", 0,
+			FPU_EXP_BASE_E, '0', '0', '0', '1');
 
 		report "PASS: MC68882 exponential and hyperbolic operations"
 			severity note;
