@@ -54,7 +54,7 @@ architecture rtl of TG68K_FPU_Logarithm is
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_INPUT, LOAD_CORDIC_ANGLE, CORDIC, MULTIPLY_LN2,
-			SCALE_TO_BASE_TWO, NORMALIZE_RESULT, WRITE_PENDING_RESULT,
+			SCALE_LOGARITHM_BASE, NORMALIZE_RESULT, WRITE_PENDING_RESULT,
 			COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
@@ -63,6 +63,8 @@ architecture rtl of TG68K_FPU_Logarithm is
 		x"B17217F7D1CF79ABC9E3B398";
 	constant LOG2_E_FIXED : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		unsigned'("1" & x"71547652B82FE1777D0FFDA0D23A");
+	constant LOG10_E_FIXED : unsigned(RESULT_WIDTH - 1 downto 0) :=
+		unsigned'("0" & x"6F2DEC549B9438CA9AADD557D69A");
 	signal cordic_angle_rom : cordic_angle_rom_t := (
 		0 => (others => '0'),
 		1 => signed'(x"08C9F53D5681854BB520CC6AB"),
@@ -163,6 +165,8 @@ architecture rtl of TG68K_FPU_Logarithm is
 		(others => '0');
 	signal base_scale_index : natural range 0 to RESULT_WIDTH - 1 := 0;
 	signal scaling_series : std_logic := '0';
+	signal scaling_natural_log : std_logic := '0';
+	signal base_scale_sign : std_logic := '0';
 	signal normalization_value : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalization_exponent : signed(16 downto 0) :=
@@ -263,6 +267,29 @@ begin
 			end if;
 		end procedure;
 
+		procedure begin_base_ten_scale(constant natural_log : in signed(
+				RESULT_WIDTH - 1 downto 0)) is
+			variable magnitude : unsigned(RESULT_WIDTH - 1 downto 0);
+		begin
+			if natural_log = 0 then
+				begin_fixed_result(natural_log);
+			else
+				if natural_log < 0 then
+					magnitude := unsigned(-natural_log);
+					base_scale_sign <= '1';
+				else
+					magnitude := unsigned(natural_log);
+					base_scale_sign <= '0';
+				end if;
+				base_scale_multiplier <= shift_left(magnitude, 1);
+				base_scale_accumulator <= (others => '0');
+				base_scale_index <= 0;
+				scaling_series <= '0';
+				scaling_natural_log <= '1';
+				state <= SCALE_LOGARITHM_BASE;
+			end if;
+		end procedure;
+
 		procedure begin_log_combine(
 				constant fractional_log : in signed(RESULT_WIDTH - 1 downto 0);
 				constant range_exponent : in signed(16 downto 0);
@@ -283,8 +310,11 @@ begin
 					base_scale_accumulator <= (others => '0');
 					base_scale_index <= 0;
 					scaling_series <= '0';
-					state <= SCALE_TO_BASE_TWO;
+					scaling_natural_log <= '0';
+					state <= SCALE_LOGARITHM_BASE;
 				end if;
+			elsif base_value = FPU_LOG_BASE_TEN and exponent_integer = 0 then
+				begin_base_ten_scale(fractional_log);
 			elsif exponent_integer = 0 then
 				begin_fixed_result(fractional_log);
 			else
@@ -336,9 +366,12 @@ begin
 			elsif series_result(SERIES_NORMAL_BIT) = '1' then
 				final_significand(66 downto 1) := series_result(
 					SERIES_NORMAL_BIT downto SERIES_NORMAL_BIT - 65);
-			else
+			elsif series_result(SERIES_NORMAL_BIT - 1) = '1' then
 				final_significand(66 downto 1) := series_result(
 					SERIES_NORMAL_BIT - 1 downto SERIES_NORMAL_BIT - 66);
+			else
+				final_significand(66 downto 1) := series_result(
+					SERIES_NORMAL_BIT - 2 downto SERIES_NORMAL_BIT - 67);
 			end if;
 			final_significand(0) := '1';
 			pending_sign <= source_sign_latched;
@@ -346,8 +379,10 @@ begin
 				pending_exponent <= result_exponent + 1;
 			elsif series_result(SERIES_NORMAL_BIT) = '1' then
 				pending_exponent <= result_exponent;
-			else
+			elsif series_result(SERIES_NORMAL_BIT - 1) = '1' then
 				pending_exponent <= result_exponent - 1;
+			else
+				pending_exponent <= result_exponent - 2;
 			end if;
 			pending_significand <= final_significand;
 			state <= WRITE_PENDING_RESULT;
@@ -356,13 +391,14 @@ begin
 		procedure complete_small_series(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
 		begin
-			if logarithm_base_latched = FPU_LOG_BASE_TWO then
+			if logarithm_base_latched /= FPU_LOG_BASE_E then
 				base_scale_multiplier <= shift_left(resize(series_result,
 					RESULT_WIDTH), 1);
 				base_scale_accumulator <= (others => '0');
 				base_scale_index <= 0;
 				scaling_series <= '1';
-				state <= SCALE_TO_BASE_TWO;
+				scaling_natural_log <= '0';
+				state <= SCALE_LOGARITHM_BASE;
 			else
 				write_small_series_result(series_result, series_exponent);
 			end if;
@@ -389,6 +425,7 @@ begin
 		variable next_ln2 : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable base_scale_sum : unsigned(RESULT_WIDTH downto 0);
 		variable next_base_scale : unsigned(RESULT_WIDTH downto 0);
+		variable base_scale_constant : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable scaled_series : unsigned(SERIES_WIDTH downto 0);
 		variable scaled_series_result : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable combined_log : signed(RESULT_WIDTH - 1 downto 0);
@@ -442,6 +479,8 @@ begin
 				base_scale_accumulator <= (others => '0');
 				base_scale_index <= 0;
 				scaling_series <= '0';
+				scaling_natural_log <= '0';
+				base_scale_sign <= '0';
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
 				pending_sign <= '0';
@@ -494,6 +533,8 @@ begin
 							base_scale_accumulator <= (others => '0');
 							base_scale_index <= 0;
 							scaling_series <= '0';
+							scaling_natural_log <= '0';
+							base_scale_sign <= '0';
 							normalization_value <= (others => '0');
 							normalization_exponent <= (others => '0');
 							pending_sign <= '0';
@@ -553,7 +594,7 @@ begin
 										intermediate_class <= FPU_CLASS_ZERO;
 										state <= COMPLETE;
 									else
-										if logarithm_base = FPU_LOG_BASE_E or
+										if logarithm_base /= FPU_LOG_BASE_TWO or
 												source_significand /= x"8000000000000000" then
 											base_status(1) <= '1';
 										end if;
@@ -871,7 +912,11 @@ begin
 							else
 								combined_log := log_fraction + signed(next_ln2);
 							end if;
-							begin_fixed_result(combined_log);
+							if logarithm_base_latched = FPU_LOG_BASE_TEN then
+								begin_base_ten_scale(combined_log);
+							else
+								begin_fixed_result(combined_log);
+							end if;
 						else
 							ln2_accumulator <= next_ln2;
 							ln2_multiplier <= shift_right(ln2_multiplier, 1);
@@ -879,11 +924,16 @@ begin
 							ln2_index <= ln2_index + 1;
 						end if;
 
-					when SCALE_TO_BASE_TWO =>
+					when SCALE_LOGARITHM_BASE =>
 						base_scale_sum := base_scale_accumulator;
+						if logarithm_base_latched = FPU_LOG_BASE_TWO then
+							base_scale_constant := LOG2_E_FIXED;
+						else
+							base_scale_constant := LOG10_E_FIXED;
+						end if;
 						if base_scale_multiplier(base_scale_index) = '1' then
 							base_scale_sum := base_scale_sum + resize(
-								LOG2_E_FIXED, RESULT_WIDTH + 1);
+								base_scale_constant, RESULT_WIDTH + 1);
 						end if;
 						next_base_scale := shift_right(base_scale_sum, 1);
 						base_scale_accumulator <= next_base_scale;
@@ -902,6 +952,15 @@ begin
 									write_small_series_result(scaled_series(
 										SERIES_WIDTH - 1 downto 0), series_exponent);
 								end if;
+							elsif scaling_natural_log = '1' then
+								if base_scale_sign = '1' then
+									combined_log := -signed(next_base_scale(
+										RESULT_WIDTH - 1 downto 0));
+								else
+									combined_log := signed(next_base_scale(
+										RESULT_WIDTH - 1 downto 0));
+								end if;
+								begin_fixed_result(combined_log);
 							else
 								combined_log := shift_left(resize(input_exponent,
 									RESULT_WIDTH), FRACTION_BITS) + signed(

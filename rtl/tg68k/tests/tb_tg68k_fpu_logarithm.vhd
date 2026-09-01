@@ -109,8 +109,12 @@ begin
 		execute('0', x"40008000000000000000", x"3FFF8000000000000000", x"0", x"00");
 		execute('0', x"40018000000000000000", x"40008000000000000000", x"0", x"00");
 		execute('0', x"3FFE8000000000000000", x"BFFF8000000000000000", x"8", x"00");
+		logarithm_base <= FPU_LOG_BASE_TEN;
+		execute('0', x"4002A000000000000000", x"3FFF8000000000000000", x"0", x"02");
+		execute('0', x"40018000000000000000", x"3FFE9A209A84FBCFF799", x"0", x"02");
+		execute('0', x"3FFE8000000000000000", x"BFFD9A209A84FBCFF799", x"8", x"02");
 
-		report "PASS: FLOGNP1/FLOGN/FLOG2 datapath, domains, special values, and status"
+		report "PASS: FLOGNP1/FLOGN/FLOG2/FLOG10 datapath, domains, special values, and status"
 			severity note;
 		stop;
 	end process;

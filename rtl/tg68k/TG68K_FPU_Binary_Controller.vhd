@@ -639,6 +639,7 @@ begin
 							end if;
 							if operation = FPU_OP_LOGNP1 or
 									operation = FPU_OP_LOGN or
+									operation = FPU_OP_LOG10 or
 									operation = FPU_OP_LOG2 then
 								logarithm_latched <= '1';
 							else
@@ -651,6 +652,8 @@ begin
 							end if;
 							if operation = FPU_OP_LOG2 then
 								logarithm_base_latched <= FPU_LOG_BASE_TWO;
+							elsif operation = FPU_OP_LOG10 then
+								logarithm_base_latched <= FPU_LOG_BASE_TEN;
 							else
 								logarithm_base_latched <= FPU_LOG_BASE_E;
 							end if;
