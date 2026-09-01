@@ -206,6 +206,7 @@ begin
             start => start,
             cosine => {cosine_literal},
             tangent => {tangent_literal},
+			simultaneous => '0',
             source => source,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
@@ -215,6 +216,7 @@ begin
             busy => open,
             done => done,
             round_input => open,
+			secondary_round_input => open,
             base_exception_status => open
         );
 

@@ -1479,9 +1479,41 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FTAN system result mismatch" severity failure;
 
-		start_instruction(x"F200", x"0E30", '0');
+		clear_observations;
+		start_instruction(x"F200", x"0E35", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(4) = x"3FFED76AA47848677021" and
+			fp_registers(5) = x"3FFE8A51407DA8345C92" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "register FSINCOS system result mismatch" severity failure;
+
+		clear_observations;
+		start_instruction(x"F200", x"0E34", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 0 and
+			fp_registers(4) = x"3FFED76AA47848677021"
+			report "same-register FSINCOS did not retain sine" severity failure;
+
+		clear_observations;
+		effective_address <= x"00009004";
+		function_code <= "101";
+		start_instruction(x"F210", x"4737", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009004" and
+			trace_address(1) = x"00009006" and trace_fc(1) = "101" and
+			fp_registers(6) = x"3FFDF57743A2582F7F44" and
+			fp_registers(7) = x"3FFEE0A94032DBEA7CEE" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "memory single FSINCOS system result mismatch" severity failure;
+
+		start_instruction(x"F210", x"4E35", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "FSINCOS command was not explicitly reported as unimplemented"
+			report "packed FSINCOS was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 

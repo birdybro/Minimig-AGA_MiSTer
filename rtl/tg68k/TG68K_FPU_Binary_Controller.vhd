@@ -45,6 +45,7 @@ entity TG68K_FPU_Binary_Controller is
 
 		fp_register_write : out std_logic;
 		fp_register_write_data : out fpu_extended_t;
+		fp_register_write_cosine : out std_logic;
 		operation_status_write : out std_logic;
 		condition_codes_write : out std_logic;
 		operation_condition_codes : out std_logic_vector(3 downto 0);
@@ -62,7 +63,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
 		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT,
-		WAIT_SINE_COSINE, COMMIT, BUS_ERROR_WAIT, COMPLETE);
+		WAIT_SINE_COSINE, WAIT_SINE_COSINE_SECONDARY, COMMIT_COSINE,
+		COMMIT, BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -140,6 +142,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal sine_cosine_latched : std_logic := '0';
 	signal sine_cosine_cosine_latched : std_logic := '0';
 	signal sine_cosine_tangent_latched : std_logic := '0';
+	signal sine_cosine_simultaneous_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -153,6 +156,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal source_latched : fpu_extended_t := (others => '0');
 	signal destination_latched : fpu_extended_t := (others => '0');
 	signal result_latched : fpu_extended_t := (others => '0');
+	signal cosine_result_latched : fpu_extended_t := (others => '0');
 	signal condition_codes_latched : std_logic_vector(3 downto 0) :=
 		(others => '0');
 	signal status_latched : std_logic_vector(7 downto 0) := (others => '0');
@@ -198,6 +202,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal sine_cosine_start : std_logic;
 	signal sine_cosine_done : std_logic;
 	signal sine_cosine_round_input : fpu_round_input_t;
+	signal sine_cosine_secondary_round_input : fpu_round_input_t;
 	signal sine_cosine_base_status : std_logic_vector(7 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
@@ -217,6 +222,8 @@ begin
 		exponential_round_input when exponential_latched = '1' else
 		logarithm_round_input when logarithm_latched = '1' else
 		arc_tangent_round_input when arc_tangent_latched = '1' else
+		sine_cosine_secondary_round_input when
+			state = WAIT_SINE_COSINE_SECONDARY else
 		sine_cosine_round_input when sine_cosine_latched = '1' else
 		integer_round_input when integer_latched = '1' else
 		scale_round_input when scale_latched = '1' else
@@ -464,6 +471,7 @@ begin
 			start => sine_cosine_start,
 			cosine => sine_cosine_cosine_latched,
 			tangent => sine_cosine_tangent_latched,
+			simultaneous => sine_cosine_simultaneous_latched,
 			source => source_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
@@ -473,6 +481,7 @@ begin
 			busy => open,
 			done => sine_cosine_done,
 			round_input => sine_cosine_round_input,
+			secondary_round_input => sine_cosine_secondary_round_input,
 			base_exception_status => sine_cosine_base_status
 		);
 
@@ -527,6 +536,7 @@ begin
 
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, result_latched,
+		cosine_result_latched,
 		condition_codes_latched, status_latched, write_result_latched,
 		quotient_latched, remainder_latched, snan_enable_latched,
 		operr_enable_latched, dz_enable_latched)
@@ -542,6 +552,7 @@ begin
 		memory_function_code <= function_code_latched;
 		fp_register_write <= '0';
 		fp_register_write_data <= result_latched;
+		fp_register_write_cosine <= '0';
 		operation_status_write <= '0';
 		condition_codes_write <= '0';
 		operation_condition_codes <= condition_codes_latched;
@@ -573,6 +584,12 @@ begin
 			(status_latched(5) = '1' and operr_enable_latched = '1') or
 			(status_latched(2) = '1' and dz_enable_latched = '1');
 		case state is
+			when COMMIT_COSINE =>
+				fp_register_write_data <= cosine_result_latched;
+				fp_register_write_cosine <= '1';
+				if not suppress_write then
+					fp_register_write <= '1';
+				end if;
 			when COMMIT =>
 				operation_status_write <= '1';
 				condition_codes_write <= '1';
@@ -621,6 +638,7 @@ begin
 				sine_cosine_latched <= '0';
 				sine_cosine_cosine_latched <= '0';
 				sine_cosine_tangent_latched <= '0';
+				sine_cosine_simultaneous_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -633,6 +651,7 @@ begin
 				source_latched <= (others => '0');
 				destination_latched <= (others => '0');
 				result_latched <= (others => '0');
+				cosine_result_latched <= (others => '0');
 				condition_codes_latched <= (others => '0');
 				status_latched <= (others => '0');
 				quotient_latched <= (others => '0');
@@ -790,7 +809,8 @@ begin
 							end if;
 							if operation = FPU_OP_SIN or
 									operation = FPU_OP_COS or
-									operation = FPU_OP_TAN then
+									operation = FPU_OP_TAN or
+									operation = FPU_OP_SINCOS then
 								sine_cosine_latched <= '1';
 							else
 								sine_cosine_latched <= '0';
@@ -804,6 +824,11 @@ begin
 								sine_cosine_tangent_latched <= '1';
 							else
 								sine_cosine_tangent_latched <= '0';
+							end if;
+							if operation = FPU_OP_SINCOS then
+								sine_cosine_simultaneous_latched <= '1';
+							else
+								sine_cosine_simultaneous_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;
@@ -937,8 +962,22 @@ begin
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;
-							state <= COMMIT;
+							if sine_cosine_simultaneous_latched = '1' then
+								state <= WAIT_SINE_COSINE_SECONDARY;
+							else
+								state <= COMMIT;
+							end if;
 						end if;
+
+					when WAIT_SINE_COSINE_SECONDARY =>
+						if status_latched(3) = '1' then
+							cosine_result_latched <= x"3FFF8000000000000000";
+						else
+							cosine_result_latched <= rounded_result;
+						end if;
+						state <= COMMIT_COSINE;
+
+					when COMMIT_COSINE => state <= COMMIT;
 
 					when COMMIT => state <= COMPLETE;
 

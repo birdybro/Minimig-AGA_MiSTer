@@ -40,6 +40,7 @@ architecture test of tb_tg68k_fpu_binary_controller is
 	signal memory_function_code : std_logic_vector(2 downto 0);
 	signal fp_register_write : std_logic;
 	signal fp_register_write_data : fpu_extended_t;
+	signal fp_register_write_cosine : std_logic;
 	signal operation_status_write : std_logic;
 	signal condition_codes_write : std_logic;
 	signal operation_condition_codes : std_logic_vector(3 downto 0);
@@ -58,6 +59,8 @@ architecture test of tb_tg68k_fpu_binary_controller is
 	signal fp_write_count : natural range 0 to 2 := 0;
 	signal status_write_count : natural range 0 to 2 := 0;
 	signal observed_fp_data : fpu_extended_t := (others => '0');
+	signal observed_first_fp_data : fpu_extended_t := (others => '0');
+	signal cosine_write_count : natural range 0 to 1 := 0;
 	signal observed_status : std_logic_vector(7 downto 0) := (others => '0');
 	signal observed_cc : std_logic_vector(3 downto 0) := (others => '0');
 	signal quotient_write_count : natural range 0 to 2 := 0;
@@ -111,6 +114,7 @@ begin
 			memory_function_code => memory_function_code,
 			fp_register_write => fp_register_write,
 			fp_register_write_data => fp_register_write_data,
+			fp_register_write_cosine => fp_register_write_cosine,
 			operation_status_write => operation_status_write,
 			condition_codes_write => condition_codes_write,
 			operation_condition_codes => operation_condition_codes,
@@ -130,6 +134,7 @@ begin
 				observed_nuds <= '0';
 				observed_nlds <= '0';
 				fp_write_count <= 0;
+				cosine_write_count <= 0;
 				status_write_count <= 0;
 				quotient_write_count <= 0;
 				observed_bus_error <= '0';
@@ -141,8 +146,14 @@ begin
 					observed_nlds <= memory_nlds;
 				end if;
 				if fp_register_write = '1' then
+					if fp_write_count = 0 then
+						observed_first_fp_data <= fp_register_write_data;
+					end if;
 					fp_write_count <= fp_write_count + 1;
 					observed_fp_data <= fp_register_write_data;
+					if fp_register_write_cosine = '1' then
+						cosine_write_count <= cosine_write_count + 1;
+					end if;
 				end if;
 				if operation_status_write = '1' then
 					status_write_count <= status_write_count + 1;
@@ -409,6 +420,29 @@ begin
 			status_write_count = 1 and observed_status = x"02" and
 			observed_cc = "0000" and trace_count = 0
 			report "register FTAN controller mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SINCOS;
+		run_register_operation(x"3FFE8000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 2 and cosine_write_count = 1 and
+			observed_first_fp_data = x"3FFEE0A94032DBEA7CEE" and
+			observed_fp_data = x"3FFDF57743A2582F7F44" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "register FSINCOS controller mismatch" severity failure;
+
+		clear_observations;
+		rounding_precision <= FPU_PRECISION_SINGLE;
+		run_register_operation(x"00008000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 2 and cosine_write_count = 1 and
+			observed_first_fp_data = x"3FFF8000000000000000" and
+			observed_fp_data = x"00000000000000000000" and
+			observed_status = x"0A" and observed_cc = "0100"
+			report "FSINCOS sine-underflow result coupling mismatch"
+			severity failure;
+		rounding_precision <= FPU_PRECISION_EXTENDED;
 
 		clear_observations;
 		operation <= FPU_OP_ATANH;
@@ -718,6 +752,15 @@ begin
 		assert fp_write_count = 0 and observed_status = x"20" and
 			observed_cc = "0001"
 			report "enabled FTAN OPERR suppression mismatch"
+			severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SINCOS;
+		run_register_operation(x"7FFF8000000000000000",
+			x"40008000000000000000");
+		assert fp_write_count = 0 and cosine_write_count = 0 and
+			observed_status = x"20" and observed_cc = "0001"
+			report "enabled FSINCOS OPERR suppression mismatch"
 			severity failure;
 
 		clear_observations;

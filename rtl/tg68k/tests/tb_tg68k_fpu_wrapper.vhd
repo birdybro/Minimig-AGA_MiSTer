@@ -385,8 +385,20 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08D5#) := x"6680";
 		result(16#08D6#) := x"0000";
 		result(16#08D7#) := x"0B98";
-		result(16#08D8#) := x"4E72";
-		result(16#08D9#) := x"2700";
+		result(16#08D8#) := x"F239";
+		result(16#08D9#) := x"4737";
+		result(16#08DA#) := x"0000";
+		result(16#08DB#) := x"1800";
+		result(16#08DC#) := x"F239";
+		result(16#08DD#) := x"6700";
+		result(16#08DE#) := x"0000";
+		result(16#08DF#) := x"0B9C";
+		result(16#08E0#) := x"F239";
+		result(16#08E1#) := x"6780";
+		result(16#08E2#) := x"0000";
+		result(16#08E3#) := x"0BA0";
+		result(16#08E4#) := x"4E72";
+		result(16#08E5#) := x"2700";
 		return result;
 	end function;
 
@@ -432,6 +444,8 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal sine_result_write_count : natural range 0 to 2 := 0;
 	signal cosine_result_write_count : natural range 0 to 2 := 0;
 	signal tangent_result_write_count : natural range 0 to 2 := 0;
+	signal sincos_sine_result_write_count : natural range 0 to 2 := 0;
+	signal sincos_cosine_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -626,8 +640,16 @@ begin
 				if addr_out = x"00000B98" or addr_out = x"00000B9A" then
 					tangent_result_write_count <= tangent_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B9C" or addr_out = x"00000B9E" then
+					sincos_sine_result_write_count <=
+						sincos_sine_result_write_count + 1;
+				end if;
+				if addr_out = x"00000BA0" or addr_out = x"00000BA2" then
+					sincos_cosine_result_write_count <=
+						sincos_cosine_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"000011B2" then
+			if busstate = "00" and addr_out = x"000011CA" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -667,6 +689,8 @@ begin
 				sine_result_write_count = 2 and
 				cosine_result_write_count = 2 and
 				tangent_result_write_count = 2 and
+				sincos_sine_result_write_count = 2 and
+				sincos_cosine_result_write_count = 2 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -885,6 +909,18 @@ begin
 			report "TG68K FTAN instruction stream mismatch: " &
 				to_hstring(memory(16#05CC#)) &
 				to_hstring(memory(16#05CD#))
+			severity failure;
+		assert sincos_sine_result_write_count = 2 and
+			memory(16#05CE#) = x"3EF5" and memory(16#05CF#) = x"7744"
+			report "TG68K FSINCOS sine instruction stream mismatch: " &
+				to_hstring(memory(16#05CE#)) &
+				to_hstring(memory(16#05CF#))
+			severity failure;
+		assert sincos_cosine_result_write_count = 2 and
+			memory(16#05D0#) = x"3F60" and memory(16#05D1#) = x"A940"
+			report "TG68K FSINCOS cosine instruction stream mismatch: " &
+				to_hstring(memory(16#05D0#)) &
+				to_hstring(memory(16#05D1#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, trigonometric and hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

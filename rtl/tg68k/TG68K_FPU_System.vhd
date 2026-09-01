@@ -235,6 +235,7 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_external_data_register : std_logic;
 	signal binary_fp_write : std_logic;
 	signal binary_fp_write_data : fpu_extended_t;
+	signal binary_fp_write_cosine : std_logic;
 	signal binary_status_write : std_logic;
 	signal binary_condition_codes_write : std_logic;
 	signal binary_condition_codes : std_logic_vector(3 downto 0);
@@ -267,6 +268,8 @@ architecture rtl of TG68K_FPU_System is
 		(others => '0');
 	signal address_mode_latched : std_logic_vector(2 downto 0) := "000";
 	signal address_select_latched : std_logic_vector(2 downto 0) := "000";
+	signal cosine_destination_select_latched : std_logic_vector(2 downto 0) :=
+		"000";
 	signal integer_select_latched : std_logic_vector(2 downto 0) := "000";
 	signal transfer_bytes_latched : natural range 0 to 96 := 1;
 	signal rounding_precision : fpu_rounding_precision_t;
@@ -352,6 +355,7 @@ begin
 		decoded_operation = FPU_OP_SIN or
 		decoded_operation = FPU_OP_COS or
 		decoded_operation = FPU_OP_TAN or
+		decoded_operation = FPU_OP_SINCOS or
 		decoded_operation = FPU_OP_ATANH or
 		decoded_operation = FPU_OP_SINH or
 		decoded_operation = FPU_OP_COSH or
@@ -415,6 +419,8 @@ begin
 		decoded_source_register when binary_start = '1' else
 		decoded_source_register when unary_start = '1' else
 		move_source_select when move_start = '1' else
+		cosine_destination_select_latched when
+			binary_fp_write_cosine = '1' else
 		destination_select_latched when binary_busy = '1' else
 		destination_select_latched when constant_fp_write = '1' else
 		destination_select_latched when unary_fp_write = '1' else
@@ -549,6 +555,7 @@ begin
 			if nReset = '0' or null_restore = '1' then
 				source_select_latched <= (others => '0');
 				destination_select_latched <= (others => '0');
+				cosine_destination_select_latched <= (others => '0');
 				integer_select_latched <= (others => '0');
 				effective_address_latched <= (others => '0');
 				address_mode_latched <= "000";
@@ -559,6 +566,7 @@ begin
 				if operation_implemented = '1' then
 					source_select_latched <= move_source_select;
 					destination_select_latched <= decoded_destination_register;
+					cosine_destination_select_latched <= command_word(2 downto 0);
 					integer_select_latched <= integer_operand_select;
 					effective_address_latched <= address_update_base;
 					address_mode_latched <= opcode(5 downto 3);
@@ -759,6 +767,7 @@ begin
 			memory_function_code => binary_memory_fc,
 			fp_register_write => binary_fp_write,
 			fp_register_write_data => binary_fp_write_data,
+			fp_register_write_cosine => binary_fp_write_cosine,
 			operation_status_write => binary_status_write,
 			condition_codes_write => binary_condition_codes_write,
 			operation_condition_codes => binary_condition_codes,

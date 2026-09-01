@@ -24,6 +24,7 @@ entity TG68K_FPU_Sine_Cosine is
 		start : in std_logic;
 		cosine : in std_logic;
 		tangent : in std_logic;
+		simultaneous : in std_logic;
 		source : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
@@ -34,6 +35,7 @@ entity TG68K_FPU_Sine_Cosine is
 		busy : out std_logic;
 		done : out std_logic;
 		round_input : out fpu_round_input_t;
+		secondary_round_input : out fpu_round_input_t;
 		base_exception_status : out std_logic_vector(7 downto 0)
 	);
 end entity;
@@ -133,9 +135,47 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		return reduced;
 	end function;
 
+	function fixed_round_input(value : cordic_value_t)
+		return fpu_round_input_t is
+		variable converted : fpu_round_input_t;
+		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable normalized : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable highest_bit : natural range 0 to CORDIC_WIDTH - 1;
+	begin
+		converted.data_class := FPU_CLASS_ZERO;
+		converted.sign := '0';
+		converted.exponent := (others => '0');
+		converted.significand := (others => '0');
+		converted.special := (others => '0');
+		if value < 0 then
+			converted.sign := '1';
+			magnitude := unsigned(-value);
+		else
+			magnitude := unsigned(value);
+		end if;
+		if magnitude > UNIT_FIXED then
+			magnitude := UNIT_FIXED;
+		end if;
+		if magnitude /= 0 then
+			highest_bit := highest_set_bit(magnitude);
+			normalized := shift_left(magnitude, FRACTION_BITS - highest_bit);
+			converted.data_class := FPU_CLASS_NORMAL;
+			converted.exponent := to_signed(
+				integer(highest_bit) - FRACTION_BITS, 17);
+			converted.significand(66 downto 3) := normalized(
+				FRACTION_BITS downto FRACTION_BITS - 63);
+			converted.significand(2) := normalized(FRACTION_BITS - 64);
+			converted.significand(1) := normalized(FRACTION_BITS - 65);
+			converted.significand(0) := or_reduce(normalized(
+				FRACTION_BITS - 66 downto 0));
+		end if;
+		return converted;
+	end function;
+
 	signal state : sine_cosine_state_t := IDLE;
 	signal cosine_latched : std_logic := '0';
 	signal tangent_latched : std_logic := '0';
+	signal simultaneous_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
 	signal reciprocal_multiplier : unsigned(63 downto 0) := (others => '0');
@@ -162,6 +202,11 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal intermediate_exponent : signed(16 downto 0) := (others => '0');
 	signal intermediate_significand : fpu_significand_grs_t := (others => '0');
 	signal intermediate_special : fpu_extended_t := (others => '0');
+	signal secondary_class : fpu_data_class_t := FPU_CLASS_ZERO;
+	signal secondary_sign : std_logic := '0';
+	signal secondary_exponent : signed(16 downto 0) := (others => '0');
+	signal secondary_significand : fpu_significand_grs_t := (others => '0');
+	signal secondary_special : fpu_extended_t := (others => '0');
 	signal base_status : std_logic_vector(7 downto 0) := (others => '0');
 	signal rounded_result : fpu_extended_t;
 	signal rounded_inexact : std_logic;
@@ -175,6 +220,11 @@ begin
 	round_input.exponent <= intermediate_exponent;
 	round_input.significand <= intermediate_significand;
 	round_input.special <= intermediate_special;
+	secondary_round_input.data_class <= secondary_class;
+	secondary_round_input.sign <= secondary_sign;
+	secondary_round_input.exponent <= secondary_exponent;
+	secondary_round_input.significand <= secondary_significand;
+	secondary_round_input.special <= secondary_special;
 	base_exception_status <= base_status;
 
 	angle_rom_read : process(clk)
@@ -242,10 +292,10 @@ begin
 		variable next_z : cordic_value_t;
 		variable selected_value : cordic_value_t;
 		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable normalized_value : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable highest_bit : natural range 0 to CORDIC_WIDTH - 1;
-		variable final_significand : fpu_significand_grs_t;
 		variable final_sign : std_logic;
+		variable primary_input : fpu_round_input_t;
+		variable secondary_input : fpu_round_input_t;
+		variable cosine_value : cordic_value_t;
 		variable tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable tangent_denominator : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable normalized_numerator : unsigned(CORDIC_WIDTH - 1 downto 0);
@@ -264,6 +314,7 @@ begin
 				state <= IDLE;
 				cosine_latched <= '0';
 				tangent_latched <= '0';
+				simultaneous_latched <= '0';
 				source_sign_latched <= '0';
 				source_exponent_latched <= 0;
 				reciprocal_multiplier <= (others => '0');
@@ -286,6 +337,11 @@ begin
 				intermediate_exponent <= (others => '0');
 				intermediate_significand <= (others => '0');
 				intermediate_special <= (others => '0');
+				secondary_class <= FPU_CLASS_ZERO;
+				secondary_sign <= '0';
+				secondary_exponent <= (others => '0');
+				secondary_significand <= (others => '0');
+				secondary_special <= (others => '0');
 				base_status <= (others => '0');
 			else
 				case state is
@@ -298,6 +354,7 @@ begin
 							selected_nan(62) := '1';
 							cosine_latched <= cosine;
 							tangent_latched <= tangent;
+							simultaneous_latched <= simultaneous;
 							source_sign_latched <= source(79);
 							source_exponent_latched <= 0;
 							reciprocal_multiplier <= (others => '0');
@@ -320,12 +377,21 @@ begin
 							intermediate_exponent <= (others => '0');
 							intermediate_significand <= (others => '0');
 							intermediate_special <= (others => '0');
+							secondary_class <= FPU_CLASS_ZERO;
+							secondary_sign <= '0';
+							secondary_exponent <= (others => '0');
+							secondary_significand <= (others => '0');
+							secondary_special <= (others => '0');
 							base_status <= (others => '0');
 
 							if source_class = FPU_CLASS_QUIET_NAN or
 									source_class = FPU_CLASS_SIGNALING_NAN then
 								intermediate_class <= FPU_CLASS_QUIET_NAN;
 								intermediate_special <= selected_nan;
+								if simultaneous = '1' then
+									secondary_class <= FPU_CLASS_QUIET_NAN;
+									secondary_special <= selected_nan;
+								end if;
 								if source_class = FPU_CLASS_SIGNALING_NAN then
 									base_status(6) <= '1';
 								end if;
@@ -333,6 +399,10 @@ begin
 							elsif source_class = FPU_CLASS_INFINITY then
 								intermediate_class <= FPU_CLASS_QUIET_NAN;
 								intermediate_special <= FPU_RESET_NAN;
+								if simultaneous = '1' then
+									secondary_class <= FPU_CLASS_QUIET_NAN;
+									secondary_special <= FPU_RESET_NAN;
+								end if;
 								base_status(5) <= '1';
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_ZERO or
@@ -344,6 +414,11 @@ begin
 										(66 => '1', others => '0');
 								else
 									intermediate_class <= FPU_CLASS_ZERO;
+								end if;
+								if simultaneous = '1' then
+									secondary_class <= FPU_CLASS_NORMAL;
+									secondary_significand <=
+										(66 => '1', others => '0');
 								end if;
 								state <= COMPLETE;
 							else
@@ -378,6 +453,11 @@ begin
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_exponent <= to_signed(source_exponent, 17);
 									intermediate_significand <= tiny_significand;
+									if simultaneous = '1' then
+										secondary_class <= FPU_CLASS_NORMAL;
+										secondary_exponent <= to_signed(-1, 17);
+										secondary_significand <= (others => '1');
+									end if;
 									state <= COMPLETE;
 								else
 									source_exponent_latched <= source_exponent;
@@ -534,37 +614,26 @@ begin
 										source_sign_latched = '1' then
 									selected_value := -selected_value;
 								end if;
-								if selected_value < 0 then
-									final_sign := '1';
-									magnitude := unsigned(-selected_value);
-								else
-									final_sign := '0';
-									magnitude := unsigned(selected_value);
-								end if;
-								if magnitude > UNIT_FIXED then
-									magnitude := UNIT_FIXED;
-								end if;
-								intermediate_sign <= final_sign;
-								if magnitude = 0 then
-									intermediate_class <= FPU_CLASS_ZERO;
-									intermediate_significand <= (others => '0');
-								else
-									highest_bit := highest_set_bit(magnitude);
-									normalized_value := shift_left(magnitude,
-										FRACTION_BITS - highest_bit);
-									final_significand := (others => '0');
-									final_significand(66 downto 3) := normalized_value(
-										FRACTION_BITS downto FRACTION_BITS - 63);
-									final_significand(2) := normalized_value(
-										FRACTION_BITS - 64);
-									final_significand(1) := normalized_value(
-										FRACTION_BITS - 65);
-									final_significand(0) := or_reduce(normalized_value(
-										FRACTION_BITS - 66 downto 0));
-									intermediate_class <= FPU_CLASS_NORMAL;
-									intermediate_exponent <= to_signed(
-										integer(highest_bit) - FRACTION_BITS, 17);
-									intermediate_significand <= final_significand;
+								primary_input := fixed_round_input(selected_value);
+								intermediate_class <= primary_input.data_class;
+								intermediate_sign <= primary_input.sign;
+								intermediate_exponent <= primary_input.exponent;
+								intermediate_significand <= primary_input.significand;
+								intermediate_special <= primary_input.special;
+								if simultaneous_latched = '1' then
+									case quadrant is
+										when "00" => cosine_value := next_x;
+										when "01" => cosine_value := -next_y;
+										when "10" => cosine_value := -next_x;
+										when others => cosine_value := next_y;
+									end case;
+									secondary_input := fixed_round_input(cosine_value);
+									secondary_class <= secondary_input.data_class;
+									secondary_sign <= secondary_input.sign;
+									secondary_exponent <= secondary_input.exponent;
+									secondary_significand <=
+										secondary_input.significand;
+									secondary_special <= secondary_input.special;
 								end if;
 								state <= COMPLETE;
 							end if;

@@ -14,10 +14,13 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 	signal start : std_logic := '0';
 	signal cosine : std_logic := '0';
 	signal tangent : std_logic := '0';
+	signal simultaneous : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
+	signal secondary_round_input : fpu_round_input_t;
+	signal secondary_result : fpu_extended_t;
 	signal done : std_logic;
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -29,6 +32,7 @@ begin
 			start => start,
 			cosine => cosine,
 			tangent => tangent,
+			simultaneous => simultaneous,
 			source => source,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
@@ -38,7 +42,25 @@ begin
 			busy => open,
 			done => done,
 			round_input => open,
+			secondary_round_input => secondary_round_input,
 			base_exception_status => open
+		);
+
+	secondary_rounder : entity work.TG68K_FPU_Round
+		port map(
+			input_class => secondary_round_input.data_class,
+			input_sign => secondary_round_input.sign,
+			input_exponent => secondary_round_input.exponent,
+			input_significand => secondary_round_input.significand,
+			special_value => secondary_round_input.special,
+			rounding_precision => FPU_PRECISION_EXTENDED,
+			rounding_mode => FPU_ROUND_NEAREST,
+			single_extended_range => '0',
+			result => secondary_result,
+			inexact => open,
+			overflow => open,
+			underflow => open,
+			signaling_nan => open
 		);
 
 	stimulus : process
@@ -49,12 +71,16 @@ begin
 				constant expected_status : in std_logic_vector(7 downto 0);
 				constant expected_cycles : in natural := 0;
 				constant cosine_value : in std_logic := '0';
-				constant tangent_value : in std_logic := '0') is
+				constant tangent_value : in std_logic := '0';
+				constant simultaneous_value : in std_logic := '0';
+				constant expected_secondary : in fpu_extended_t :=
+					(others => '0')) is
 			variable cycles : natural := 0;
 		begin
 			wait until falling_edge(clk);
 			cosine <= cosine_value;
 			tangent <= tangent_value;
+			simultaneous <= simultaneous_value;
 			source <= source_value;
 			start <= '1';
 			wait until rising_edge(clk);
@@ -74,6 +100,12 @@ begin
 					" cc=" & to_hstring(condition_codes) &
 					" status=" & to_hstring(exception_status)
 				severity failure;
+			if simultaneous_value = '1' then
+				assert secondary_result = expected_secondary
+					report "simultaneous cosine mismatch: result=" &
+						to_hstring(secondary_result)
+					severity failure;
+			end if;
 			if expected_cycles /= 0 then
 				assert cycles = expected_cycles
 					report "sine cycle count mismatch: " & integer'image(cycles)
@@ -165,7 +197,26 @@ begin
 		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF",
 			x"1", x"20", 0, '0', '1');
 
-		report "PASS: FSIN/FCOS/FTAN range reduction, CORDIC, special values, and status"
+		execute(x"00000000000000000000", x"00000000000000000000",
+			x"4", x"00", 0, '0', '0', '1',
+			x"3FFF8000000000000000");
+		execute(x"80000000000000000000", x"80000000000000000000",
+			x"C", x"00", 0, '0', '0', '1',
+			x"3FFF8000000000000000");
+		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44",
+			x"0", x"02", 258, '0', '0', '1',
+			x"3FFEE0A94032DBEA7CEE");
+		execute(x"BFFE8000000000000000", x"BFFDF57743A2582F7F44",
+			x"8", x"02", 0, '0', '0', '1',
+			x"3FFEE0A94032DBEA7CEE");
+		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF",
+			x"1", x"20", 0, '0', '0', '1',
+			x"7FFFFFFFFFFFFFFFFFFF");
+		execute(x"7FFFC000000000000042", x"7FFFC000000000000042",
+			x"1", x"00", 0, '0', '0', '1',
+			x"7FFFC000000000000042");
+
+		report "PASS: FSIN/FCOS/FTAN/FSINCOS range reduction, CORDIC, special values, and status"
 			severity note;
 		stop;
 	end process;
