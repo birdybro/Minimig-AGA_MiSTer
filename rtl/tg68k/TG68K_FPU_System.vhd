@@ -165,6 +165,18 @@ architecture rtl of TG68K_FPU_System is
 	signal operation_implemented : std_logic;
 	signal operation_busy : std_logic;
 	signal operation_done : std_logic;
+	signal timing_start : std_logic;
+	signal timing_abort : std_logic;
+	signal timing_busy : std_logic;
+	signal timing_done : std_logic;
+	signal timing_condition_true : std_logic;
+	signal timing_branch_taken : std_logic;
+	signal timing_trap_taken : std_logic;
+	signal timing_format_error : std_logic;
+	signal timing_exception_trap : std_logic;
+	signal timing_exception_class : fpu_exception_t;
+	signal timing_bus_error : std_logic;
+	signal timing_bus_error_previous : std_logic := '0';
 	signal operation_byte_count : natural range 0 to
 		FPU_STATE_FRAME_BUSY_BYTES_68882;
 	signal operation_effective_address : std_logic_vector(31 downto 0);
@@ -331,6 +343,8 @@ architecture rtl of TG68K_FPU_System is
 	signal conditional_integer_write_format : fpu_operand_format_t;
 	signal conditional_status_write : std_logic;
 	signal conditional_bsun : std_logic;
+	signal conditional_branch_taken_core : std_logic;
+	signal conditional_trap_taken_core : std_logic;
 	signal constant_status_write : std_logic;
 	signal constant_condition_codes_write : std_logic;
 	signal constant_condition_codes : std_logic_vector(3 downto 0);
@@ -522,6 +536,14 @@ begin
 			conditional_predicate => decoded_predicate
 		);
 
+	timing_condition : entity work.TG68K_FPU_Condition
+		port map(
+			predicate => decoded_predicate,
+			condition_codes => fpsr(31 downto 28),
+			condition_true => timing_condition_true,
+			bsun => open
+		);
+
 	move_implemented <= '1' when
 		(decoded_family = FPU_FAMILY_REGISTER_OPERATION and
 		decoded_operation = FPU_OP_MOVE) or
@@ -595,6 +617,13 @@ begin
 		binary_busy or constant_busy or conditional_busy or state_frame_busy;
 	operation_done <= move_done or control_done or movem_done or unary_done or
 		binary_done or constant_done or conditional_done or state_frame_done;
+	timing_start <= move_start or control_start or movem_start or constant_start or
+		unary_start or binary_start or conditional_start or state_frame_start;
+	timing_bus_error <= move_bus_error or control_bus_error or movem_bus_error or
+		unary_bus_error or binary_bus_error or conditional_bus_error or
+		state_frame_bus_error;
+	timing_abort <= (timing_bus_error and not timing_bus_error_previous) or
+		null_restore;
 	subsystem_reset <= nReset and not null_restore and
 		not state_frame_restore_null;
 	execution_reset <= subsystem_reset and not state_frame_save_complete;
@@ -725,18 +754,20 @@ begin
 		integer_select_latched;
 	address_register_select <= opcode(2 downto 0) when operation_busy = '0' else
 		address_select_latched;
-	instruction_busy <= operation_busy;
-	instruction_done <= operation_done or unsupported_done or
+	instruction_busy <= operation_busy or timing_busy;
+	instruction_done <= timing_done or unsupported_done or
 		pending_exception_done;
 	fline_exception <= decoded_fline;
 	unimplemented_exception <= unsupported_exception;
-	format_error_exception <= state_frame_format_error;
+	format_error_exception <= timing_format_error;
 	bus_error_exception <= move_bus_error or control_bus_error or
 		movem_bus_error or unary_bus_error or binary_bus_error or
 		conditional_bus_error or state_frame_bus_error;
-	floating_point_exception <= state_exception_trap or pending_exception_trap;
+	conditional_branch_taken <= timing_branch_taken;
+	conditional_trap_taken <= timing_trap_taken;
+	floating_point_exception <= timing_exception_trap or pending_exception_trap;
 	floating_point_exception_class <= state_pending_exception_class when
-		pending_exception_trap = '1' else state_exception_class;
+		pending_exception_trap = '1' else timing_exception_class;
 	fpcr_out <= fpcr;
 	fpsr_out <= fpsr;
 
@@ -843,12 +874,14 @@ begin
 	dispatch_state : process(clk)
 	begin
 		if rising_edge(clk) then
+			timing_bus_error_previous <= timing_bus_error;
 			unsupported_done <= '0';
 			unsupported_exception <= '0';
 			pending_exception_done <= '0';
 			pending_exception_trap <= '0';
 			if nReset = '0' or null_restore = '1' or
 					state_frame_restore_null = '1' then
+				timing_bus_error_previous <= '0';
 				source_select_latched <= (others => '0');
 				destination_select_latched <= (others => '0');
 				cosine_destination_select_latched <= (others => '0');
@@ -1223,8 +1256,8 @@ begin
 			conditional_status_write => conditional_status_write,
 			conditional_bsun => conditional_bsun,
 			condition_result => open,
-			branch_taken => conditional_branch_taken,
-			trap_taken => conditional_trap_taken,
+			branch_taken => conditional_branch_taken_core,
+			trap_taken => conditional_trap_taken_core,
 			busy => conditional_busy,
 			done => conditional_done,
 			bus_error_exception => conditional_bus_error
@@ -1268,6 +1301,40 @@ begin
 			busy => state_frame_busy,
 			done => state_frame_done,
 			bus_error_exception => state_frame_bus_error
+		);
+
+	timing_controller : entity work.TG68K_FPU_Timing
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => timing_start,
+			abort_operation => timing_abort,
+			family => decoded_family,
+			operation => decoded_operation,
+			operand_format => decoded_format,
+			address_mode => opcode(5 downto 3),
+			address_register => opcode(2 downto 0),
+			control_register_mask => decoded_control_registers,
+			data_register_mask => movem_register_mask,
+			dynamic_register_mask => command_word(11),
+			condition_true => timing_condition_true,
+			integer_register_data => integer_register_data,
+			initialized => state_initialized,
+			suspended => suspended_operation,
+			frame_byte_count => state_frame_byte_count,
+			core_done => operation_done,
+			core_branch_taken => conditional_branch_taken_core,
+			core_trap_taken => conditional_trap_taken_core,
+			core_format_error => state_frame_format_error,
+			core_exception_trap => state_exception_trap,
+			core_exception_class => state_exception_class,
+			busy => timing_busy,
+			done => timing_done,
+			branch_taken => timing_branch_taken,
+			trap_taken => timing_trap_taken,
+			format_error => timing_format_error,
+			exception_trap => timing_exception_trap,
+			exception_class => timing_exception_class
 		);
 
 	state : entity work.TG68K_FPU

@@ -302,16 +302,23 @@ begin
 			instruction_start <= '0';
 		end procedure;
 
-		procedure wait_done is
+		procedure wait_done(constant expected_cycles : natural := 0) is
 			variable cycle_count : natural := 0;
 		begin
 			while instruction_done = '0' loop
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycle_count := cycle_count + 1;
-				assert cycle_count < 1600
+				assert cycle_count < 2200
 					report "FPU system command did not complete" severity failure;
 			end loop;
+			if expected_cycles /= 0 then
+				assert cycle_count = expected_cycles
+					report "FPU system timing mismatch: expected " &
+						integer'image(expected_cycles) & ", observed " &
+						integer'image(cycle_count)
+					severity failure;
+			end if;
 			wait until rising_edge(clk);
 			wait for 1 ns;
 			assert instruction_done = '0' and instruction_busy = '0'
@@ -323,7 +330,7 @@ begin
 			clear_observations;
 			effective_address <= x"0000D000";
 			start_instruction(x"F310", x"0000", '1');
-			wait_done;
+			wait_done(98);
 			assert trace_count = 30 and trace_write(0) = '1' and
 				trace_address(0) = x"0000D000" and
 				trace_data(0) = x"1F38" and trace_data(1) = x"0000" and
@@ -352,7 +359,7 @@ begin
 			report "FPU system selected the wrong source data register"
 			severity failure;
 		command_word <= x"4000";
-		wait_done;
+		wait_done(43);
 		assert fp_registers(3) = x"4001A000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00" and
 			fpiar = x"00000000" and trace_count = 0
@@ -361,7 +368,7 @@ begin
 
 		start_instruction(x"F200", x"0E00", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(21);
 		assert fp_registers(4) = x"4001A000000000000000"
 			report "register FMOVE did not retain source/destination selection"
 			severity failure;
@@ -723,7 +730,7 @@ begin
 		function_code <= "101";
 		start_instruction(x"F210", x"4C00", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(891);
 		assert trace_count = 6 and trace_address(0) = x"0000C000" and
 			trace_address(5) = x"0000C00A" and trace_fc(5) = "101" and
 			fp_registers(0) = x"3FFBCCCCCCCCCCCCCCCD" and
@@ -734,7 +741,7 @@ begin
 		effective_address <= x"0000C020";
 		start_instruction(x"F210", x"6C7D", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(2006);
 		assert trace_count = 6 and trace_write(0) = '1' and
 			trace_address(0) = x"0000C020" and
 			trace_address(5) = x"0000C02A" and trace_fc(5) = "101" and
@@ -907,14 +914,14 @@ begin
 
 		start_instruction(x"F200", x"0E23", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(76);
 		assert fp_registers(4) = x"4001A800000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FMUL system result mismatch" severity failure;
 
 		start_instruction(x"F200", x"0E20", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(108);
 		assert fp_registers(4) = x"4000E000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FDIV system result mismatch" severity failure;
@@ -989,7 +996,7 @@ begin
 		wait_done;
 		start_instruction(x"F200", x"0E04", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(110);
 		assert fp_registers(4) = x"40008000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FSQRT system result mismatch" severity failure;
@@ -1000,7 +1007,7 @@ begin
 		wait_done;
 		start_instruction(x"F200", x"0E26", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(46);
 		assert fp_registers(4) = x"40028000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
 			report "register FSCALE system result mismatch" severity failure;
@@ -1024,7 +1031,7 @@ begin
 		wait_done;
 		start_instruction(x"F200", x"0E21", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(75);
 		assert fp_registers(4) = x"3FFF8000000000000000" and
 			fpsr(23 downto 16) = x"03" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
@@ -1036,7 +1043,7 @@ begin
 		wait_done;
 		start_instruction(x"F200", x"0E25", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(105);
 		assert fp_registers(4) = x"BFFF8000000000000000" and
 			fpsr(23 downto 16) = x"04" and
 			fpsr(31 downto 28) = "1000" and fpsr(15 downto 8) = x"00"
@@ -1169,7 +1176,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E11", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(570);
 		assert trace_count = 0 and
 			fp_registers(4) = x"40008000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1195,7 +1202,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E10", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(500);
 		assert trace_count = 0 and
 			fp_registers(4) = x"4000ADF85458A2BB4A9B" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1221,7 +1228,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E08", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(548);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFFDBF0A8B145769535" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1247,7 +1254,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E12", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(570);
 		assert trace_count = 0 and
 			fp_registers(4) = x"4002A000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1299,7 +1306,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E14", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(528);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFEB17217F7D1CF79AC" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1325,7 +1332,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E16", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(584);
 		assert trace_count = 0 and
 			fp_registers(4) = x"40008000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"00"
@@ -1351,7 +1358,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E15", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(584);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFF8000000000000000" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1377,7 +1384,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E0A", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(406);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFEC90FDAA22168C235" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1518,7 +1525,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E02", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(690);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFF966CFE2275CC12D4" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1544,7 +1551,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E19", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(610);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFFC583AA8ECFAA8261" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1570,7 +1577,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E09", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(664);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFEC2F7D5A8A79CA2AC" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1596,7 +1603,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E0F", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(475);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFFC75922E5F71D2DC5" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
@@ -1618,7 +1625,7 @@ begin
 		clear_observations;
 		start_instruction(x"F200", x"0E35", '1');
 		command_word <= x"0000";
-		wait_done;
+		wait_done(454);
 		assert trace_count = 0 and
 			fp_registers(4) = x"3FFED76AA47848677021" and
 			fp_registers(5) = x"3FFE8A51407DA8345C92" and
@@ -1671,7 +1678,7 @@ begin
 			integer_register_select = "011"
 			report "register FScc dispatch mismatch" severity failure;
 		command_word <= x"0000";
-		wait_done;
+		wait_done(16);
 		assert integer_write_count = 1 and
 			observed_integer_data(7 downto 0) = x"FF" and
 			observed_integer_format = FPU_FORMAT_BYTE_INTEGER and
@@ -1700,7 +1707,7 @@ begin
 			integer_register_select = "101"
 			report "FDBcc dispatch mismatch" severity failure;
 		command_word <= x"0000";
-		wait_done;
+		wait_done(18);
 		assert integer_write_count = 0 and observed_conditional_branch = '0'
 			report "true FDBcc changed its counter or branched" severity failure;
 
@@ -1728,7 +1735,7 @@ begin
 		start_instruction(x"F28F", x"0000", '1');
 		assert instruction_family = FPU_FAMILY_BCC_WORD
 			report "FBcc dispatch mismatch" severity failure;
-		wait_done;
+		wait_done(18);
 		assert observed_conditional_branch = '1'
 			report "FBcc condition result mismatch" severity failure;
 
@@ -1736,7 +1743,7 @@ begin
 		assert instruction_family = FPU_FAMILY_TRAPCC
 			report "FTRAPcc dispatch mismatch" severity failure;
 		command_word <= x"0000";
-		wait_done;
+		wait_done(36);
 		assert observed_conditional_trap = '1'
 			report "FTRAPcc condition result mismatch" severity failure;
 
@@ -1776,7 +1783,7 @@ begin
 		clear_observations;
 		effective_address <= x"0000D000";
 		start_instruction(x"F310", x"0000", '1');
-		wait_done;
+		wait_done(14);
 		assert trace_count = 2 and trace_write(0) = '1' and
 			trace_address(0) = x"0000D000" and
 			trace_address(1) = x"0000D002" and
@@ -1792,7 +1799,7 @@ begin
 		clear_observations;
 		effective_address <= x"0000E100";
 		start_instruction(x"F358", x"0000", '1');
-		wait_done;
+		wait_done(103);
 		assert trace_count = 30 and trace_write(0) = '0' and
 			trace_address(0) = x"0000E100" and
 			trace_address(29) = x"0000E13A" and
@@ -1826,7 +1833,7 @@ begin
 		clear_observations;
 		effective_address <= x"0000E000";
 		start_instruction(x"F358", x"0000", '1');
-		wait_done;
+		wait_done(19);
 		assert trace_count = 2 and trace_write(0) = '0' and
 			address_write_count = 1 and
 			observed_address_data = x"0000E004" and

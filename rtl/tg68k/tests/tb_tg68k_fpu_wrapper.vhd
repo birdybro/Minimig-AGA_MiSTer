@@ -692,7 +692,7 @@ begin
 		wait for 5 * CLK_PERIOD;
 		wait until falling_edge(clk);
 		nReset <= '1';
-		for cycle in 0 to 9000 loop
+		for cycle in 0 to 30000 loop
 			wait until rising_edge(clk);
 			exit when result_write_count = 2 and
 				extended_result_write_count = 4 and
