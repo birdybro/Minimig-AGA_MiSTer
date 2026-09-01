@@ -345,8 +345,16 @@ architecture test of tb_tg68k_fpu_wrapper is
 		result(16#08AD#) := x"6580";
 		result(16#08AE#) := x"0000";
 		result(16#08AF#) := x"0B84";
-		result(16#08B0#) := x"4E72";
-		result(16#08B1#) := x"2700";
+		result(16#08B0#) := x"F239";
+		result(16#08B1#) := x"458C";
+		result(16#08B2#) := x"0000";
+		result(16#08B3#) := x"1800";
+		result(16#08B4#) := x"F239";
+		result(16#08B5#) := x"6580";
+		result(16#08B6#) := x"0000";
+		result(16#08B7#) := x"0B88";
+		result(16#08B8#) := x"4E72";
+		result(16#08B9#) := x"2700";
 		return result;
 	end function;
 
@@ -387,6 +395,7 @@ architecture test of tb_tg68k_fpu_wrapper is
 	signal hyperbolic_cosine_result_write_count : natural range 0 to 2 := 0;
 	signal hyperbolic_tangent_result_write_count : natural range 0 to 2 := 0;
 	signal inverse_hyperbolic_tangent_result_write_count : natural range 0 to 2 := 0;
+	signal arc_sine_result_write_count : natural range 0 to 2 := 0;
 	signal post_fpu_fetch : std_logic := '0';
 begin
 	clk <= not clk after CLK_PERIOD / 2;
@@ -566,8 +575,11 @@ begin
 					inverse_hyperbolic_tangent_result_write_count <=
 						inverse_hyperbolic_tangent_result_write_count + 1;
 				end if;
+				if addr_out = x"00000B88" or addr_out = x"00000B8A" then
+					arc_sine_result_write_count <= arc_sine_result_write_count + 1;
+				end if;
 			end if;
-			if busstate = "00" and addr_out = x"00001162" then
+			if busstate = "00" and addr_out = x"00001172" then
 				post_fpu_fetch <= '1';
 			end if;
 		end if;
@@ -602,6 +614,7 @@ begin
 				hyperbolic_cosine_result_write_count = 2 and
 				hyperbolic_tangent_result_write_count = 2 and
 				inverse_hyperbolic_tangent_result_write_count = 2 and
+				arc_sine_result_write_count = 2 and
 				post_fpu_fetch = '1';
 		end loop;
 		assert result_write_count = 2 and memory(16#0100#) = x"40A0" and
@@ -790,6 +803,12 @@ begin
 			report "TG68K FATANH instruction stream mismatch: " &
 				to_hstring(memory(16#05C2#)) &
 				to_hstring(memory(16#05C3#))
+			severity failure;
+		assert arc_sine_result_write_count = 2 and
+			memory(16#05C4#) = x"3F06" and memory(16#05C5#) = x"0A92"
+			report "TG68K FASIN instruction stream mismatch: " &
+				to_hstring(memory(16#05C4#)) &
+				to_hstring(memory(16#05C5#))
 			severity failure;
 		report "PASS: TG68K instruction-level FPU moves, constants, exponentials, logarithms, arc tangent, hyperbolic operations, extraction, integral rounding, scaling, remainder, arithmetic, single arithmetic, FMOVEM, and control state"
 			severity note;

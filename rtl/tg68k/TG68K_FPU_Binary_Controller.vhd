@@ -135,6 +135,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal inverse_hyperbolic_tangent_latched : std_logic := '0';
 	signal logarithm_base_latched : fpu_logarithm_base_t := FPU_LOG_BASE_E;
 	signal arc_tangent_latched : std_logic := '0';
+	signal arc_sine_latched : std_logic := '0';
 	signal format_latched : fpu_operand_format_t := FPU_FORMAT_EXTENDED;
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
@@ -427,6 +428,7 @@ begin
 			nReset => nReset,
 			start => arc_tangent_start,
 			source => source_latched,
+			arc_sine => arc_sine_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			result => open,
@@ -578,6 +580,7 @@ begin
 				inverse_hyperbolic_tangent_latched <= '0';
 				logarithm_base_latched <= FPU_LOG_BASE_E;
 				arc_tangent_latched <= '0';
+				arc_sine_latched <= '0';
 				format_latched <= FPU_FORMAT_EXTENDED;
 				address_latched <= (others => '0');
 				function_code_latched <= (others => '0');
@@ -728,10 +731,16 @@ begin
 							else
 								logarithm_base_latched <= FPU_LOG_BASE_E;
 							end if;
-							if operation = FPU_OP_ATAN then
+							if operation = FPU_OP_ATAN or
+									operation = FPU_OP_ASIN then
 								arc_tangent_latched <= '1';
 							else
 								arc_tangent_latched <= '0';
+							end if;
+							if operation = FPU_OP_ASIN then
+								arc_sine_latched <= '1';
+							else
+								arc_sine_latched <= '0';
 							end if;
 							format_latched <= operand_format;
 							address_latched <= effective_address;

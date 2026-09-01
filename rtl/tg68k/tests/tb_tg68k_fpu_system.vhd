@@ -1262,6 +1262,48 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FATAN system result mismatch" severity failure;
 
+		integer_register_data <= x"00000002";
+		start_instruction(x"F202", x"4180", '1');
+		command_word <= x"0000";
+		wait_done;
+		integer_register_data <= x"00002000";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		start_instruction(x"F200", x"0E0C", '1');
+		command_word <= x"0000";
+		while instruction_done = '0' loop
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end loop;
+		assert floating_point_exception = '1' and
+			floating_point_exception_class = FPU_EXCEPTION_OPERR and
+			fp_registers(4) = x"3FFDED63382B0DDA7B45" and
+			fpsr(31 downto 28) = "0001" and fpsr(15 downto 8) = x"20" and
+			fpiar = x"00000400"
+			report "enabled FASIN operand-error suppression mismatch"
+			severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+
+		integer_register_data <= x"00000400";
+		start_instruction(x"F203", x"9000", '1');
+		command_word <= x"0000";
+		wait_done;
+		clear_observations;
+		effective_address <= x"00009004";
+		function_code <= "101";
+		start_instruction(x"F210", x"468C", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 2 and trace_write(0) = '0' and
+			trace_address(0) = x"00009004" and
+			trace_address(1) = x"00009006" and trace_fc(1) = "101" and
+			fp_registers(5) = x"3FFE860A91C16B9B2C23" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "memory single FASIN system result mismatch" severity failure;
+
 		integer_register_data <= x"00000001";
 		start_instruction(x"F202", x"4180", '1');
 		command_word <= x"0000";
@@ -1368,9 +1410,9 @@ begin
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FTANH system result mismatch" severity failure;
 
-		start_instruction(x"F200", x"0E0C", '0');
+		start_instruction(x"F200", x"0E0E", '0');
 		assert instruction_done = '1' and unimplemented_exception = '1'
-			report "FASIN command was not explicitly reported as unimplemented"
+			report "FSIN command was not explicitly reported as unimplemented"
 			severity failure;
 		wait_done;
 
