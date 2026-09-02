@@ -67,6 +67,7 @@ architecture rtl of TG68K_FPU_Exponential is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
 			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
 			MULTIPLY_LOG2, START_CORDIC, WAIT_CORDIC,
+			FORM_CORDIC_SUM, FORM_CORDIC_DIFFERENCE,
 			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
 			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
 			NORMALIZE_SUBTRACTION, FORMAT_NORMALIZED_RESULT,
@@ -174,7 +175,7 @@ begin
 	arithmetic_operands : process(state, series_product, series_multiplier,
 		series_multiplicand, cube_accumulator, scale_accumulator,
 		scale_magnitude_register, scale_index, log2_product,
-		subtraction_value, subtraction_one)
+		subtraction_value, subtraction_one, cordic_x_result, cordic_y_result)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
 		arithmetic_left_a <= (others => '0');
@@ -214,6 +215,14 @@ begin
 				if log2_product(0) = '1' then
 					arithmetic_right_a <= resize(LN2_FIXED,
 						ARITHMETIC_WIDTH);
+				end if;
+			when FORM_CORDIC_SUM | FORM_CORDIC_DIFFERENCE =>
+				arithmetic_left_a <= resize(unsigned(cordic_x_result),
+					ARITHMETIC_WIDTH);
+				arithmetic_right_a <= resize(unsigned(cordic_y_result),
+					ARITHMETIC_WIDTH);
+				if state = FORM_CORDIC_DIFFERENCE then
+					arithmetic_subtract_a <= '1';
 				end if;
 			when NORMALIZE_HYPERBOLIC_TANGENT =>
 				arithmetic_left_a <= resize(subtraction_value,
@@ -1148,31 +1157,34 @@ begin
 
 					when WAIT_CORDIC =>
 						if cordic_done = '1' then
-							cordic_sum := resize(cordic_x_result,
-								CORDIC_WIDTH + 1) + resize(cordic_y_result,
-								CORDIC_WIDTH + 1);
-							if hyperbolic_sine_latched = '1' then
-								cordic_difference := resize(cordic_x_result,
-									CORDIC_WIDTH + 1) - resize(cordic_y_result,
-									CORDIC_WIDTH + 1);
-								complete_hyperbolic_sine(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							elsif hyperbolic_cosine_latched = '1' then
-								cordic_difference := resize(cordic_x_result,
-									CORDIC_WIDTH + 1) - resize(cordic_y_result,
-									CORDIC_WIDTH + 1);
-								complete_hyperbolic_cosine(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							elsif hyperbolic_tangent_latched = '1' then
-								cordic_difference := resize(cordic_x_result,
-									CORDIC_WIDTH + 1) - resize(cordic_y_result,
-									CORDIC_WIDTH + 1);
-								complete_hyperbolic_tangent(unsigned(cordic_sum),
-									unsigned(cordic_difference), result_exponent, '0');
-							else
-								complete_exponential(unsigned(cordic_sum),
-									result_exponent, subtract_one_latched);
-							end if;
+							state <= FORM_CORDIC_SUM;
+						end if;
+
+					when FORM_CORDIC_SUM =>
+						cordic_sum := signed(arithmetic_result_a(
+							CORDIC_WIDTH downto 0));
+						if hyperbolic_sine_latched = '1' or
+								hyperbolic_cosine_latched = '1' or
+								hyperbolic_tangent_latched = '1' then
+							subtraction_value <= unsigned(cordic_sum);
+							state <= FORM_CORDIC_DIFFERENCE;
+						else
+							complete_exponential(unsigned(cordic_sum),
+								result_exponent, subtract_one_latched);
+						end if;
+
+					when FORM_CORDIC_DIFFERENCE =>
+						cordic_difference := signed(arithmetic_result_a(
+							CORDIC_WIDTH downto 0));
+						if hyperbolic_sine_latched = '1' then
+							complete_hyperbolic_sine(subtraction_value,
+								unsigned(cordic_difference), result_exponent, '0');
+						elsif hyperbolic_cosine_latched = '1' then
+							complete_hyperbolic_cosine(subtraction_value,
+								unsigned(cordic_difference), result_exponent, '0');
+						else
+							complete_hyperbolic_tangent(subtraction_value,
+								unsigned(cordic_difference), result_exponent, '0');
 						end if;
 
 					when ALIGN_HYPERBOLIC =>
