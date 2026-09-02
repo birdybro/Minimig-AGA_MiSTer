@@ -121,6 +121,8 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			conversion_source_format => open,
+			conversion_source_data => open,
 			round_input => open,
 			rounding_precision_out => open,
 			rounding_mode_out => open,

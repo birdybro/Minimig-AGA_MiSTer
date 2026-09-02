@@ -16,7 +16,8 @@ use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Move_Controller is
 	generic(
-		INCLUDE_ROUNDING_STAGE : boolean := true
+		INCLUDE_ROUNDING_STAGE : boolean := true;
+		INCLUDE_CONVERSION_STAGE : boolean := true
 	);
 	port(
 		clk : in std_logic;
@@ -37,6 +38,10 @@ entity TG68K_FPU_Move_Controller is
 		packed_conversion_done : in std_logic;
 		packed_conversion_result : in fpu_extended_t;
 		packed_conversion_status : in std_logic_vector(7 downto 0);
+		external_converted_data : in fpu_extended_t := (others => '0');
+		external_conversion_valid : in std_logic := '0';
+		conversion_source_format : out fpu_operand_format_t;
+		conversion_source_data : out std_logic_vector(95 downto 0);
 		external_rounded_result : in fpu_extended_t := (others => '0');
 		external_rounded_inexact : in std_logic := '0';
 		external_rounded_overflow : in std_logic := '0';
@@ -222,18 +227,27 @@ begin
 		format_latched;
 	unpack_data <= rounded_external_latched when state = REGISTER_REPACK else
 		external_buffer;
+	conversion_source_format <= unpack_format;
+	conversion_source_data <= unpack_data;
 	store_format <= format_latched when
 		direction_latched = FPU_MOVE_REGISTER_TO_EXTERNAL else precision_format;
 
-	unpack : entity work.TG68K_FPU_Convert
-		port map(
-			source_format => unpack_format,
-			source_data => unpack_data,
-			extended_data => unpacked_extended,
-			conversion_valid => unpack_valid,
-			extended_source => source_latched,
-			external_extended_data => open
-		);
+	with_conversion : if INCLUDE_CONVERSION_STAGE generate
+		unpack : entity work.TG68K_FPU_Convert
+			port map(
+				source_format => unpack_format,
+				source_data => unpack_data,
+				extended_data => unpacked_extended,
+				conversion_valid => unpack_valid,
+				extended_source => source_latched,
+				external_extended_data => open
+			);
+	end generate;
+
+	without_conversion : if not INCLUDE_CONVERSION_STAGE generate
+		unpacked_extended <= external_converted_data;
+		unpack_valid <= external_conversion_valid;
+	end generate;
 
 	store_converter : entity work.TG68K_FPU_Store_Convert
 		generic map(

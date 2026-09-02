@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Unary_Controller is
+	generic(
+		INCLUDE_CONVERSION_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -33,6 +36,9 @@ entity TG68K_FPU_Unary_Controller is
 		packed_conversion_done : in std_logic;
 		packed_conversion_result : in fpu_extended_t;
 		packed_conversion_status : in std_logic_vector(7 downto 0);
+		external_converted_data : in fpu_extended_t := (others => '0');
+		conversion_source_format : out fpu_operand_format_t;
+		conversion_source_data : out std_logic_vector(95 downto 0);
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -155,16 +161,24 @@ begin
 	saved_context_out <= external_buffer &
 		std_logic_vector(to_unsigned(transfer_index, 3));
 	operand_class <= fpu_classify(operand_latched);
+	conversion_source_format <= format_latched;
+	conversion_source_data <= external_buffer;
 
-	unpack : entity work.TG68K_FPU_Convert
-		port map(
-			source_format => format_latched,
-			source_data => external_buffer,
-			extended_data => unpacked_operand,
-			conversion_valid => open,
-			extended_source => (others => '0'),
-			external_extended_data => open
-		);
+	with_conversion : if INCLUDE_CONVERSION_STAGE generate
+		unpack : entity work.TG68K_FPU_Convert
+			port map(
+				source_format => format_latched,
+				source_data => external_buffer,
+				extended_data => unpacked_operand,
+				conversion_valid => open,
+				extended_source => (others => '0'),
+				external_extended_data => open
+			);
+	end generate;
+
+	without_conversion : if not INCLUDE_CONVERSION_STAGE generate
+		unpacked_operand <= external_converted_data;
+	end generate;
 
 	extract : entity work.TG68K_FPU_Extract
 		port map(

@@ -217,6 +217,8 @@ architecture rtl of TG68K_FPU_System is
 	signal move_integer_write_format : fpu_operand_format_t;
 	signal move_packed_start : std_logic;
 	signal move_packed_source : std_logic_vector(95 downto 0);
+	signal move_conversion_format : fpu_operand_format_t;
+	signal move_conversion_data : std_logic_vector(95 downto 0);
 	signal move_k_factor : std_logic_vector(6 downto 0);
 	signal move_resume : std_logic;
 	signal move_saved_context : std_logic_vector(187 downto 0);
@@ -287,6 +289,8 @@ architecture rtl of TG68K_FPU_System is
 	signal unary_memory_fc : std_logic_vector(2 downto 0);
 	signal unary_packed_start : std_logic;
 	signal unary_packed_source : std_logic_vector(95 downto 0);
+	signal unary_conversion_format : fpu_operand_format_t;
+	signal unary_conversion_data : std_logic_vector(95 downto 0);
 	signal unary_resume : std_logic;
 	signal unary_saved_context : std_logic_vector(98 downto 0);
 
@@ -315,6 +319,8 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_memory_fc : std_logic_vector(2 downto 0);
 	signal binary_packed_start : std_logic;
 	signal binary_packed_source : std_logic_vector(95 downto 0);
+	signal binary_conversion_format : fpu_operand_format_t;
+	signal binary_conversion_data : std_logic_vector(95 downto 0);
 	signal binary_resume : std_logic;
 	signal binary_saved_context : std_logic_vector(98 downto 0);
 	signal binary_round_input : fpu_round_input_t;
@@ -331,6 +337,10 @@ architecture rtl of TG68K_FPU_System is
 	signal shared_rounded_overflow : std_logic;
 	signal shared_rounded_underflow : std_logic;
 	signal shared_rounded_signaling_nan : std_logic;
+	signal shared_conversion_format : fpu_operand_format_t;
+	signal shared_conversion_data : std_logic_vector(95 downto 0);
+	signal shared_converted_data : fpu_extended_t;
+	signal shared_conversion_valid : std_logic;
 
 	signal packed_conversion_start : std_logic;
 	signal packed_conversion_source : std_logic_vector(95 downto 0);
@@ -445,6 +455,22 @@ architecture rtl of TG68K_FPU_System is
 	signal exceptional_operand_latched : fpu_extended_t := (others => '0');
 	signal operation_exceptional_operand : fpu_extended_t;
 begin
+	shared_conversion_format <= move_conversion_format when move_busy = '1' else
+		unary_conversion_format when unary_busy = '1' else
+		binary_conversion_format;
+	shared_conversion_data <= move_conversion_data when move_busy = '1' else
+		unary_conversion_data when unary_busy = '1' else binary_conversion_data;
+
+	shared_converter : entity work.TG68K_FPU_Convert
+		port map(
+			source_format => shared_conversion_format,
+			source_data => shared_conversion_data,
+			extended_data => shared_converted_data,
+			conversion_valid => shared_conversion_valid,
+			extended_source => (others => '0'),
+			external_extended_data => open
+		);
+
 	shared_round_input <= move_round_input when move_busy = '1' else
 		binary_round_input;
 	shared_rounding_precision <= move_rounding_precision when
@@ -1038,7 +1064,8 @@ begin
 
 	move_controller : entity work.TG68K_FPU_Move_Controller
 		generic map(
-			INCLUDE_ROUNDING_STAGE => false
+			INCLUDE_ROUNDING_STAGE => false,
+			INCLUDE_CONVERSION_STAGE => false
 		)
 		port map(
 			clk => clk,
@@ -1059,6 +1086,10 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			external_converted_data => shared_converted_data,
+			external_conversion_valid => shared_conversion_valid,
+			conversion_source_format => move_conversion_format,
+			conversion_source_data => move_conversion_data,
 			external_rounded_result => shared_rounded_result,
 			external_rounded_inexact => shared_rounded_inexact,
 			external_rounded_overflow => shared_rounded_overflow,
@@ -1186,6 +1217,9 @@ begin
 		);
 
 	unary_controller : entity work.TG68K_FPU_Unary_Controller
+		generic map(
+			INCLUDE_CONVERSION_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => execution_reset,
@@ -1204,6 +1238,9 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			external_converted_data => shared_converted_data,
+			conversion_source_format => unary_conversion_format,
+			conversion_source_data => unary_conversion_data,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -1232,7 +1269,8 @@ begin
 
 	binary_controller : entity work.TG68K_FPU_Binary_Controller
 		generic map(
-			INCLUDE_ROUNDING_STAGE => false
+			INCLUDE_ROUNDING_STAGE => false,
+			INCLUDE_CONVERSION_STAGE => false
 		)
 		port map(
 			clk => clk,
@@ -1254,6 +1292,9 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			external_converted_data => shared_converted_data,
+			conversion_source_format => binary_conversion_format,
+			conversion_source_data => binary_conversion_data,
 			external_rounded_result => shared_rounded_result,
 			external_rounded_inexact => shared_rounded_inexact,
 			external_rounded_overflow => shared_rounded_overflow,
