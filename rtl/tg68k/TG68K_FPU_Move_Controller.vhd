@@ -396,8 +396,6 @@ begin
 							precision_latched <= rounding_precision;
 							mode_latched <= rounding_mode;
 							k_factor_latched <= k_factor;
-							external_buffer <= (others => '0');
-							status_latched <= (others => '0');
 							transfer_index <= 0;
 							fault_write_latched <= '0';
 							if resume_context = '1' then
