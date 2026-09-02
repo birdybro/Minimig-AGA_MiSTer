@@ -602,12 +602,13 @@ begin
 										if source_exponent <= ATANH_TINY_MAX_EXPONENT then
 											tiny_significand := shift_left(resize(
 												source_significand, 67), 3) + 1;
-											intermediate_class <= FPU_CLASS_NORMAL;
 											intermediate_sign <= source(79);
-											intermediate_exponent <= to_signed(
+											normalization_value <= shift_left(resize(
+												tiny_significand, RESULT_WIDTH),
+												RESULT_NORMAL_BIT - 66);
+											normalization_exponent <= to_signed(
 												source_exponent, 17);
-											intermediate_significand <= tiny_significand;
-											state <= COMPLETE;
+											state <= NORMALIZE_RESULT;
 										else
 											series_source_significand <= source_significand;
 											series_exponent <= to_signed(source_exponent, 17);
@@ -688,19 +689,13 @@ begin
 										else
 											tiny_significand := tiny_significand + 1;
 										end if;
-										intermediate_class <= FPU_CLASS_NORMAL;
 										intermediate_sign <= source(79);
-										if tiny_significand(66) = '0' then
-											intermediate_exponent <= to_signed(
-												source_exponent - 1, 17);
-											intermediate_significand <= shift_left(
-												tiny_significand, 1);
-										else
-											intermediate_exponent <= to_signed(
-												source_exponent, 17);
-											intermediate_significand <= tiny_significand;
-										end if;
-										state <= COMPLETE;
+										normalization_value <= shift_left(resize(
+											tiny_significand, RESULT_WIDTH),
+											RESULT_NORMAL_BIT - 66);
+										normalization_exponent <= to_signed(
+											source_exponent, 17);
+										state <= NORMALIZE_RESULT;
 									else
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);

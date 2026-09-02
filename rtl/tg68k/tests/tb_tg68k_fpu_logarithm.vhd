@@ -106,6 +106,10 @@ begin
 		execute('1', x"BFFEC000000000000000", x"BFFFB17217F7D1CF79AC", x"8", x"02");
 		execute('1', x"3FE58000000000000000", x"3FE4FFFFFFE000000555", x"0", x"02");
 		execute('1', x"BFE58000000000000000", x"BFE580000010000002AB", x"8", x"02");
+		execute('1', x"3FBB8000000000000000", x"3FBB8000000000000000",
+			x"0", x"02", '0', 2);
+		execute('1', x"BFBB8000000000000000", x"BFBB8000000000000000",
+			x"8", x"02", '0', 1);
 
 		execute('0', x"00000000000000000000", x"FFFF8000000000000000", x"A", x"04");
 		execute('0', x"80000000000000000000", x"FFFF8000000000000000", x"A", x"04");
@@ -138,7 +142,7 @@ begin
 		execute('0', x"BFFE8000000000000000", x"BFFE8C9F53D5681854BB", x"8", x"02", '1');
 		execute('0', x"3FFEC000000000000000", x"3FFEF913957192D2BAA3", x"0", x"02", '1', 356);
 		execute('0', x"3FE58000000000000000", x"3FE580000000000002AB", x"0", x"02", '1', 255);
-		execute('0', x"3FDE8000000000000000", x"3FDE8000000000000000", x"0", x"02", '1');
+		execute('0', x"3FDE8000000000000000", x"3FDE8000000000000000", x"0", x"02", '1', 1);
 		execute('0', x"3FFEFFFFFFFFFFFFFFFF", x"4003B437E057B116B792", x"0", x"02", '1', 413);
 
 		report "PASS: logarithm and inverse hyperbolic tangent datapath, domains, special values, and status"
