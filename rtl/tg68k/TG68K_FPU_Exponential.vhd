@@ -152,11 +152,13 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal series_source_significand : unsigned(63 downto 0) :=
 		(others => '0');
 	signal series_exponent : signed(16 downto 0) := (others => '0');
+	-- These registers form accumulator|multiplier pairs for the square and
+	-- cube; the cube pair is then reused as the 80-bit quotient.
 	signal series_multiplier : unsigned(63 downto 0) := (others => '0');
 	signal series_multiplicand : unsigned(127 downto 0) := (others => '0');
-	signal series_product : unsigned(127 downto 0) := (others => '0');
+	signal series_product : unsigned(128 downto 0) := (others => '0');
 	signal series_index : natural range 0 to 79 := 0;
-	signal cube_accumulator : unsigned(79 downto 0) := (others => '0');
+	signal cube_accumulator : unsigned(16 downto 0) := (others => '0');
 	signal cube_remainder : natural range 0 to 5 := 0;
 	signal subtraction_value : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
@@ -228,15 +230,16 @@ begin
 		arithmetic_subtract_b <= '0';
 		case state is
 			when SQUARE_SMALL_ARGUMENT =>
-				arithmetic_left_a <= resize(series_product, ARITHMETIC_WIDTH);
-				if series_multiplier(0) = '1' then
-					arithmetic_right_a <= resize(series_multiplicand,
+				arithmetic_left_a <= resize(series_product(128 downto 64),
+					ARITHMETIC_WIDTH);
+				if series_product(0) = '1' then
+					arithmetic_right_a <= resize(series_multiplicand(63 downto 0),
 						ARITHMETIC_WIDTH);
 				end if;
 			when CUBE_SMALL_ARGUMENT =>
 				arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
 				if series_multiplier(0) = '1' then
-					arithmetic_right_a <= resize(series_multiplicand(79 downto 0),
+					arithmetic_right_a <= resize(series_multiplicand(15 downto 0),
 						ARITHMETIC_WIDTH);
 				end if;
 			when SCALE_E_TO_BASE_TWO =>
@@ -687,7 +690,8 @@ begin
 		variable cordic_difference : signed(CORDIC_WIDTH downto 0);
 		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
 		variable next_square : unsigned(127 downto 0);
-		variable next_cube : unsigned(79 downto 0);
+		variable next_square_product : unsigned(128 downto 0);
+		variable next_cube : unsigned(80 downto 0);
 		variable next_cube_quotient : unsigned(79 downto 0);
 		variable division_trial : natural range 0 to 11;
 		variable cube_divisor : natural range 3 to 6;
@@ -882,9 +886,9 @@ begin
 									else
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
-										series_multiplier <= source_significand;
+										series_multiplier <= (others => '0');
 										series_multiplicand <= resize(source_significand, 128);
-										series_product <= (others => '0');
+										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
 									end if;
@@ -899,9 +903,9 @@ begin
 									else
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
-										series_multiplier <= source_significand;
+										series_multiplier <= (others => '0');
 										series_multiplicand <= resize(source_significand, 128);
-										series_product <= (others => '0');
+										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
 									end if;
@@ -942,9 +946,9 @@ begin
 									else
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
-										series_multiplier <= source_significand;
+										series_multiplier <= (others => '0');
 										series_multiplicand <= resize(source_significand, 128);
-										series_product <= (others => '0');
+										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
 									end if;
@@ -1036,9 +1040,12 @@ begin
 						end if;
 
 					when SQUARE_SMALL_ARGUMENT =>
-						next_square := arithmetic_result_a(127 downto 0);
+						next_square_product := shift_right(
+							arithmetic_result_a(64 downto 0) &
+							series_product(63 downto 0), 1);
+						next_square := next_square_product(127 downto 0);
 						if series_index = 63 then
-							series_product <= next_square;
+							series_product <= '0' & next_square;
 							if hyperbolic_cosine_latched = '1' then
 								cosh_increment := (others => '0');
 								-- Align x^2/2 to GRS bit 66. Higher-order terms are
@@ -1102,26 +1109,24 @@ begin
 								end if;
 							end if;
 						else
-							series_product <= next_square;
-							series_multiplier <= shift_right(series_multiplier, 1);
-							series_multiplicand <= shift_left(
-								series_multiplicand, 1);
+							series_product <= next_square_product;
 							series_index <= series_index + 1;
 						end if;
 
 					when CUBE_SMALL_ARGUMENT =>
-						next_cube := arithmetic_result_a(79 downto 0);
+						next_cube := shift_right(arithmetic_result_a(16 downto 0) &
+							series_multiplier, 1);
 						if series_index = 63 then
-							series_multiplicand <= resize(next_cube, 128);
+							series_multiplicand <= resize(next_cube(79 downto 0),
+								128);
 							cube_accumulator <= (others => '0');
+							series_multiplier <= (others => '0');
 							cube_remainder <= 0;
 							series_index <= 0;
 							state <= DIVIDE_CUBE_TERM;
 						else
-							cube_accumulator <= next_cube;
-							series_multiplier <= shift_right(series_multiplier, 1);
-							series_multiplicand <= shift_left(
-								series_multiplicand, 1);
+							cube_accumulator <= next_cube(80 downto 64);
+							series_multiplier <= next_cube(63 downto 0);
 							series_index <= series_index + 1;
 						end if;
 
@@ -1135,7 +1140,8 @@ begin
 						if series_multiplicand(79 - series_index) = '1' then
 							division_trial := division_trial + 1;
 						end if;
-						next_cube_quotient := cube_accumulator;
+						next_cube_quotient := cube_accumulator(15 downto 0) &
+							series_multiplier;
 						if division_trial >= cube_divisor then
 							next_cube_quotient(79 - series_index) := '1';
 							division_trial := division_trial - cube_divisor;
@@ -1146,7 +1152,8 @@ begin
 								SERIES_NORMAL_BIT - 63);
 							series_shift := to_integer(series_exponent) + 68;
 							series_correction := shift_left(resize(
-								series_product, SERIES_WIDTH), series_shift);
+								series_product(127 downto 0), SERIES_WIDTH),
+								series_shift);
 							cube_alignment_shift := 2 *
 								to_integer(series_exponent) + CUBE_ALIGNMENT_BASE;
 							series_cube_correction := shift_left(resize(
@@ -1175,7 +1182,9 @@ begin
 							end if;
 							complete_small_series(series_value);
 						else
-							cube_accumulator <= next_cube_quotient;
+							cube_accumulator <= '0' &
+								next_cube_quotient(79 downto 64);
+							series_multiplier <= next_cube_quotient(63 downto 0);
 							cube_remainder <= division_trial;
 							series_index <= series_index + 1;
 						end if;
