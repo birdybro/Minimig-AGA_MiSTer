@@ -15,14 +15,24 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Store_Convert is
+	generic(
+		INCLUDE_ROUNDING_STAGE : boolean := true
+	);
 	port(
 		source : in fpu_extended_t;
 		destination_format : in fpu_operand_format_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		external_rounded_result : in fpu_extended_t := (others => '0');
+		external_rounded_inexact : in std_logic := '0';
+		external_rounded_overflow : in std_logic := '0';
+		external_rounded_underflow : in std_logic := '0';
+		external_rounded_signaling_nan : in std_logic := '0';
 
 		destination_data : out std_logic_vector(95 downto 0);
 		conversion_valid : out std_logic;
-		exception_status : out std_logic_vector(7 downto 0)
+		exception_status : out std_logic_vector(7 downto 0);
+		round_input : out fpu_round_input_t;
+		rounding_precision_out : out fpu_rounding_precision_t
 	);
 end entity;
 
@@ -49,6 +59,12 @@ architecture rtl of TG68K_FPU_Store_Convert is
 	signal rounded_signaling_nan : std_logic;
 begin
 	source_class <= fpu_classify(source);
+	round_input.data_class <= source_class;
+	round_input.sign <= prepared_sign;
+	round_input.exponent <= prepared_exponent;
+	round_input.significand <= prepared_significand;
+	round_input.special <= source;
+	rounding_precision_out <= destination_precision;
 
 	prepare : process(source, source_class)
 		variable significand : unsigned(63 downto 0);
@@ -86,21 +102,31 @@ begin
 		FPU_PRECISION_DOUBLE when FPU_FORMAT_DOUBLE,
 		FPU_PRECISION_EXTENDED when others;
 
-	rounder : entity work.TG68K_FPU_Round
-		port map(
-			input_class => source_class,
-			input_sign => prepared_sign,
-			input_exponent => prepared_exponent,
-			input_significand => prepared_significand,
-			special_value => source,
-			rounding_precision => destination_precision,
-			rounding_mode => rounding_mode,
-			result => rounded_result,
-			inexact => rounded_inexact,
-			overflow => rounded_overflow,
-			underflow => rounded_underflow,
-			signaling_nan => rounded_signaling_nan
-		);
+	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		rounder : entity work.TG68K_FPU_Round
+			port map(
+				input_class => source_class,
+				input_sign => prepared_sign,
+				input_exponent => prepared_exponent,
+				input_significand => prepared_significand,
+				special_value => source,
+				rounding_precision => destination_precision,
+				rounding_mode => rounding_mode,
+				result => rounded_result,
+				inexact => rounded_inexact,
+				overflow => rounded_overflow,
+				underflow => rounded_underflow,
+				signaling_nan => rounded_signaling_nan
+			);
+	end generate;
+
+	without_rounding : if not INCLUDE_ROUNDING_STAGE generate
+		rounded_result <= external_rounded_result;
+		rounded_inexact <= external_rounded_inexact;
+		rounded_overflow <= external_rounded_overflow;
+		rounded_underflow <= external_rounded_underflow;
+		rounded_signaling_nan <= external_rounded_signaling_nan;
+	end generate;
 
 	pack : process(source, source_class, destination_format, rounding_mode,
 		prepared_exponent, prepared_significand, rounded_result,

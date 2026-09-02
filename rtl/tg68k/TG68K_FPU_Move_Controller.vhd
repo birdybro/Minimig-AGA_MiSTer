@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Move_Controller is
+	generic(
+		INCLUDE_ROUNDING_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -34,6 +37,14 @@ entity TG68K_FPU_Move_Controller is
 		packed_conversion_done : in std_logic;
 		packed_conversion_result : in fpu_extended_t;
 		packed_conversion_status : in std_logic_vector(7 downto 0);
+		external_rounded_result : in fpu_extended_t := (others => '0');
+		external_rounded_inexact : in std_logic := '0';
+		external_rounded_overflow : in std_logic := '0';
+		external_rounded_underflow : in std_logic := '0';
+		external_rounded_signaling_nan : in std_logic := '0';
+		round_input : out fpu_round_input_t;
+		rounding_precision_out : out fpu_rounding_precision_t;
+		rounding_mode_out : out fpu_rounding_mode_t;
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -225,14 +236,26 @@ begin
 		);
 
 	store_converter : entity work.TG68K_FPU_Store_Convert
+		generic map(
+			INCLUDE_ROUNDING_STAGE => INCLUDE_ROUNDING_STAGE
+		)
 		port map(
 			source => source_latched,
 			destination_format => store_format,
 			rounding_mode => mode_latched,
+			external_rounded_result => external_rounded_result,
+			external_rounded_inexact => external_rounded_inexact,
+			external_rounded_overflow => external_rounded_overflow,
+			external_rounded_underflow => external_rounded_underflow,
+			external_rounded_signaling_nan =>
+				external_rounded_signaling_nan,
 			destination_data => store_data,
 			conversion_valid => store_valid,
-			exception_status => converted_status
+			exception_status => converted_status,
+			round_input => round_input,
+			rounding_precision_out => rounding_precision_out
 		);
+	rounding_mode_out <= mode_latched;
 
 	packed_output_converter : entity work.TG68K_FPU_Extended_To_Packed
 		port map(

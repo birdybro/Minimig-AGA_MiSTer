@@ -220,6 +220,9 @@ architecture rtl of TG68K_FPU_System is
 	signal move_k_factor : std_logic_vector(6 downto 0);
 	signal move_resume : std_logic;
 	signal move_saved_context : std_logic_vector(187 downto 0);
+	signal move_round_input : fpu_round_input_t;
+	signal move_rounding_precision : fpu_rounding_precision_t;
+	signal move_rounding_mode : fpu_rounding_mode_t;
 
 	signal control_start : std_logic;
 	signal control_external_to_control : std_logic;
@@ -314,7 +317,20 @@ architecture rtl of TG68K_FPU_System is
 	signal binary_packed_source : std_logic_vector(95 downto 0);
 	signal binary_resume : std_logic;
 	signal binary_saved_context : std_logic_vector(98 downto 0);
+	signal binary_round_input : fpu_round_input_t;
+	signal binary_rounding_precision : fpu_rounding_precision_t;
+	signal binary_rounding_mode : fpu_rounding_mode_t;
+	signal binary_round_single_extended_range : std_logic;
 	signal conditional_resume : std_logic;
+	signal shared_round_input : fpu_round_input_t;
+	signal shared_rounding_precision : fpu_rounding_precision_t;
+	signal shared_rounding_mode : fpu_rounding_mode_t;
+	signal shared_round_single_extended_range : std_logic;
+	signal shared_rounded_result : fpu_extended_t;
+	signal shared_rounded_inexact : std_logic;
+	signal shared_rounded_overflow : std_logic;
+	signal shared_rounded_underflow : std_logic;
+	signal shared_rounded_signaling_nan : std_logic;
 
 	signal packed_conversion_start : std_logic;
 	signal packed_conversion_source : std_logic_vector(95 downto 0);
@@ -429,6 +445,32 @@ architecture rtl of TG68K_FPU_System is
 	signal exceptional_operand_latched : fpu_extended_t := (others => '0');
 	signal operation_exceptional_operand : fpu_extended_t;
 begin
+	shared_round_input <= move_round_input when move_busy = '1' else
+		binary_round_input;
+	shared_rounding_precision <= move_rounding_precision when
+		move_busy = '1' else binary_rounding_precision;
+	shared_rounding_mode <= move_rounding_mode when move_busy = '1' else
+		binary_rounding_mode;
+	shared_round_single_extended_range <= '0' when move_busy = '1' else
+		binary_round_single_extended_range;
+
+	shared_rounder : entity work.TG68K_FPU_Round
+		port map(
+			input_class => shared_round_input.data_class,
+			input_sign => shared_round_input.sign,
+			input_exponent => shared_round_input.exponent,
+			input_significand => shared_round_input.significand,
+			special_value => shared_round_input.special,
+			rounding_precision => shared_rounding_precision,
+			rounding_mode => shared_rounding_mode,
+			single_extended_range => shared_round_single_extended_range,
+			result => shared_rounded_result,
+			inexact => shared_rounded_inexact,
+			overflow => shared_rounded_overflow,
+			underflow => shared_rounded_underflow,
+			signaling_nan => shared_rounded_signaling_nan
+		);
+
 	suspended_operation <= move_bus_error or control_bus_error or
 		movem_bus_error or unary_bus_error or binary_bus_error or
 		conditional_bus_error;
@@ -995,6 +1037,9 @@ begin
 	end process;
 
 	move_controller : entity work.TG68K_FPU_Move_Controller
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => execution_reset,
@@ -1014,6 +1059,14 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			external_rounded_result => shared_rounded_result,
+			external_rounded_inexact => shared_rounded_inexact,
+			external_rounded_overflow => shared_rounded_overflow,
+			external_rounded_underflow => shared_rounded_underflow,
+			external_rounded_signaling_nan => shared_rounded_signaling_nan,
+			round_input => move_round_input,
+			rounding_precision_out => move_rounding_precision,
+			rounding_mode_out => move_rounding_mode,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,
@@ -1178,6 +1231,9 @@ begin
 		);
 
 	binary_controller : entity work.TG68K_FPU_Binary_Controller
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => execution_reset,
@@ -1198,6 +1254,15 @@ begin
 			packed_conversion_done => packed_conversion_done,
 			packed_conversion_result => packed_conversion_result,
 			packed_conversion_status => packed_conversion_status,
+			external_rounded_result => shared_rounded_result,
+			external_rounded_inexact => shared_rounded_inexact,
+			external_rounded_overflow => shared_rounded_overflow,
+			external_rounded_underflow => shared_rounded_underflow,
+			round_input => binary_round_input,
+			rounding_precision_out => binary_rounding_precision,
+			rounding_mode_out => binary_rounding_mode,
+			round_single_extended_range =>
+				binary_round_single_extended_range,
 			memory_ready => memory_ready,
 			memory_error => memory_error,
 			retry => retry,

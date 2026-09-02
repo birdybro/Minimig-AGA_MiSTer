@@ -21,7 +21,9 @@ begin
 			rounding_mode => rounding_mode,
 			destination_data => destination_data,
 			conversion_valid => conversion_valid,
-			exception_status => exception_status
+			exception_status => exception_status,
+			round_input => open,
+			rounding_precision_out => open
 		);
 
 	stimulus : process

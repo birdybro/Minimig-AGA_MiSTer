@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Binary_Controller is
+	generic(
+		INCLUDE_ROUNDING_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -35,6 +38,14 @@ entity TG68K_FPU_Binary_Controller is
 		packed_conversion_done : in std_logic;
 		packed_conversion_result : in fpu_extended_t;
 		packed_conversion_status : in std_logic_vector(7 downto 0);
+		external_rounded_result : in fpu_extended_t := (others => '0');
+		external_rounded_inexact : in std_logic := '0';
+		external_rounded_overflow : in std_logic := '0';
+		external_rounded_underflow : in std_logic := '0';
+		round_input : out fpu_round_input_t;
+		rounding_precision_out : out fpu_rounding_precision_t;
+		rounding_mode_out : out fpu_rounding_mode_t;
+		round_single_extended_range : out std_logic;
 
 		memory_ready : in std_logic;
 		memory_error : in std_logic;
@@ -269,6 +280,10 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal rounded_status : std_logic_vector(7 downto 0);
 begin
 	exceptional_operand <= source_latched;
+	round_input <= selected_round_input;
+	rounding_precision_out <= selected_rounding_precision;
+	rounding_mode_out <= selected_rounding_mode;
+	round_single_extended_range <= single_precision_latched;
 	saved_context_out <= external_buffer &
 		std_logic_vector(to_unsigned(transfer_index, 3));
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
@@ -647,22 +662,31 @@ begin
 			base_exception_status => scale_base_status
 		);
 
-	shared_round : entity work.TG68K_FPU_Round
-		port map(
-			input_class => selected_round_input.data_class,
-			input_sign => selected_round_input.sign,
-			input_exponent => selected_round_input.exponent,
-			input_significand => selected_round_input.significand,
-			special_value => selected_round_input.special,
-			rounding_precision => selected_rounding_precision,
-			rounding_mode => selected_rounding_mode,
-			single_extended_range => single_precision_latched,
-			result => rounded_result,
-			inexact => rounded_inexact,
-			overflow => rounded_overflow,
-			underflow => rounded_underflow,
-			signaling_nan => open
-		);
+	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		shared_round : entity work.TG68K_FPU_Round
+			port map(
+				input_class => selected_round_input.data_class,
+				input_sign => selected_round_input.sign,
+				input_exponent => selected_round_input.exponent,
+				input_significand => selected_round_input.significand,
+				special_value => selected_round_input.special,
+				rounding_precision => selected_rounding_precision,
+				rounding_mode => selected_rounding_mode,
+				single_extended_range => single_precision_latched,
+				result => rounded_result,
+				inexact => rounded_inexact,
+				overflow => rounded_overflow,
+				underflow => rounded_underflow,
+				signaling_nan => open
+			);
+	end generate;
+
+	without_rounding : if not INCLUDE_ROUNDING_STAGE generate
+		rounded_result <= external_rounded_result;
+		rounded_inexact <= external_rounded_inexact;
+		rounded_overflow <= external_rounded_overflow;
+		rounded_underflow <= external_rounded_underflow;
+	end generate;
 
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, result_latched,
