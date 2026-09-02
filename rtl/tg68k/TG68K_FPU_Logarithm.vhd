@@ -52,6 +52,7 @@ architecture rtl of TG68K_FPU_Logarithm is
 	constant ATANH_TINY_MAX_EXPONENT : integer := -33;
 	constant CUBE_SQUARE_LOW_BIT : natural := 112;
 	constant POSITIVE_REMAINDER_BOUND_BIT : natural := 9;
+	constant LN2_MULTIPLIER_BITS : natural := 15;
 	type logarithm_state_t is
 		(IDLE, NORMALIZE_SERIES_ARGUMENT, SQUARE_SMALL_ARGUMENT,
 			ALIGN_SQUARE_TERM,
@@ -172,12 +173,12 @@ architecture rtl of TG68K_FPU_Logarithm is
 
 	signal log_fraction : signed(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
-	signal ln2_multiplier : unsigned(14 downto 0) := (others => '0');
-	signal ln2_multiplicand : unsigned(RESULT_WIDTH - 1 downto 0) :=
+	-- The upper accumulator and lower multiplier shift around the fixed LN2
+	-- constant, eliminating a wide shifting multiplicand register.
+	signal ln2_product : unsigned(
+		RESULT_WIDTH + LN2_MULTIPLIER_BITS downto 0) :=
 		(others => '0');
-	signal ln2_accumulator : unsigned(RESULT_WIDTH - 1 downto 0) :=
-		(others => '0');
-	signal ln2_index : natural range 0 to 14 := 0;
+	signal ln2_index : natural range 0 to LN2_MULTIPLIER_BITS - 1 := 0;
 	signal base_scale_multiplier : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal base_scale_accumulator : unsigned(RESULT_WIDTH downto 0) :=
@@ -228,8 +229,8 @@ begin
 		series_multiplicand, cube_accumulator, atanh_numerator,
 		atanh_denominator, cordic_x, cordic_y, cordic_iteration,
 		cordic_z_previous, cordic_angle_previous,
-		cordic_direction_previous, ln2_accumulator, ln2_multiplier,
-		ln2_multiplicand, base_scale_accumulator, base_scale_multiplier,
+		cordic_direction_previous, ln2_product,
+		base_scale_accumulator, base_scale_multiplier,
 		base_scale_index, logarithm_base_latched)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable base_scale_constant : unsigned(RESULT_WIDTH - 1 downto 0);
@@ -286,9 +287,11 @@ begin
 					ARITHMETIC_WIDTH));
 				arithmetic_subtract_a <= not cordic_direction_previous;
 			when MULTIPLY_LN2 =>
-				arithmetic_left_a <= resize(ln2_accumulator, ARITHMETIC_WIDTH);
-				if ln2_multiplier(0) = '1' then
-					arithmetic_right_a <= resize(ln2_multiplicand,
+				arithmetic_left_a <= resize(ln2_product(
+					RESULT_WIDTH + LN2_MULTIPLIER_BITS downto
+					LN2_MULTIPLIER_BITS), ARITHMETIC_WIDTH);
+				if ln2_product(0) = '1' then
+					arithmetic_right_a <= resize(LN2_FIXED,
 						ARITHMETIC_WIDTH);
 				end if;
 			when SCALE_LOGARITHM_BASE =>
@@ -432,9 +435,8 @@ begin
 				else
 					exponent_magnitude := exponent_integer;
 				end if;
-				ln2_multiplier <= to_unsigned(exponent_magnitude, 15);
-				ln2_multiplicand <= resize(LN2_FIXED, RESULT_WIDTH);
-				ln2_accumulator <= (others => '0');
+				ln2_product <= resize(to_unsigned(exponent_magnitude,
+					LN2_MULTIPLIER_BITS), ln2_product'length);
 				ln2_index <= 0;
 				state <= MULTIPLY_LN2;
 			end if;
@@ -507,6 +509,8 @@ begin
 		variable next_angle : cordic_value_t;
 		variable fractional_log : signed(RESULT_WIDTH - 1 downto 0);
 		variable next_ln2 : unsigned(RESULT_WIDTH - 1 downto 0);
+		variable next_ln2_product : unsigned(
+			RESULT_WIDTH + LN2_MULTIPLIER_BITS downto 0);
 		variable next_base_scale : unsigned(RESULT_WIDTH downto 0);
 		variable scaled_series : unsigned(SERIES_WIDTH downto 0);
 		variable scaled_series_result : unsigned(SERIES_WIDTH - 1 downto 0);
@@ -568,9 +572,7 @@ begin
 				atanh_exponent <= (others => '0');
 				atanh_iteration <= 0;
 				log_fraction <= (others => '0');
-				ln2_multiplier <= (others => '0');
-				ln2_multiplicand <= (others => '0');
-				ln2_accumulator <= (others => '0');
+				ln2_product <= (others => '0');
 				ln2_index <= 0;
 				base_scale_multiplier <= (others => '0');
 				base_scale_accumulator <= (others => '0');
@@ -631,9 +633,7 @@ begin
 							atanh_exponent <= (others => '0');
 							atanh_iteration <= 0;
 							log_fraction <= (others => '0');
-							ln2_multiplier <= (others => '0');
-							ln2_multiplicand <= (others => '0');
-							ln2_accumulator <= (others => '0');
+							ln2_product <= (others => '0');
 							ln2_index <= 0;
 							base_scale_multiplier <= (others => '0');
 							base_scale_accumulator <= (others => '0');
@@ -1112,9 +1112,12 @@ begin
 							logarithm_base_latched);
 
 					when MULTIPLY_LN2 =>
-						next_ln2 := arithmetic_result_a(
+						next_ln2_product := shift_right(arithmetic_result_a(
+							RESULT_WIDTH downto 0) & ln2_product(
+								LN2_MULTIPLIER_BITS - 1 downto 0), 1);
+						next_ln2 := next_ln2_product(
 							RESULT_WIDTH - 1 downto 0);
-						if ln2_index = 14 then
+						if ln2_index = LN2_MULTIPLIER_BITS - 1 then
 							if input_exponent < 0 then
 								combined_log := log_fraction - signed(next_ln2);
 							else
@@ -1126,9 +1129,7 @@ begin
 								begin_fixed_result(combined_log);
 							end if;
 						else
-							ln2_accumulator <= next_ln2;
-							ln2_multiplier <= shift_right(ln2_multiplier, 1);
-							ln2_multiplicand <= shift_left(ln2_multiplicand, 1);
+							ln2_product <= next_ln2_product;
 							ln2_index <= ln2_index + 1;
 						end if;
 
