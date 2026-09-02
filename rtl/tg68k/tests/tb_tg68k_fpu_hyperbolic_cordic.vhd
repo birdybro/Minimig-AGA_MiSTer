@@ -80,6 +80,61 @@ begin
 			wait until rising_edge(clk);
 			wait for 1 ns;
 		end procedure;
+
+		procedure verify_fast_start(
+				constant x_value : in signed(99 downto 0);
+				constant y_value : in signed(99 downto 0);
+				constant z_value : in signed(112 downto 0)) is
+			variable baseline_x : signed(99 downto 0);
+			variable baseline_y : signed(99 downto 0);
+			variable baseline_z : signed(112 downto 0);
+			variable cycles : natural := 0;
+		begin
+			wait until falling_edge(clk);
+			vectoring <= '0';
+			rotate_on_start <= '0';
+			x_input <= x_value;
+			y_input <= y_value;
+			z_input <= z_value;
+			start <= '1';
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			start <= '0';
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycles := cycles + 1;
+				assert cycles <= 210 report "hyperbolic CORDIC timeout"
+					severity failure;
+			end loop;
+			assert cycles = 198 severity failure;
+			baseline_x := x_result;
+			baseline_y := y_result;
+			baseline_z := z_result;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+
+			wait until falling_edge(clk);
+			rotate_on_start <= '1';
+			start <= '1';
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			start <= '0';
+			cycles := 0;
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycles := cycles + 1;
+				assert cycles <= 210 report "hyperbolic CORDIC timeout"
+					severity failure;
+			end loop;
+			assert cycles = 197 and x_result = baseline_x and
+					y_result = baseline_y and z_result = baseline_z
+				report "hyperbolic CORDIC fast-start mismatch"
+				severity failure;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end procedure;
 	begin
 		wait for 3 * CLK_PERIOD;
 		wait until rising_edge(clk);
@@ -114,6 +169,10 @@ begin
 			signed'(x"1080AB05CA6145EDCDE9039A3"),
 			signed'(x"040AB3367420407999D337D03"),
 			(112 downto 0 => '0'), 197);
+		verify_fast_start(
+			signed'(x"1351E87200EEC232964A4EC8F"),
+			signed'(x"0100000000000000000000000"),
+			resize(shift_left(to_signed(1, 100), 94), 113));
 
 		report "PASS: shared hyperbolic CORDIC modes, repeats, and cycles"
 			severity note;

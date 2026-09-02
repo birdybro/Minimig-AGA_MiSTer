@@ -84,6 +84,62 @@ begin
 			wait until rising_edge(clk);
 			wait for 1 ns;
 		end procedure;
+
+		procedure verify_fast_start(
+				constant x_value : in signed(147 downto 0);
+				constant y_value : in signed(147 downto 0);
+				constant z_value : in signed(147 downto 0)) is
+			variable baseline_x : signed(147 downto 0);
+			variable baseline_y : signed(147 downto 0);
+			variable baseline_z : signed(147 downto 0);
+			variable cycles : natural := 0;
+		begin
+			wait until falling_edge(clk);
+			vectoring <= '0';
+			narrow_precision <= '0';
+			rotate_on_start <= '0';
+			x_input <= x_value;
+			y_input <= y_value;
+			z_input <= z_value;
+			start <= '1';
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			start <= '0';
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycles := cycles + 1;
+				assert cycles <= 300 report "circular CORDIC timeout"
+					severity failure;
+			end loop;
+			assert cycles = 290 severity failure;
+			baseline_x := x_result;
+			baseline_y := y_result;
+			baseline_z := z_result;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+
+			wait until falling_edge(clk);
+			rotate_on_start <= '1';
+			start <= '1';
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			start <= '0';
+			cycles := 0;
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycles := cycles + 1;
+				assert cycles <= 300 report "circular CORDIC timeout"
+					severity failure;
+			end loop;
+			assert cycles = 289 and x_result = baseline_x and
+					y_result = baseline_y and z_result = baseline_z
+				report "circular CORDIC fast-start mismatch"
+				severity failure;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+		end procedure;
 	begin
 		wait for 3 * CLK_PERIOD;
 		wait until rising_edge(clk);
@@ -120,6 +176,10 @@ begin
 			signed'(x"F9E087565455A74B9676E9EAD308111E4420C"),
 			signed'(x"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
 			289);
+		verify_fast_start(
+			signed'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289"),
+			signed'(x"0100000000000000000000000000000000000"),
+			shift_left(to_signed(1, 148), 142));
 
 		report "PASS: shared circular CORDIC precision, direction, and cycles"
 			severity note;

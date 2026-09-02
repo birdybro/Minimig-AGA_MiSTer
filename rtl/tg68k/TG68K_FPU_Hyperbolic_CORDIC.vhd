@@ -94,6 +94,7 @@ architecture rtl of TG68K_FPU_Hyperbolic_CORDIC is
 	signal vectoring_latched : std_logic := '0';
 	signal x_value : xy_value_t := (others => '0');
 	signal y_value : xy_value_t := (others => '0');
+	signal x_previous : xy_value_t := (others => '0');
 	signal z_value : z_value_t := (others => '0');
 	signal z_previous : z_value_t := (others => '0');
 	signal angle_previous : z_value_t := (others => '0');
@@ -109,6 +110,8 @@ architecture rtl of TG68K_FPU_Hyperbolic_CORDIC is
 	signal active_z : z_value_t;
 	signal active_angle : xy_value_t;
 	signal active_direction : std_logic;
+	signal shift_source : xy_value_t;
+	signal shifted_coordinate : xy_value_t;
 	signal left_a : unsigned(Z_WIDTH - 1 downto 0);
 	signal right_a : unsigned(Z_WIDTH - 1 downto 0);
 	signal left_b : unsigned(Z_WIDTH - 1 downto 0);
@@ -127,6 +130,10 @@ begin
 	active_direction <= '1' when
 		(active_vectoring = '1' and active_y >= 0) or
 		(active_vectoring = '0' and active_z >= 0) else '0';
+	shift_source <= active_y when state = ROTATE_XY or
+		(state = IDLE and start = '1' and rotate_on_start = '1') else
+		x_previous;
+	shifted_coordinate <= shift_right(shift_source, iteration);
 
 	busy <= '1' when state /= IDLE or start = '1' else '0';
 	done <= '1' when state = COMPLETE else '0';
@@ -136,8 +143,8 @@ begin
 
 	arithmetic_operands : process(state, start, rotate_on_start,
 		active_vectoring, active_x, active_y, active_z, active_angle,
-		active_direction, iteration, z_previous, angle_previous,
-		direction_previous, vectoring_latched)
+		active_direction, shifted_coordinate, y_value, z_previous,
+		angle_previous, direction_previous, vectoring_latched)
 	begin
 		left_a <= (others => '0');
 		right_a <= (others => '0');
@@ -148,23 +155,24 @@ begin
 		if state = ROTATE_XY or
 				(state = IDLE and start = '1' and rotate_on_start = '1') then
 			left_a <= unsigned(resize(active_x, Z_WIDTH));
-			right_a <= unsigned(resize(shift_right(active_y, iteration),
-				Z_WIDTH));
-			left_b <= unsigned(resize(active_y, Z_WIDTH));
-			right_b <= unsigned(resize(shift_right(active_x, iteration),
-				Z_WIDTH));
+			right_a <= unsigned(resize(shifted_coordinate, Z_WIDTH));
 			if (active_vectoring = '1' and active_y >= 0) or
 					(active_vectoring = '0' and active_z < 0) then
 				subtract_a <= '1';
-				subtract_b <= '1';
 			end if;
 		elsif state = ROTATE_Z then
 			left_a <= unsigned(z_previous);
 			right_a <= unsigned(angle_previous);
+			left_b <= unsigned(resize(y_value, Z_WIDTH));
+			right_b <= unsigned(resize(shifted_coordinate, Z_WIDTH));
 			if vectoring_latched = '1' then
 				subtract_a <= not direction_previous;
 			else
 				subtract_a <= direction_previous;
+			end if;
+			if (vectoring_latched = '1' and direction_previous = '1') or
+					(vectoring_latched = '0' and direction_previous = '0') then
+				subtract_b <= '1';
 			end if;
 		end if;
 	end process;
@@ -194,6 +202,7 @@ begin
 				vectoring_latched <= '0';
 				x_value <= (others => '0');
 				y_value <= (others => '0');
+				x_previous <= (others => '0');
 				z_value <= (others => '0');
 				z_previous <= (others => '0');
 				angle_previous <= (others => '0');
@@ -215,12 +224,11 @@ begin
 							z_value <= fit_z(z_input, vectoring);
 							shift_angle <= (others => '0');
 							if rotate_on_start = '1' then
+								x_previous <= active_x;
 								z_previous <= active_z;
 								angle_previous <= resize(active_angle, Z_WIDTH);
 								direction_previous <= active_direction;
 								x_value <= signed(arithmetic_result_a(
-									XY_WIDTH - 1 downto 0));
-								y_value <= signed(arithmetic_result_b(
 									XY_WIDTH - 1 downto 0));
 								angle_address <= 2;
 								state <= ROTATE_Z;
@@ -230,12 +238,11 @@ begin
 						end if;
 
 					when ROTATE_XY =>
+						x_previous <= x_value;
 						z_previous <= z_value;
 						angle_previous <= resize(active_angle, Z_WIDTH);
 						direction_previous <= active_direction;
 						x_value <= signed(arithmetic_result_a(
-							XY_WIDTH - 1 downto 0));
-						y_value <= signed(arithmetic_result_b(
 							XY_WIDTH - 1 downto 0));
 						if not ((iteration = 4 or iteration = 13 or
 								iteration = 40) and repeat_iteration = '0') then
@@ -254,6 +261,8 @@ begin
 					when ROTATE_Z =>
 						z_value <= fit_z(signed(arithmetic_result_a),
 							vectoring_latched);
+						y_value <= signed(arithmetic_result_b(
+							XY_WIDTH - 1 downto 0));
 						-- Hyperbolic CORDIC repeats these iterations to converge.
 						if (iteration = 4 or iteration = 13 or iteration = 40) and
 								repeat_iteration = '0' then
