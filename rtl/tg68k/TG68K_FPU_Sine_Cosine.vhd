@@ -181,10 +181,11 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal simultaneous_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
-	signal reciprocal_multiplier : unsigned(63 downto 0) := (others => '0');
-	signal reciprocal_multiplicand : unsigned(PRODUCT_WIDTH - 1 downto 0) :=
+	-- The combined accumulator|multiplier shifts right around the stationary
+	-- reciprocal, avoiding a second 256-bit range-reduction shifter.
+	signal reciprocal_multiplicand : unsigned(RECIPROCAL_BITS - 1 downto 0) :=
 		(others => '0');
-	signal reciprocal_product : unsigned(PRODUCT_WIDTH - 1 downto 0) :=
+	signal reciprocal_product : unsigned(PRODUCT_WIDTH downto 0) :=
 		(others => '0');
 	signal reciprocal_iteration : natural range 0 to 63 := 0;
 	signal quadrant : unsigned(1 downto 0) := (others => '0');
@@ -267,7 +268,7 @@ begin
 		CORDIC_WIDTH - 1 - normalization_highest);
 
 	shared_operands : process(state, reciprocal_product,
-		reciprocal_multiplier, reciprocal_multiplicand, cordic_x, cordic_y,
+		reciprocal_multiplicand, cordic_x, cordic_y,
 		cordic_z, cordic_iteration, cordic_z_previous,
 		cordic_angle_previous, cordic_direction_previous,
 		normalized_tangent_numerator, normalized_tangent_denominator,
@@ -282,9 +283,11 @@ begin
 		shared_subtract_b <= '0';
 		case state is
 			when MULTIPLY_RECIPROCAL =>
-				shared_left_a <= reciprocal_product;
-				if reciprocal_multiplier(0) = '1' then
-					shared_right_a <= reciprocal_multiplicand;
+				shared_left_a <= resize(reciprocal_product(
+					PRODUCT_WIDTH downto 64), PRODUCT_WIDTH);
+				if reciprocal_product(0) = '1' then
+					shared_right_a <= resize(reciprocal_multiplicand,
+						PRODUCT_WIDTH);
 				end if;
 			when ROTATE_CORDIC_XY =>
 				shared_left_a <= unsigned(resize(cordic_x, PRODUCT_WIDTH));
@@ -395,6 +398,7 @@ begin
 		variable normalization_shift : natural range 0 to 63;
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
+		variable next_reciprocal_product : unsigned(PRODUCT_WIDTH downto 0);
 		variable aligned_product : unsigned(PRODUCT_WIDTH - 1 downto 0);
 		variable shift_position : integer range -16128 to 294;
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
@@ -420,7 +424,6 @@ begin
 				simultaneous_latched <= '0';
 				source_sign_latched <= '0';
 				source_exponent_latched <= 0;
-				reciprocal_multiplier <= (others => '0');
 				reciprocal_multiplicand <= (others => '0');
 				reciprocal_product <= (others => '0');
 				reciprocal_iteration <= 0;
@@ -471,7 +474,6 @@ begin
 							simultaneous_latched <= simultaneous;
 							source_sign_latched <= source(79);
 							source_exponent_latched <= 0;
-							reciprocal_multiplier <= (others => '0');
 							reciprocal_multiplicand <= (others => '0');
 							reciprocal_product <= (others => '0');
 							reciprocal_iteration <= 0;
@@ -586,10 +588,9 @@ begin
 									state <= COMPLETE;
 								else
 									source_exponent_latched <= source_exponent;
-									reciprocal_multiplier <= source_significand;
-									reciprocal_multiplicand <= resize(TWO_BY_PI,
-										PRODUCT_WIDTH);
-									reciprocal_product <= (others => '0');
+									reciprocal_multiplicand <= TWO_BY_PI;
+									reciprocal_product <= resize(source_significand,
+										PRODUCT_WIDTH + 1);
 									reciprocal_iteration <= 0;
 									state <= MULTIPLY_RECIPROCAL;
 								end if;
@@ -597,11 +598,10 @@ begin
 						end if;
 
 					when MULTIPLY_RECIPROCAL =>
-						reciprocal_product <= shared_result_a;
-						reciprocal_multiplier <= shift_right(
-							reciprocal_multiplier, 1);
-						reciprocal_multiplicand <= shift_left(
-							reciprocal_multiplicand, 1);
+						next_reciprocal_product := shift_right(
+							shared_result_a(RECIPROCAL_BITS downto 0) &
+							reciprocal_product(63 downto 0), 1);
+						reciprocal_product <= next_reciprocal_product;
 						if reciprocal_iteration = 63 then
 							state <= REDUCE_RANGE;
 						else
@@ -613,10 +613,12 @@ begin
 						-- the nearest integer selects both the quadrant and residual.
 						shift_position := 255 - source_exponent_latched;
 						if shift_position >= FRACTION_BITS then
-							aligned_product := shift_right(reciprocal_product,
+							aligned_product := shift_right(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0),
 								shift_position - FRACTION_BITS);
 						elsif FRACTION_BITS - shift_position < PRODUCT_WIDTH then
-							aligned_product := shift_left(reciprocal_product,
+							aligned_product := shift_left(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0),
 								FRACTION_BITS - shift_position);
 						else
 							aligned_product := (others => '0');
