@@ -168,11 +168,8 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	signal narrow_latched : std_logic := '0';
 	signal x_value : cordic_value_t := (others => '0');
 	signal y_value : cordic_value_t := (others => '0');
-	signal x_previous : cordic_value_t := (others => '0');
+	signal x_next : cordic_value_t := (others => '0');
 	signal z_value : cordic_value_t := (others => '0');
-	signal z_previous : cordic_value_t := (others => '0');
-	signal angle_previous : cordic_value_t := (others => '0');
-	signal direction_previous : std_logic := '0';
 	signal iteration : natural range 0 to WIDE_ITERATIONS := 0;
 	signal angle_address : natural range 0 to 47 := 0;
 	signal wide_angle_data : cordic_value_t := (others => '0');
@@ -218,7 +215,7 @@ begin
 		(active_vectoring = '0' and active_z >= 0) else '0';
 	shift_source <= active_y when state = ROTATE_XY or
 		(state = IDLE and start = '1' and rotate_on_start = '1') else
-		x_previous;
+		x_value;
 	shifted_coordinate <= shift_right(shift_source, iteration);
 
 	busy <= '1' when state /= IDLE or start = '1' else '0';
@@ -229,8 +226,7 @@ begin
 
 	arithmetic_operands : process(state, start, rotate_on_start, active_vectoring,
 		active_x, active_y, active_z, active_angle, active_direction,
-		shifted_coordinate, y_value, z_previous, angle_previous,
-		direction_previous, vectoring_latched)
+		shifted_coordinate, x_value, y_value, z_value, vectoring_latched)
 	begin
 		left_a <= (others => '0');
 		right_a <= (others => '0');
@@ -255,19 +251,21 @@ begin
 				end if;
 			end if;
 		elsif state = ROTATE_Z then
-			left_a <= unsigned(z_previous);
-			right_a <= unsigned(angle_previous);
+			left_a <= unsigned(z_value);
+			if vectoring_latched = '0' or y_value /= 0 then
+				right_a <= unsigned(active_angle);
+			end if;
 			left_b <= unsigned(y_value);
 			if vectoring_latched = '1' then
-				subtract_a <= not direction_previous;
+				subtract_a <= not active_direction;
 				if y_value /= 0 then
 					right_b <= unsigned(shifted_coordinate);
-					subtract_b <= direction_previous;
+					subtract_b <= active_direction;
 				end if;
 			else
-				subtract_a <= direction_previous;
+				subtract_a <= active_direction;
 				right_b <= unsigned(shifted_coordinate);
-				subtract_b <= not direction_previous;
+				subtract_b <= not active_direction;
 			end if;
 		end if;
 	end process;
@@ -302,11 +300,8 @@ begin
 				narrow_latched <= '0';
 				x_value <= (others => '0');
 				y_value <= (others => '0');
-				x_previous <= (others => '0');
+				x_next <= (others => '0');
 				z_value <= (others => '0');
-				z_previous <= (others => '0');
-				angle_previous <= (others => '0');
-				direction_previous <= '0';
 				iteration <= 0;
 				angle_address <= 0;
 				shift_angle <= (others => '0');
@@ -323,15 +318,7 @@ begin
 							z_value <= active_z;
 							shift_angle <= (others => '0');
 							if rotate_on_start = '1' then
-								x_previous <= active_x;
-								z_previous <= active_z;
-								direction_previous <= active_direction;
-								if vectoring = '1' and active_y = 0 then
-									angle_previous <= (others => '0');
-								else
-									angle_previous <= active_angle;
-								end if;
-								x_value <= fitted_result_a;
+								x_next <= fitted_result_a;
 								angle_address <= 1;
 								state <= ROTATE_Z;
 							else
@@ -340,15 +327,7 @@ begin
 						end if;
 
 					when ROTATE_XY =>
-						x_previous <= x_value;
-						z_previous <= z_value;
-						direction_previous <= active_direction;
-						if vectoring_latched = '1' and y_value = 0 then
-							angle_previous <= (others => '0');
-						else
-							angle_previous <= active_angle;
-						end if;
-						x_value <= fitted_result_a;
+						x_next <= fitted_result_a;
 						if iteration < 47 then
 							angle_address <= iteration + 1;
 						elsif iteration = 47 then
@@ -360,12 +339,11 @@ begin
 								shift_angle <= signed'(
 									x"0000000000000A2F9836E4E441529FC2757D2");
 							end if;
-						else
-							shift_angle <= shift_right(shift_angle, 1);
 						end if;
 						state <= ROTATE_Z;
 
 					when ROTATE_Z =>
+						x_value <= x_next;
 						z_value <= fitted_result_a;
 						y_value <= fitted_result_b;
 						if (narrow_latched = '1' and
@@ -374,6 +352,9 @@ begin
 								iteration = WIDE_ITERATIONS) then
 							state <= COMPLETE;
 						else
+							if iteration > 47 then
+								shift_angle <= shift_right(shift_angle, 1);
+							end if;
 							iteration <= iteration + 1;
 							state <= ROTATE_XY;
 						end if;
