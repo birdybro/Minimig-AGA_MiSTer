@@ -81,17 +81,16 @@ begin
 		if source_class = FPU_CLASS_NORMAL and significand /= 0 then
 			if source(78 downto 64) = "000000000000000" then
 				shift_count := 63 - highest_set_bit(significand);
-				significand := shift_left(significand, shift_count);
 				exponent_value := -16383 - shift_count;
 			else
 				exponent_value := to_integer(unsigned(source(78 downto 64))) -
 					FPU_EXTENDED_EXPONENT_BIAS;
 				if significand(63) = '0' then
 					shift_count := 63 - highest_set_bit(significand);
-					significand := shift_left(significand, shift_count);
 					exponent_value := exponent_value - shift_count;
 				end if;
 			end if;
+			significand := shift_left(significand, shift_count);
 			prepared_exponent <= to_signed(exponent_value, 17);
 			prepared_significand <= significand & "000";
 		end if;
@@ -144,6 +143,8 @@ begin
 		variable integer_limit : unsigned(64 downto 0);
 		variable integer_bits : unsigned(31 downto 0);
 		variable source_significand : unsigned(63 downto 0);
+		variable shift_operand : unsigned(63 downto 0);
+		variable shared_shift_result : unsigned(63 downto 0);
 		variable nan_significand : unsigned(63 downto 0);
 		variable discarded : std_logic;
 		variable guard : std_logic;
@@ -163,12 +164,38 @@ begin
 		integer_limit := (others => '0');
 		integer_bits := (others => '0');
 		source_significand := prepared_significand(66 downto 3);
+		shift_operand := (others => '0');
 		nan_significand := unsigned(source(63 downto 0));
 		discarded := '0';
 		guard := '0';
 		lower_discarded := '0';
 		increment := false;
 		integer_overflow := false;
+
+		if (destination_format = FPU_FORMAT_SINGLE or
+				destination_format = FPU_FORMAT_DOUBLE) and
+				result_class = FPU_CLASS_NORMAL then
+			shift_operand := result_significand;
+			result_exponent := to_integer(unsigned(
+				rounded_result(78 downto 64))) - FPU_EXTENDED_EXPONENT_BIAS;
+			if destination_format = FPU_FORMAT_SINGLE and
+					result_exponent < -126 then
+				shift_count := -126 - result_exponent;
+			elsif destination_format = FPU_FORMAT_DOUBLE and
+					result_exponent < -1022 then
+				shift_count := -1022 - result_exponent;
+			end if;
+		elsif (destination_format = FPU_FORMAT_BYTE_INTEGER or
+				destination_format = FPU_FORMAT_WORD_INTEGER or
+				destination_format = FPU_FORMAT_LONG_INTEGER) and
+				source_class = FPU_CLASS_NORMAL then
+			shift_operand := source_significand;
+			result_exponent := to_integer(prepared_exponent);
+			if result_exponent >= 0 and result_exponent < 63 then
+				shift_count := 63 - result_exponent;
+			end if;
+		end if;
+		shared_shift_result := shift_right(shift_operand, shift_count);
 
 		case destination_format is
 			when FPU_FORMAT_SINGLE | FPU_FORMAT_DOUBLE |
@@ -201,18 +228,13 @@ begin
 								output_data(22 downto 0) := std_logic_vector(
 									result_significand(62 downto 40));
 							when FPU_CLASS_NORMAL =>
-								result_exponent := to_integer(unsigned(
-									rounded_result(78 downto 64))) -
-									FPU_EXTENDED_EXPONENT_BIAS;
 								if result_exponent >= -126 then
 									output_data(30 downto 23) := std_logic_vector(
 										to_unsigned(result_exponent + 127, 8));
 									output_data(22 downto 0) := std_logic_vector(
 										result_significand(62 downto 40));
 								else
-									shift_count := -126 - result_exponent;
-									shifted_significand := shift_right(
-										result_significand, shift_count);
+									shifted_significand := shared_shift_result;
 									output_data(22 downto 0) := std_logic_vector(
 										shifted_significand(62 downto 40));
 								end if;
@@ -228,18 +250,13 @@ begin
 								output_data(51 downto 0) := std_logic_vector(
 									result_significand(62 downto 11));
 							when FPU_CLASS_NORMAL =>
-								result_exponent := to_integer(unsigned(
-									rounded_result(78 downto 64))) -
-									FPU_EXTENDED_EXPONENT_BIAS;
 								if result_exponent >= -1022 then
 									output_data(62 downto 52) := std_logic_vector(
 										to_unsigned(result_exponent + 1023, 11));
 									output_data(51 downto 0) := std_logic_vector(
 										result_significand(62 downto 11));
 								else
-									shift_count := -1022 - result_exponent;
-									shifted_significand := shift_right(
-										result_significand, shift_count);
+									shifted_significand := shared_shift_result;
 									output_data(51 downto 0) := std_logic_vector(
 										shifted_significand(62 downto 11));
 								end if;
@@ -272,13 +289,10 @@ begin
 						status(FPU_FPSR_OPERR_BIT - 8) := '1';
 					end if;
 				elsif source_class = FPU_CLASS_NORMAL then
-					result_exponent := to_integer(prepared_exponent);
 					if result_exponent >= 63 then
 						integer_overflow := true;
 					elsif result_exponent >= 0 then
-						shift_count := 63 - result_exponent;
-						integer_magnitude := resize(shift_right(
-							source_significand, shift_count), 65);
+						integer_magnitude := resize(shared_shift_result, 65);
 						for index in 0 to 62 loop
 							if index < shift_count then
 								discarded := discarded or
