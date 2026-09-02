@@ -37,44 +37,37 @@ end entity;
 architecture rtl of TG68K_FPU_Constant_Controller is
 	type controller_state_t is (IDLE, COMMIT, COMPLETE);
 	type constant_tail_t is (TAIL_EXACT, TAIL_BELOW_LSB, TAIL_ABOVE_LSB);
-	type constant_entry_t is record
-		value : fpu_extended_t;
-		tail : constant_tail_t;
-	end record;
-
-	function constant_rom(offset : std_logic_vector(5 downto 0))
-		return constant_entry_t is
-		variable entry : constant_entry_t := (
-			value => x"00000000000000000000", tail => TAIL_EXACT);
-	begin
-		case to_integer(unsigned(offset)) is
-			when 16#00# => entry := (x"4000C90FDAA22168C235", TAIL_BELOW_LSB);
-			when 16#0B# => entry := (x"3FFD9A209A84FBCFF798", TAIL_ABOVE_LSB);
-			when 16#0C# => entry := (x"4000ADF85458A2BB4A9A", TAIL_ABOVE_LSB);
-			when 16#0D# => entry := (x"3FFFB8AA3B295C17F0BC", TAIL_BELOW_LSB);
-			when 16#0E# => entry := (x"3FFDDE5BD8A937287195", TAIL_EXACT);
-			when 16#0F# => entry := (x"00000000000000000000", TAIL_EXACT);
-			when 16#30# => entry := (x"3FFEB17217F7D1CF79AC", TAIL_BELOW_LSB);
-			when 16#31# => entry := (x"4000935D8DDDAAA8AC17", TAIL_BELOW_LSB);
-			when 16#32# => entry := (x"3FFF8000000000000000", TAIL_EXACT);
-			when 16#33# => entry := (x"4002A000000000000000", TAIL_EXACT);
-			when 16#34# => entry := (x"4005C800000000000000", TAIL_EXACT);
-			when 16#35# => entry := (x"400C9C40000000000000", TAIL_EXACT);
-			when 16#36# => entry := (x"4019BEBC200000000000", TAIL_EXACT);
-			when 16#37# => entry := (x"40348E1BC9BF04000000", TAIL_EXACT);
-			when 16#38# => entry := (x"40699DC5ADA82B70B59E", TAIL_BELOW_LSB);
-			when 16#39# => entry := (x"40D3C2781F49FFCFA6D5", TAIL_ABOVE_LSB);
-			when 16#3A# => entry := (x"41A893BA47C980E98CE0", TAIL_BELOW_LSB);
-			when 16#3B# => entry := (x"4351AA7EEBFB9DF9DE8E", TAIL_BELOW_LSB);
-			when 16#3C# => entry := (x"46A3E319A0AEA60E91C7", TAIL_BELOW_LSB);
-			when 16#3D# => entry := (x"4D48C976758681750C17", TAIL_ABOVE_LSB);
-			when 16#3E# => entry := (x"5A929E8B3B5DC53D5DE5", TAIL_BELOW_LSB);
-			when 16#3F# => entry := (x"7525C46052028A20979B", TAIL_BELOW_LSB);
-			-- Motorola reserves the remaining offsets for internal microcode.
-			when others => null;
-		end case;
-		return entry;
-	end function;
+	subtype constant_word_t is std_logic_vector(81 downto 0);
+	type constant_rom_t is array(0 to 63) of constant_word_t;
+	constant TAIL_EXACT_BITS : std_logic_vector(1 downto 0) := "00";
+	constant TAIL_BELOW_LSB_BITS : std_logic_vector(1 downto 0) := "01";
+	constant TAIL_ABOVE_LSB_BITS : std_logic_vector(1 downto 0) := "10";
+	signal constant_rom : constant_rom_t := (
+		16#00# => TAIL_BELOW_LSB_BITS & x"4000C90FDAA22168C235",
+		16#0B# => TAIL_ABOVE_LSB_BITS & x"3FFD9A209A84FBCFF798",
+		16#0C# => TAIL_ABOVE_LSB_BITS & x"4000ADF85458A2BB4A9A",
+		16#0D# => TAIL_BELOW_LSB_BITS & x"3FFFB8AA3B295C17F0BC",
+		16#0E# => TAIL_EXACT_BITS & x"3FFDDE5BD8A937287195",
+		16#0F# => TAIL_EXACT_BITS & x"00000000000000000000",
+		16#30# => TAIL_BELOW_LSB_BITS & x"3FFEB17217F7D1CF79AC",
+		16#31# => TAIL_BELOW_LSB_BITS & x"4000935D8DDDAAA8AC17",
+		16#32# => TAIL_EXACT_BITS & x"3FFF8000000000000000",
+		16#33# => TAIL_EXACT_BITS & x"4002A000000000000000",
+		16#34# => TAIL_EXACT_BITS & x"4005C800000000000000",
+		16#35# => TAIL_EXACT_BITS & x"400C9C40000000000000",
+		16#36# => TAIL_EXACT_BITS & x"4019BEBC200000000000",
+		16#37# => TAIL_EXACT_BITS & x"40348E1BC9BF04000000",
+		16#38# => TAIL_BELOW_LSB_BITS & x"40699DC5ADA82B70B59E",
+		16#39# => TAIL_ABOVE_LSB_BITS & x"40D3C2781F49FFCFA6D5",
+		16#3A# => TAIL_BELOW_LSB_BITS & x"41A893BA47C980E98CE0",
+		16#3B# => TAIL_BELOW_LSB_BITS & x"4351AA7EEBFB9DF9DE8E",
+		16#3C# => TAIL_BELOW_LSB_BITS & x"46A3E319A0AEA60E91C7",
+		16#3D# => TAIL_ABOVE_LSB_BITS & x"4D48C976758681750C17",
+		16#3E# => TAIL_BELOW_LSB_BITS & x"5A929E8B3B5DC53D5DE5",
+		16#3F# => TAIL_BELOW_LSB_BITS & x"7525C46052028A20979B",
+		-- Motorola reserves the remaining offsets for internal microcode.
+		others => (others => '0')
+	);
 
 	function or_reduce(value : unsigned) return std_logic is
 		variable reduced : std_logic := '0';
@@ -86,16 +79,29 @@ architecture rtl of TG68K_FPU_Constant_Controller is
 	end function;
 
 	signal state : controller_state_t := IDLE;
-	signal offset_latched : std_logic_vector(5 downto 0) := (others => '0');
 	signal precision_latched : fpu_rounding_precision_t := FPU_PRECISION_EXTENDED;
 	signal mode_latched : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
-	signal rom_entry : constant_entry_t;
+	signal rom_word : constant_word_t := (others => '0');
+	signal rom_value : fpu_extended_t;
+	signal rom_tail : constant_tail_t;
 	signal rounded_result : fpu_extended_t;
 	signal rounded_inexact : std_logic;
+	attribute ramstyle : string;
+	attribute ramstyle of constant_rom : signal is "M10K";
 begin
-	rom_entry <= constant_rom(offset_latched);
+	rom_value <= rom_word(79 downto 0);
+	with rom_word(81 downto 80) select rom_tail <=
+		TAIL_BELOW_LSB when TAIL_BELOW_LSB_BITS,
+		TAIL_ABOVE_LSB when TAIL_ABOVE_LSB_BITS,
+		TAIL_EXACT when others;
+	read_constant : process(clk)
+	begin
+		if rising_edge(clk) then
+			rom_word <= constant_rom(to_integer(unsigned(rom_offset)));
+		end if;
+	end process;
 
-	round_constant : process(rom_entry, precision_latched, mode_latched)
+	round_constant : process(rom_value, rom_tail, precision_latched, mode_latched)
 		variable exact_significand : unsigned(66 downto 0);
 		variable retained_significand : unsigned(63 downto 0);
 		variable rounded_sum : unsigned(64 downto 0);
@@ -107,11 +113,11 @@ begin
 		variable increment : boolean;
 	begin
 		exact_significand := shift_left(resize(unsigned(
-			rom_entry.value(63 downto 0)), 67), 3);
-		case rom_entry.tail is
+			rom_value(63 downto 0)), 67), 3);
+		case rom_tail is
 			when TAIL_BELOW_LSB =>
 				exact_significand := shift_left(resize(unsigned(
-					rom_entry.value(63 downto 0)) - 1, 67), 3);
+					rom_value(63 downto 0)) - 1, 67), 3);
 				exact_significand(2 downto 0) := "101";
 			when TAIL_ABOVE_LSB => exact_significand(0) := '1';
 			when others => null;
@@ -157,13 +163,13 @@ begin
 			end case;
 		end if;
 
-		result_value := rom_entry.value;
-		if rom_entry.value(78 downto 0) = (78 downto 0 => '0') then
+		result_value := rom_value;
+		if rom_value(78 downto 0) = (78 downto 0 => '0') then
 			result_value := (others => '0');
 			discarded := '0';
 		elsif rounded_sum(64) = '1' then
 			result_value(78 downto 64) := std_logic_vector(
-				unsigned(rom_entry.value(78 downto 64)) + 1);
+				unsigned(rom_value(78 downto 64)) + 1);
 			result_value(63 downto 0) := std_logic_vector(rounded_sum(64 downto 1));
 		else
 			result_value(63 downto 0) := std_logic_vector(rounded_sum(63 downto 0));
@@ -203,14 +209,12 @@ begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
-				offset_latched <= (others => '0');
 				precision_latched <= FPU_PRECISION_EXTENDED;
 				mode_latched <= FPU_ROUND_NEAREST;
 			else
 				case state is
 					when IDLE =>
 						if start = '1' then
-							offset_latched <= rom_offset;
 							precision_latched <= rounding_precision;
 							mode_latched <= rounding_mode;
 							state <= COMMIT;
