@@ -20,10 +20,17 @@ architecture test of tb_tg68k_fpu_hyperbolic_cordic is
 	signal y_result : signed(99 downto 0);
 	signal z_result : signed(112 downto 0);
 	signal done : std_logic;
+	signal shift_source : signed(99 downto 0);
+	signal shift_amount : natural range 1 to 96;
+	signal shifted_coordinate : signed(99 downto 0);
 begin
 	clk <= not clk after CLK_PERIOD / 2;
+	shifted_coordinate <= shift_right(shift_source, shift_amount);
 
 	dut : entity work.TG68K_FPU_Hyperbolic_CORDIC
+		generic map(
+			INCLUDE_SHIFT_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => nReset,
@@ -33,6 +40,9 @@ begin
 			x_input => x_input,
 			y_input => y_input,
 			z_input => z_input,
+			external_shifted_coordinate => shifted_coordinate,
+			shift_source_out => shift_source,
+			shift_amount_out => shift_amount,
 			x_result => x_result,
 			y_result => y_result,
 			z_result => z_result,

@@ -14,6 +14,9 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity TG68K_FPU_Circular_CORDIC is
+	generic(
+		INCLUDE_SHIFT_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -24,6 +27,10 @@ entity TG68K_FPU_Circular_CORDIC is
 		x_input : in signed(147 downto 0);
 		y_input : in signed(147 downto 0);
 		z_input : in signed(147 downto 0);
+		external_shifted_coordinate : in signed(147 downto 0) :=
+			(others => '0');
+		shift_source_out : out signed(147 downto 0);
+		shift_amount_out : out natural range 0 to 144;
 
 		x_result : out signed(147 downto 0);
 		y_result : out signed(147 downto 0);
@@ -216,7 +223,16 @@ begin
 	shift_source <= active_y when state = ROTATE_XY or
 		(state = IDLE and start = '1' and rotate_on_start = '1') else
 		x_value;
-	shifted_coordinate <= shift_right(shift_source, iteration);
+	shift_source_out <= shift_source;
+	shift_amount_out <= iteration;
+
+	with_shift_stage : if INCLUDE_SHIFT_STAGE generate
+		shifted_coordinate <= shift_right(shift_source, iteration);
+	end generate;
+
+	without_shift_stage : if not INCLUDE_SHIFT_STAGE generate
+		shifted_coordinate <= external_shifted_coordinate;
+	end generate;
 
 	busy <= '1' when state /= IDLE or start = '1' else '0';
 	done <= '1' when state = COMPLETE else '0';
