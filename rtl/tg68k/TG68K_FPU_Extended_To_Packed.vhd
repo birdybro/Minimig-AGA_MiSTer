@@ -143,13 +143,13 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal chunk_power_bits : unsigned(13 downto 0) := (others => '0');
 	signal power_bit_sum : natural range 0 to 23200 := 0;
 
-	signal power_multiplicand : unsigned(383 downto 0) := (others => '0');
-	signal power_multiplier : unsigned(191 downto 0) := (others => '0');
-	signal power_product : unsigned(383 downto 0) := (others => '0');
+	-- Each product register holds accumulator|multiplier and shifts right;
+	-- keeping the multiplicand stationary avoids a second wide shifter.
+	signal power_multiplicand : unsigned(191 downto 0) := (others => '0');
+	signal power_product : unsigned(384 downto 0) := (others => '0');
 	signal power_iteration : natural range 0 to 191 := 0;
-	signal source_multiplicand : unsigned(447 downto 0) := (others => '0');
-	signal source_multiplier : unsigned(63 downto 0) := (others => '0');
-	signal source_product : unsigned(447 downto 0) := (others => '0');
+	signal source_multiplicand : unsigned(383 downto 0) := (others => '0');
+	signal source_product : unsigned(448 downto 0) := (others => '0');
 	signal source_iteration : natural range 0 to 63 := 0;
 	-- Keep the wide product stationary while serially extracting the scaled
 	-- low word and sticky bit; a bidirectional 448-bit shift mux is larger.
@@ -279,8 +279,10 @@ begin
 		variable binary_logarithm : integer range -16446 to 16383;
 		variable log_product : signed(49 downto 0);
 		variable estimate : integer range -5000 to 5000;
-		variable next_power_product : unsigned(383 downto 0);
-		variable next_source_product : unsigned(447 downto 0);
+		variable power_accumulator_sum : unsigned(192 downto 0);
+		variable next_power_product : unsigned(384 downto 0);
+		variable source_accumulator_sum : unsigned(384 downto 0);
+		variable next_source_product : unsigned(448 downto 0);
 		variable shift_value : integer range -32768 to 32767;
 		variable next_scaled_integer : unsigned(63 downto 0);
 		variable next_sticky : std_logic;
@@ -326,11 +328,9 @@ begin
 				chunk_power_bits <= (others => '0');
 				power_bit_sum <= 0;
 				power_multiplicand <= (others => '0');
-				power_multiplier <= (others => '0');
 				power_product <= (others => '0');
 				power_iteration <= 0;
 				source_multiplicand <= (others => '0');
-				source_multiplier <= (others => '0');
 				source_product <= (others => '0');
 				source_iteration <= 0;
 				scaled_integer_register <= (others => '0');
@@ -410,27 +410,26 @@ begin
 						state <= CAPTURE_RESIDUAL;
 
 					when CAPTURE_RESIDUAL =>
-						power_multiplicand <= resize(chunk_multiplier, 384);
-						power_multiplier <= rom_multiplier;
-						power_product <= (others => '0');
+						power_multiplicand <= chunk_multiplier;
+						power_product <= resize(rom_multiplier, 385);
 						power_iteration <= 0;
 						power_bit_sum <= to_integer(chunk_power_bits) +
 							to_integer(rom_power_bits);
 						state <= MULTIPLY_POWER;
 
 					when MULTIPLY_POWER =>
-						next_power_product := power_product;
-						if power_multiplier(0) = '1' then
-							next_power_product := next_power_product +
-								power_multiplicand;
+						power_accumulator_sum := power_product(384 downto 192);
+						if power_product(0) = '1' then
+							power_accumulator_sum := power_accumulator_sum +
+								resize(power_multiplicand, 193);
 						end if;
+						next_power_product := shift_right(power_accumulator_sum &
+							power_product(191 downto 0), 1);
 						power_product <= next_power_product;
-						power_multiplicand <= shift_left(power_multiplicand, 1);
-						power_multiplier <= shift_right(power_multiplier, 1);
 						if power_iteration = 191 then
-							source_multiplicand <= resize(next_power_product, 448);
-							source_multiplier <= unsigned(source_latched(63 downto 0));
-							source_product <= (others => '0');
+							source_multiplicand <= next_power_product(383 downto 0);
+							source_product <= resize(
+								unsigned(source_latched(63 downto 0)), 449);
 							source_iteration <= 0;
 							state <= MULTIPLY_SOURCE;
 						else
@@ -438,14 +437,14 @@ begin
 						end if;
 
 					when MULTIPLY_SOURCE =>
-						next_source_product := source_product;
-						if source_multiplier(0) = '1' then
-							next_source_product := next_source_product +
-								source_multiplicand;
+						source_accumulator_sum := source_product(448 downto 64);
+						if source_product(0) = '1' then
+							source_accumulator_sum := source_accumulator_sum +
+								resize(source_multiplicand, 385);
 						end if;
+						next_source_product := shift_right(source_accumulator_sum &
+							source_product(63 downto 0), 1);
 						source_product <= next_source_product;
-						source_multiplicand <= shift_left(source_multiplicand, 1);
-						source_multiplier <= shift_right(source_multiplier, 1);
 						if source_iteration = 63 then
 							if decimal_power >= 0 then
 								shift_value := binary_power + decimal_power +
