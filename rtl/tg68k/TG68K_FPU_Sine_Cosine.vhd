@@ -129,8 +129,6 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal tangent_remainder : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
 	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
 	signal tangent_iteration : natural range 0 to 64 := 0;
-	signal tangent_numerator_latched : unsigned(CORDIC_WIDTH - 1 downto 0) :=
-		(others => '0');
 	signal tangent_denominator_latched : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalized_tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0) :=
@@ -377,7 +375,6 @@ begin
 				tangent_remainder <= (others => '0');
 				tangent_quotient <= (others => '0');
 				tangent_iteration <= 0;
-				tangent_numerator_latched <= (others => '0');
 				tangent_denominator_latched <= (others => '0');
 				normalized_tangent_numerator <= (others => '0');
 				normalized_tangent_denominator <= (others => '0');
@@ -657,7 +654,7 @@ begin
 									final_sign := not final_sign;
 								end if;
 								intermediate_sign <= final_sign;
-								tangent_numerator_latched <= tangent_numerator;
+								normalization_value <= tangent_numerator;
 								tangent_denominator_latched <= tangent_denominator;
 								if tangent_denominator = 0 then
 									intermediate_class <= FPU_CLASS_INFINITY;
@@ -738,8 +735,10 @@ begin
 						end if;
 
 					when LOAD_TANGENT_NUMERATOR =>
-						begin_normalization(tangent_numerator_latched,
-							NORMALIZE_TANGENT_NUMERATOR);
+						normalization_shift_count <= 0;
+						normalization_target <= NORMALIZE_TANGENT_NUMERATOR;
+						normalization_sign <= '0';
+						state <= NORMALIZE_VALUE;
 
 					when LOAD_TANGENT_DENOMINATOR =>
 						begin_normalization(tangent_denominator_latched,
