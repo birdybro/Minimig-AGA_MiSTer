@@ -90,8 +90,6 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalization_exponent : signed(16 downto 0) := (others => '0');
-	signal arc_sine_magnitude : unsigned(FRACTION_BITS downto 0) :=
-		(others => '0');
 	signal source_alignment_target : source_alignment_target_t :=
 		ALIGN_ARC_SINE;
 	signal source_alignment_remaining : natural range 0 to FRACTION_BITS := 0;
@@ -205,7 +203,7 @@ begin
 		variable final_significand : fpu_significand_grs_t;
 		variable next_normalization : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable next_exponent : signed(16 downto 0);
-		variable next_arc_sine_magnitude : unsigned(FRACTION_BITS downto 0);
+		variable next_square_multiplicand : unsigned(FRACTION_BITS downto 0);
 		variable next_cordic_source : cordic_value_t;
 	begin
 		if rising_edge(clk) then
@@ -217,7 +215,6 @@ begin
 				cordic_source_y <= (others => '0');
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
-				arc_sine_magnitude <= (others => '0');
 				source_alignment_target <= ALIGN_ARC_SINE;
 				source_alignment_remaining <= 0;
 				square_multiplicand <= (others => '0');
@@ -318,13 +315,12 @@ begin
 									else
 										base_status(1) <= '1';
 										if source_exponent < -FRACTION_BITS then
-											arc_sine_magnitude <= (others => '0');
 											square_multiplicand <= (others => '0');
 											square_product <= (others => '0');
 											square_iteration <= 0;
 											state <= MULTIPLY_ARC_SINE_SOURCE;
 										else
-											arc_sine_magnitude <= shift_left(resize(
+											square_multiplicand <= shift_left(resize(
 												source_significand, FRACTION_BITS + 1),
 												FRACTION_BITS - 63);
 											source_alignment_target <= ALIGN_ARC_SINE;
@@ -385,12 +381,11 @@ begin
 					when ALIGN_SOURCE =>
 						case source_alignment_target is
 							when ALIGN_ARC_SINE =>
-								next_arc_sine_magnitude := shift_right(
-									arc_sine_magnitude, 1);
-								arc_sine_magnitude <= next_arc_sine_magnitude;
+								next_square_multiplicand := shift_right(
+									square_multiplicand, 1);
+								square_multiplicand <= next_square_multiplicand;
 								if source_alignment_remaining = 1 then
-									square_multiplicand <= next_arc_sine_magnitude;
-									square_product <= resize(next_arc_sine_magnitude,
+									square_product <= resize(next_square_multiplicand,
 										2 * FRACTION_BITS + 3);
 									square_iteration <= 0;
 									state <= MULTIPLY_ARC_SINE_SOURCE;
@@ -458,7 +453,7 @@ begin
 						root_value <= next_root;
 						if root_iteration = FRACTION_BITS then
 							cordic_source_x <= signed(resize(next_root, CORDIC_WIDTH));
-							cordic_source_y <= signed(resize(arc_sine_magnitude,
+							cordic_source_y <= signed(resize(square_multiplicand,
 								CORDIC_WIDTH));
 							state <= LOAD_CORDIC_ANGLE;
 						else
