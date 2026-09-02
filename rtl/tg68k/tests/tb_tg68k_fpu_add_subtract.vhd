@@ -7,6 +7,10 @@ entity tb_tg68k_fpu_add_subtract is
 end entity;
 
 architecture test of tb_tg68k_fpu_add_subtract is
+	constant CLK_PERIOD : time := 10 ns;
+	signal clk : std_logic := '0';
+	signal nReset : std_logic := '0';
+	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal destination : fpu_extended_t := (others => '0');
 	signal subtract : std_logic := '0';
@@ -17,9 +21,16 @@ architecture test of tb_tg68k_fpu_add_subtract is
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
+	signal busy : std_logic;
+	signal done : std_logic;
 begin
+	clk <= not clk after CLK_PERIOD / 2;
+
 	dut : entity work.TG68K_FPU_Add_Subtract
 		port map(
+			clk => clk,
+			nReset => nReset,
+			start => start,
 			source => source,
 			destination => destination,
 			subtract => subtract,
@@ -29,6 +40,8 @@ begin
 			result => result,
 			condition_codes => condition_codes,
 			exception_status => exception_status,
+			busy => busy,
+			done => done,
 			round_input => open,
 			base_exception_status => open,
 			compare_result_condition_codes => open
@@ -40,20 +53,72 @@ begin
 			constant expected_cc : std_logic_vector(3 downto 0);
 			constant expected_status : std_logic_vector(7 downto 0);
 			constant message_text : string) is
+			variable cycles : natural := 0;
 		begin
+			wait until falling_edge(clk);
+			start <= '1';
+			wait until rising_edge(clk);
 			wait for 1 ns;
+			start <= '0';
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycles := cycles + 1;
+				assert cycles <= 42
+					report message_text & " timed out" severity failure;
+			end loop;
+			if compare_only = '1' then
+				assert cycles <= 24
+					report message_text & " exceeded FCMP latency bound"
+					severity failure;
+			end if;
 			assert result = expected_result and condition_codes = expected_cc and
 				exception_status = expected_status
 				report message_text & ": result=" & to_hstring(result) &
 					" cc=" & to_hstring(condition_codes) &
 					" status=" & to_hstring(exception_status)
 				severity failure;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			assert busy = '0' and done = '0'
+				report message_text & " did not retire cleanly" severity failure;
 		end procedure;
 	begin
+		wait for 2 * CLK_PERIOD;
+		wait until falling_edge(clk);
+		nReset <= '1';
+
 		source <= x"3FFF8000000000000000";
 		destination <= x"40008000000000000000";
 		check(x"4000C000000000000000", "0000", x"00",
 			"exact FADD result mismatch");
+
+		source <= x"3FFF4000000000000000";
+		destination <= x"3FFF8000000000000000";
+		check(x"3FFFC000000000000000", "0000", x"00",
+			"unnormalized-source FADD mismatch");
+
+		compare_only <= '1';
+		destination <= x"3FFE8000000000000000";
+		check(x"00000000000000000000", "0100", x"00",
+			"unnormalized-source FCMP mismatch");
+		compare_only <= '0';
+		source <= x"3FFF8000000000000000";
+		destination <= x"40008000000000000000";
+
+		subtract <= '1';
+		source <= x"3FFF0000000000000001";
+		destination <= x"3FFF0000000000000001";
+		check(x"00000000000000000000", "0100", x"00",
+			"maximum-normalization FSUB mismatch");
+
+		compare_only <= '1';
+		subtract <= '0';
+		check(x"00000000000000000000", "0100", x"00",
+			"maximum-normalization FCMP mismatch");
+		compare_only <= '0';
+		source <= x"3FFF8000000000000000";
+		destination <= x"40008000000000000000";
 
 		subtract <= '1';
 		check(x"3FFF8000000000000000", "0000", x"00",

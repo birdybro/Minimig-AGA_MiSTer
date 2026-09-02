@@ -100,6 +100,7 @@ entity tb_tg68k_fpu_add_differential is
 end entity;
 
 architecture test of tb_tg68k_fpu_add_differential is
+    constant CLK_PERIOD : time := 10 ns;
     type vector_t is record
         source_value : fpu_extended_t;
         destination_value : fpu_extended_t;
@@ -119,6 +120,9 @@ architecture test of tb_tg68k_fpu_add_differential is
               f"'{subtract}', {precision}, {mode}, "
               f'x"{result:020X}", x"{cc:X}", x"{status:02X}"){suffix}')
     print("""    );
+    signal clk : std_logic := '0';
+    signal nReset : std_logic := '0';
+    signal start : std_logic := '0';
     signal source_value : fpu_extended_t := (others => '0');
     signal destination_value : fpu_extended_t := (others => '0');
     signal subtract_value : std_logic := '0';
@@ -132,12 +136,19 @@ architecture test of tb_tg68k_fpu_add_differential is
     signal rounded_inexact : std_logic;
     signal rounded_overflow : std_logic;
     signal rounded_underflow : std_logic;
+    signal busy : std_logic;
+    signal done : std_logic;
 begin
+    clk <= not clk after CLK_PERIOD / 2;
+
     dut : entity work.TG68K_FPU_Add_Subtract
         generic map(
             INCLUDE_ROUNDING_STAGE => false
         )
         port map(
+            clk => clk,
+            nReset => nReset,
+            start => start,
             source => source_value,
             destination => destination_value,
             subtract => subtract_value,
@@ -147,6 +158,8 @@ begin
             result => open,
             condition_codes => open,
             exception_status => open,
+            busy => busy,
+            done => done,
             round_input => round_input_value,
             base_exception_status => base_exception_status,
             compare_result_condition_codes => open
@@ -174,14 +187,32 @@ begin
         rounded_inexact & base_exception_status(0);
 
     stimulus : process
+        variable cycles : natural;
     begin
+        wait for 2 * CLK_PERIOD;
+        wait until falling_edge(clk);
+        nReset <= '1';
         for index in vectors'range loop
             source_value <= vectors(index).source_value;
             destination_value <= vectors(index).destination_value;
             subtract_value <= vectors(index).subtract_value;
             precision_value <= vectors(index).precision_value;
             mode_value <= vectors(index).mode_value;
+            wait until falling_edge(clk);
+            start <= '1';
+            wait until rising_edge(clk);
             wait for 1 ns;
+            start <= '0';
+            cycles := 0;
+            while done = '0' loop
+                wait until rising_edge(clk);
+                wait for 1 ns;
+                cycles := cycles + 1;
+                assert cycles <= 42
+                    report "differential FADD/FSUB vector " &
+                        integer'image(index) & " timed out"
+                    severity failure;
+            end loop;
             assert result_value = vectors(index).expected_result and
                 condition_codes = vectors(index).expected_cc and
                 exception_status = vectors(index).expected_status
@@ -189,6 +220,12 @@ begin
                     " mismatch: result=" & to_hstring(result_value) &
                     " cc=" & to_hstring(condition_codes) &
                     " status=" & to_hstring(exception_status)
+                severity failure;
+            wait until rising_edge(clk);
+            wait for 1 ns;
+            assert busy = '0' and done = '0'
+                report "differential FADD/FSUB vector " &
+                    integer'image(index) & " did not retire cleanly"
                 severity failure;
         end loop;
         report "PASS: 512 exact-rational FADD/FSUB differential vectors"

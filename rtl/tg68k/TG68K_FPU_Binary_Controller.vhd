@@ -86,7 +86,8 @@ end entity;
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION,
-		CAPTURE_DESTINATION, EXECUTE, WAIT_DIVIDE, WAIT_SQUARE_ROOT,
+		CAPTURE_DESTINATION, EXECUTE, WAIT_ADD_SUBTRACT, WAIT_DIVIDE,
+		WAIT_SQUARE_ROOT,
 		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT,
 		WAIT_SINE_COSINE, WAIT_SINE_COSINE_SECONDARY, COMMIT_COSINE,
 		COMMIT, BUS_ERROR_WAIT, COMPLETE);
@@ -150,6 +151,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	end function;
 
 	signal state : controller_state_t := IDLE;
+	signal add_subtract_latched : std_logic := '0';
 	signal subtract_latched : std_logic := '0';
 	signal compare_latched : std_logic := '0';
 	signal multiply_latched : std_logic := '0';
@@ -203,6 +205,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal transfer_index : natural range 0 to 5 := 0;
 
 	signal unpacked_operand : fpu_extended_t;
+	signal add_subtract_start : std_logic;
+	signal add_subtract_done : std_logic;
 	signal add_subtract_round_input : fpu_round_input_t;
 	signal add_subtract_base_status : std_logic_vector(7 downto 0);
 	signal add_subtract_compare_codes : std_logic_vector(3 downto 0);
@@ -290,6 +294,8 @@ begin
 	round_single_extended_range <= single_precision_latched;
 	saved_context_out <= external_buffer &
 		std_logic_vector(to_unsigned(transfer_index, 3));
+	add_subtract_start <= '1' when state = EXECUTE and
+		add_subtract_latched = '1' else '0';
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
 	selected_round_input <= divide_round_input when divide_latched = '1' else
 		square_root_round_input when square_root_latched = '1' else
@@ -361,6 +367,9 @@ begin
 			INCLUDE_ROUNDING_STAGE => false
 		)
 		port map(
+			clk => clk,
+			nReset => nReset,
+			start => add_subtract_start,
 			source => source_latched,
 			destination => destination_latched,
 			subtract => subtract_latched,
@@ -370,6 +379,8 @@ begin
 			result => open,
 			condition_codes => open,
 			exception_status => open,
+			busy => open,
+			done => add_subtract_done,
 			round_input => add_subtract_round_input,
 			base_exception_status => add_subtract_base_status,
 			compare_result_condition_codes => add_subtract_compare_codes
@@ -781,6 +792,7 @@ begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
+				add_subtract_latched <= '0';
 				subtract_latched <= '0';
 				compare_latched <= '0';
 				multiply_latched <= '0';
@@ -832,6 +844,13 @@ begin
 				case state is
 					when IDLE =>
 						if start = '1' then
+							if operation = FPU_OP_ADD or
+									operation = FPU_OP_SUB or
+									operation = FPU_OP_CMP then
+								add_subtract_latched <= '1';
+							else
+								add_subtract_latched <= '0';
+							end if;
 							if operation = FPU_OP_SUB then
 								subtract_latched <= '1';
 							else
@@ -1078,7 +1097,9 @@ begin
 						state <= EXECUTE;
 
 					when EXECUTE =>
-						if divide_latched = '1' then
+						if add_subtract_latched = '1' then
+							state <= WAIT_ADD_SUBTRACT;
+						elsif divide_latched = '1' then
 							state <= WAIT_DIVIDE;
 						elsif square_root_latched = '1' then
 							state <= WAIT_SQUARE_ROOT;
@@ -1093,6 +1114,14 @@ begin
 						elsif sine_cosine_latched = '1' then
 							state <= WAIT_SINE_COSINE;
 						else
+							result_latched <= rounded_result;
+							condition_codes_latched <= rounded_condition_codes;
+							status_latched <= rounded_status;
+							state <= COMMIT;
+						end if;
+
+					when WAIT_ADD_SUBTRACT =>
+						if add_subtract_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;
