@@ -153,9 +153,6 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal subtraction_sticky : std_logic := '0';
 	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
 	signal tangent_iteration : natural range 0 to 64 := 0;
-	signal pending_sign : std_logic := '0';
-	signal pending_exponent : signed(16 downto 0) := (others => '0');
-	signal pending_significand : fpu_significand_grs_t := (others => '0');
 	signal result_exponent : signed(16 downto 0) := (others => '0');
 	signal cordic_source_z : cordic_value_t := (others => '0');
 	signal arithmetic_left_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
@@ -505,9 +502,8 @@ begin
 			if exponent_integer < 0 then
 				intermediate_sign <= '1';
 				if -exponent_integer > FRACTION_BITS then
-					pending_sign <= '1';
-					pending_exponent <= to_signed(-1, 17);
-					pending_significand <= (others => '1');
+					intermediate_exponent <= to_signed(-1, 17);
+					intermediate_significand <= (others => '1');
 					state <= WRITE_PENDING_RESULT;
 				else
 					subtraction_value <= normalized_value;
@@ -665,15 +661,15 @@ begin
 					SERIES_NORMAL_BIT - 1 downto SERIES_NORMAL_BIT - 66);
 			end if;
 			final_significand(0) := '1';
-			pending_sign <= source_sign_latched;
+			intermediate_sign <= source_sign_latched;
 			if series_result(SERIES_NORMAL_BIT + 1) = '1' then
-				pending_exponent <= series_exponent + 1;
+				intermediate_exponent <= series_exponent + 1;
 			elsif series_result(SERIES_NORMAL_BIT) = '1' then
-				pending_exponent <= series_exponent;
+				intermediate_exponent <= series_exponent;
 			else
-				pending_exponent <= series_exponent - 1;
+				intermediate_exponent <= series_exponent - 1;
 			end if;
-			pending_significand <= final_significand;
+			intermediate_significand <= final_significand;
 			state <= WRITE_PENDING_RESULT;
 		end procedure;
 
@@ -756,9 +752,6 @@ begin
 				subtraction_sticky <= '0';
 				tangent_quotient <= (others => '0');
 				tangent_iteration <= 0;
-				pending_sign <= '0';
-				pending_exponent <= (others => '0');
-				pending_significand <= (others => '0');
 				result_exponent <= (others => '0');
 				cordic_source_z <= (others => '0');
 				intermediate_class <= FPU_CLASS_ZERO;
@@ -1490,9 +1483,6 @@ begin
 
 					when WRITE_PENDING_RESULT =>
 						intermediate_class <= FPU_CLASS_NORMAL;
-						intermediate_sign <= pending_sign;
-						intermediate_exponent <= pending_exponent;
-						intermediate_significand <= pending_significand;
 						state <= COMPLETE;
 
 					when COMPLETE => state <= IDLE;
