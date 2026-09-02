@@ -145,7 +145,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 500
+                assert cycles < 454
                     report "differential FSINCOS timeout" severity failure;
             end loop;
             assert sine_result = vectors(index).expected_sine and

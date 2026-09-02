@@ -34,6 +34,20 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 		return (alignment_shift + 7) / 8;
 	end function;
 
+	function fixed_normalization_cycles(value : fpu_extended_t)
+		return natural is
+		variable exponent_value : integer := fpu_unbiased_exponent(value);
+		variable shift_count : natural := 0;
+	begin
+		if exponent_value < 0 then
+			shift_count := -exponent_value;
+		end if;
+		if shift_count = 0 then
+			return 1;
+		end if;
+		return (shift_count + 47) / 48;
+	end function;
+
 	signal clk : std_logic := '0';
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
@@ -134,6 +148,7 @@ begin
 					(others => '0')) is
 			variable cycles : natural := 0;
 			variable architectural_limit : natural;
+			variable normalization_cycles : natural;
 		begin
 			wait until falling_edge(clk);
 			cosine <= cosine_value;
@@ -165,8 +180,19 @@ begin
 					severity failure;
 			end if;
 			if expected_cycles /= 0 then
+				if tangent_value = '1' then
+					normalization_cycles := 2;
+				elsif simultaneous_value = '1' then
+					normalization_cycles :=
+						fixed_normalization_cycles(expected_result) +
+						fixed_normalization_cycles(expected_secondary);
+				else
+					normalization_cycles :=
+						fixed_normalization_cycles(expected_result);
+				end if;
 				assert cycles = expected_cycles +
-					range_alignment_cycles(source_value)
+					range_alignment_cycles(source_value) +
+					normalization_cycles
 					report "sine cycle count mismatch: " & integer'image(cycles)
 					severity failure;
 				if tangent_value = '1' then
@@ -203,7 +229,8 @@ begin
 			end loop;
 			assert unsigned(result(78 downto 64)) <= to_unsigned(16#3FFF#, 15) and
 				exception_status = x"02" and
-				cycles = 357 + range_alignment_cycles(source_value)
+				cycles = 357 + range_alignment_cycles(source_value) +
+					fixed_normalization_cycles(result)
 				report "large-argument sine range/status mismatch: result=" &
 					to_hstring(result) & " status=" &
 					to_hstring(exception_status) & " cycles=" &

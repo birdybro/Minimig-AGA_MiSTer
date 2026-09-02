@@ -159,6 +159,7 @@ def emit_testbench(cosine: bool, tangent: bool = False) -> None:
     cosine_literal = "'1'" if cosine else "'0'"
     tangent_literal = "'1'" if tangent else "'0'"
     vectors = make_vectors(cosine, tangent)
+    timing_limit = 475 if tangent else 394
     print(f"""library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -266,7 +267,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 500
+                assert cycles < {timing_limit}
                     report "differential F{operation_upper} timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and

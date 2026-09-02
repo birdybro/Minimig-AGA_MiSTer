@@ -54,14 +54,18 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
 	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
+	constant NORMALIZATION_SHIFT_CHUNK : natural := 48;
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, ALIGN_RANGE,
 		ALIGN_RANGE_TAIL, REDUCE_RANGE,
 		START_CORDIC, WAIT_CORDIC,
-		CONVERT_PRIMARY, CONVERT_SECONDARY,
-		NORMALIZE_TANGENT_NUMERATOR, NORMALIZE_TANGENT_DENOMINATOR,
+		CONVERT_PRIMARY, CONVERT_SECONDARY, NORMALIZE_VALUE,
+		LOAD_TANGENT_NUMERATOR, LOAD_TANGENT_DENOMINATOR,
 		START_TANGENT_DIVIDE, DIVIDE_TANGENT, COMPLETE);
+	type normalization_target_t is
+		(NORMALIZE_PRIMARY, NORMALIZE_SECONDARY,
+			NORMALIZE_TANGENT_NUMERATOR, NORMALIZE_TANGENT_DENOMINATOR);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 
 	-- Q192 is sufficient for extended-precision reduction throughout the
@@ -91,41 +95,16 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		return reduced;
 	end function;
 
-	function fixed_round_input(value : cordic_value_t)
-		return fpu_round_input_t is
-		variable converted : fpu_round_input_t;
-		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable normalized : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable highest_bit : natural range 0 to CORDIC_WIDTH - 1;
+	function leading_zero_count(value : unsigned) return natural is
+		variable count : natural := 0;
 	begin
-		converted.data_class := FPU_CLASS_ZERO;
-		converted.sign := '0';
-		converted.exponent := (others => '0');
-		converted.significand := (others => '0');
-		converted.special := (others => '0');
-		if value < 0 then
-			converted.sign := '1';
-			magnitude := unsigned(-value);
-		else
-			magnitude := unsigned(value);
-		end if;
-		if magnitude > UNIT_FIXED then
-			magnitude := UNIT_FIXED;
-		end if;
-		if magnitude /= 0 then
-			highest_bit := highest_set_bit(magnitude);
-			normalized := shift_left(magnitude, FRACTION_BITS - highest_bit);
-			converted.data_class := FPU_CLASS_NORMAL;
-			converted.exponent := to_signed(
-				integer(highest_bit) - FRACTION_BITS, 17);
-			converted.significand(66 downto 3) := normalized(
-				FRACTION_BITS downto FRACTION_BITS - 63);
-			converted.significand(2) := normalized(FRACTION_BITS - 64);
-			converted.significand(1) := normalized(FRACTION_BITS - 65);
-			converted.significand(0) := or_reduce(normalized(
-				FRACTION_BITS - 66 downto 0));
-		end if;
-		return converted;
+		for index in value'high downto value'low loop
+			if value(index) = '1' then
+				return count;
+			end if;
+			count := count + 1;
+		end loop;
+		return count;
 	end function;
 
 	signal state : sine_cosine_state_t := IDLE;
@@ -163,11 +142,11 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal tangent_quotient_exponent : integer range -65536 to 65535 := 0;
 	signal primary_fixed_value : cordic_value_t := (others => '0');
 	signal secondary_fixed_value : cordic_value_t := (others => '0');
-	signal selected_fixed_value : cordic_value_t;
-	signal converted_fixed_value : fpu_round_input_t;
-	signal normalization_source : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal normalization_highest : natural range 0 to CORDIC_WIDTH - 1;
-	signal normalized_value : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal normalization_shift_count : natural range 0 to FRACTION_BITS := 0;
+	signal normalization_target : normalization_target_t := NORMALIZE_PRIMARY;
+	signal normalization_sign : std_logic := '0';
 	signal shared_left_a : unsigned(SHARED_WIDTH - 1 downto 0);
 	signal shared_right_a : unsigned(SHARED_WIDTH - 1 downto 0);
 	signal shared_subtract_a : std_logic;
@@ -206,14 +185,6 @@ begin
 	secondary_round_input.significand <= secondary_significand;
 	secondary_round_input.special <= secondary_special;
 	base_exception_status <= base_status;
-	selected_fixed_value <= secondary_fixed_value when
-		state = CONVERT_SECONDARY else primary_fixed_value;
-	converted_fixed_value <= fixed_round_input(selected_fixed_value);
-	normalization_source <= tangent_numerator_latched when
-		state = NORMALIZE_TANGENT_NUMERATOR else tangent_denominator_latched;
-	normalization_highest <= highest_set_bit(normalization_source);
-	normalized_value <= shift_left(normalization_source,
-		CORDIC_WIDTH - 1 - normalization_highest);
 
 	shared_operands : process(state, reciprocal_product,
 		reciprocal_multiplicand,
@@ -305,6 +276,62 @@ begin
 	end process;
 
 	sine_cosine_sequence : process(clk)
+		procedure begin_normalization(
+				constant value : in unsigned(CORDIC_WIDTH - 1 downto 0);
+				constant target : in normalization_target_t;
+				constant sign_value : in std_logic := '0') is
+		begin
+			normalization_value <= value;
+			normalization_shift_count <= 0;
+			normalization_target <= target;
+			normalization_sign <= sign_value;
+			state <= NORMALIZE_VALUE;
+		end procedure;
+
+		procedure finish_normalization(
+				constant value : in unsigned(CORDIC_WIDTH - 1 downto 0);
+				constant shift_count : in natural) is
+			variable significand : fpu_significand_grs_t;
+		begin
+			case normalization_target is
+				when NORMALIZE_PRIMARY | NORMALIZE_SECONDARY =>
+					significand := (others => '0');
+					significand(66 downto 3) := value(
+						FRACTION_BITS downto FRACTION_BITS - 63);
+					significand(2) := value(FRACTION_BITS - 64);
+					significand(1) := value(FRACTION_BITS - 65);
+					significand(0) := or_reduce(value(
+						FRACTION_BITS - 66 downto 0));
+					if normalization_target = NORMALIZE_PRIMARY then
+						intermediate_class <= FPU_CLASS_NORMAL;
+						intermediate_sign <= normalization_sign;
+						intermediate_exponent <= to_signed(-integer(shift_count), 17);
+						intermediate_significand <= significand;
+						if simultaneous_latched = '1' then
+							state <= CONVERT_SECONDARY;
+						else
+							state <= COMPLETE;
+						end if;
+					else
+						secondary_class <= FPU_CLASS_NORMAL;
+						secondary_sign <= normalization_sign;
+						secondary_exponent <= to_signed(-integer(shift_count), 17);
+						secondary_significand <= significand;
+						state <= COMPLETE;
+					end if;
+				when NORMALIZE_TANGENT_NUMERATOR =>
+					normalized_tangent_numerator <= value;
+					tangent_numerator_highest <= FRACTION_BITS - shift_count;
+					state <= LOAD_TANGENT_DENOMINATOR;
+				when NORMALIZE_TANGENT_DENOMINATOR =>
+					normalized_tangent_denominator <= value;
+					tangent_quotient_exponent <=
+						integer(tangent_numerator_highest) -
+						integer(FRACTION_BITS - shift_count);
+					state <= START_TANGENT_DIVIDE;
+			end case;
+		end procedure;
+
 		variable source_class : fpu_data_class_t;
 		variable source_significand : unsigned(63 downto 0);
 		variable source_exponent : integer range -65536 to 65535;
@@ -328,6 +355,10 @@ begin
 		variable next_tangent_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable next_tangent_quotient : unsigned(65 downto 0);
 		variable range_shift_amount : natural range 0 to PRODUCT_WIDTH - 1;
+		variable next_normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable next_normalization_shift : natural range 0 to FRACTION_BITS;
+		variable normalization_chunk : natural range 1 to
+			NORMALIZATION_SHIFT_CHUNK;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -357,6 +388,10 @@ begin
 				tangent_quotient_exponent <= 0;
 				primary_fixed_value <= (others => '0');
 				secondary_fixed_value <= (others => '0');
+				normalization_value <= (others => '0');
+				normalization_shift_count <= 0;
+				normalization_target <= NORMALIZE_PRIMARY;
+				normalization_sign <= '0';
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -402,6 +437,10 @@ begin
 							tangent_quotient_exponent <= 0;
 							primary_fixed_value <= (others => '0');
 							secondary_fixed_value <= (others => '0');
+							normalization_value <= (others => '0');
+							normalization_shift_count <= 0;
+							normalization_target <= NORMALIZE_PRIMARY;
+							normalization_sign <= '0';
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= source(79);
 							intermediate_exponent <= (others => '0');
@@ -622,7 +661,7 @@ begin
 									intermediate_class <= FPU_CLASS_ZERO;
 									state <= COMPLETE;
 								else
-									state <= NORMALIZE_TANGENT_NUMERATOR;
+									state <= LOAD_TANGENT_NUMERATOR;
 								end if;
 							else
 								case quadrant is
@@ -650,37 +689,76 @@ begin
 						end if;
 
 					when CONVERT_PRIMARY =>
-						intermediate_class <= converted_fixed_value.data_class;
-						intermediate_sign <= converted_fixed_value.sign;
-						intermediate_exponent <= converted_fixed_value.exponent;
-						intermediate_significand <=
-							converted_fixed_value.significand;
-						intermediate_special <= converted_fixed_value.special;
-						if simultaneous_latched = '1' then
-							state <= CONVERT_SECONDARY;
+						if primary_fixed_value < 0 then
+							final_sign := '1';
+							magnitude := unsigned(-primary_fixed_value);
 						else
-							state <= COMPLETE;
+							final_sign := '0';
+							magnitude := unsigned(primary_fixed_value);
+						end if;
+						if magnitude > UNIT_FIXED then
+							magnitude := UNIT_FIXED;
+						end if;
+						if magnitude = 0 then
+							intermediate_class <= FPU_CLASS_ZERO;
+							intermediate_sign <= '0';
+							if simultaneous_latched = '1' then
+								state <= CONVERT_SECONDARY;
+							else
+								state <= COMPLETE;
+							end if;
+						else
+							begin_normalization(magnitude, NORMALIZE_PRIMARY,
+								final_sign);
 						end if;
 
 					when CONVERT_SECONDARY =>
-						secondary_class <= converted_fixed_value.data_class;
-						secondary_sign <= converted_fixed_value.sign;
-						secondary_exponent <= converted_fixed_value.exponent;
-						secondary_significand <= converted_fixed_value.significand;
-						secondary_special <= converted_fixed_value.special;
-						state <= COMPLETE;
+						if secondary_fixed_value < 0 then
+							final_sign := '1';
+							magnitude := unsigned(-secondary_fixed_value);
+						else
+							final_sign := '0';
+							magnitude := unsigned(secondary_fixed_value);
+						end if;
+						if magnitude > UNIT_FIXED then
+							magnitude := UNIT_FIXED;
+						end if;
+						if magnitude = 0 then
+							secondary_class <= FPU_CLASS_ZERO;
+							secondary_sign <= '0';
+							state <= COMPLETE;
+						else
+							begin_normalization(magnitude, NORMALIZE_SECONDARY,
+								final_sign);
+						end if;
 
-					when NORMALIZE_TANGENT_NUMERATOR =>
-						normalized_tangent_numerator <= normalized_value;
-						tangent_numerator_highest <= normalization_highest;
-						state <= NORMALIZE_TANGENT_DENOMINATOR;
+					when LOAD_TANGENT_NUMERATOR =>
+						begin_normalization(tangent_numerator_latched,
+							NORMALIZE_TANGENT_NUMERATOR);
 
-					when NORMALIZE_TANGENT_DENOMINATOR =>
-						normalized_tangent_denominator <= normalized_value;
-						tangent_quotient_exponent <=
-							integer(tangent_numerator_highest) -
-							integer(normalization_highest);
-						state <= START_TANGENT_DIVIDE;
+					when LOAD_TANGENT_DENOMINATOR =>
+						begin_normalization(tangent_denominator_latched,
+							NORMALIZE_TANGENT_DENOMINATOR);
+
+					when NORMALIZE_VALUE =>
+						if normalization_value(FRACTION_BITS) = '1' then
+							finish_normalization(normalization_value,
+								normalization_shift_count);
+						else
+							normalization_chunk := leading_zero_count(
+								normalization_value(FRACTION_BITS downto
+									FRACTION_BITS - NORMALIZATION_SHIFT_CHUNK + 1));
+							next_normalization_value := shift_left(
+								normalization_value, normalization_chunk);
+							next_normalization_shift :=
+								normalization_shift_count + normalization_chunk;
+							normalization_value <= next_normalization_value;
+							normalization_shift_count <= next_normalization_shift;
+							if next_normalization_value(FRACTION_BITS) = '1' then
+								finish_normalization(next_normalization_value,
+									next_normalization_shift);
+							end if;
+						end if;
 
 					when START_TANGENT_DIVIDE =>
 						tangent_divisor <= resize(normalized_tangent_denominator,
