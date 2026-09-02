@@ -53,7 +53,7 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant FIXED_WIDTH : natural := FRACTION_BITS + 16;
 	constant SERIES_WIDTH : natural := 197;
-	constant ARITHMETIC_WIDTH : natural := SERIES_WIDTH;
+	constant ARITHMETIC_WIDTH : natural := FIXED_WIDTH + 3;
 	constant SERIES_NORMAL_BIT : natural := 195;
 	constant SERIES_CUBIC_MAX_EXPONENT : integer := -26;
 	constant SERIES_CUBIC_MIN_EXPONENT : integer := -32;
