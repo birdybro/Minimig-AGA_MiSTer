@@ -9,6 +9,31 @@ end entity;
 
 architecture test of tb_tg68k_fpu_sine_cosine is
 	constant CLK_PERIOD : time := 10 ns;
+
+	function range_alignment_cycles(value : fpu_extended_t) return natural is
+		variable significand : unsigned(63 downto 0) :=
+			unsigned(value(63 downto 0));
+		variable exponent_value : integer := fpu_unbiased_exponent(value);
+		variable normalization_shift : natural := 0;
+		variable alignment_shift : natural;
+	begin
+		for bit_index in 63 downto 0 loop
+			if significand(bit_index) = '1' then
+				normalization_shift := 63 - bit_index;
+				exit;
+			end if;
+		end loop;
+		exponent_value := exponent_value - normalization_shift;
+		if exponent_value <= 111 then
+			alignment_shift := 111 - exponent_value;
+		elsif exponent_value < 367 then
+			alignment_shift := exponent_value - 111;
+		else
+			alignment_shift := 0;
+		end if;
+		return (alignment_shift + 7) / 8;
+	end function;
+
 	signal clk : std_logic := '0';
 	signal nReset : std_logic := '0';
 	signal start : std_logic := '0';
@@ -108,6 +133,7 @@ begin
 				constant expected_secondary : in fpu_extended_t :=
 					(others => '0')) is
 			variable cycles : natural := 0;
+			variable architectural_limit : natural;
 		begin
 			wait until falling_edge(clk);
 			cosine <= cosine_value;
@@ -139,8 +165,19 @@ begin
 					severity failure;
 			end if;
 			if expected_cycles /= 0 then
-				assert cycles = expected_cycles
+				assert cycles = expected_cycles +
+					range_alignment_cycles(source_value)
 					report "sine cycle count mismatch: " & integer'image(cycles)
+					severity failure;
+				if tangent_value = '1' then
+					architectural_limit := 475;
+				elsif simultaneous_value = '1' then
+					architectural_limit := 454;
+				else
+					architectural_limit := 394;
+				end if;
+				assert cycles < architectural_limit
+					report "sine engine exceeded architectural timing envelope"
 					severity failure;
 			end if;
 			wait until rising_edge(clk);
@@ -165,11 +202,15 @@ begin
 					report "large-argument sine timeout" severity failure;
 			end loop;
 			assert unsigned(result(78 downto 64)) <= to_unsigned(16#3FFF#, 15) and
-				exception_status = x"02" and cycles = 357
+				exception_status = x"02" and
+				cycles = 357 + range_alignment_cycles(source_value)
 				report "large-argument sine range/status mismatch: result=" &
 					to_hstring(result) & " status=" &
 					to_hstring(exception_status) & " cycles=" &
 					integer'image(cycles)
+				severity failure;
+			assert cycles < 394
+				report "large-argument sine exceeded architectural timing envelope"
 				severity failure;
 			wait until rising_edge(clk);
 			wait for 1 ns;
@@ -194,7 +235,9 @@ begin
 		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20");
 		execute(x"7FFFC000000000000042", x"7FFFC000000000000042", x"1", x"00");
 		execute(x"7FFF8000000000000041", x"7FFFC000000000000041", x"1", x"40");
+		execute_bounded(x"3FD88000000000000000");
 		execute_bounded(x"40428000000000000000");
+		execute_bounded(x"416D8000000000000000");
 		execute_bounded(x"7FFEFFFFFFFFFFFFFFFF");
 
 		execute(x"00000000000000000000", x"3FFF8000000000000000",

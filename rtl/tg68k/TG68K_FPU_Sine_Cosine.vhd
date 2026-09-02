@@ -52,9 +52,12 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant RECIPROCAL_BITS : natural := 192;
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
+	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
+	constant RANGE_SHIFT_CHUNK : natural := 8;
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
-	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, REDUCE_RANGE,
+	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, ALIGN_RANGE,
+		ALIGN_RANGE_TAIL, REDUCE_RANGE,
 		START_CORDIC, WAIT_CORDIC,
 		CONVERT_PRIMARY, CONVERT_SECONDARY,
 		NORMALIZE_TANGENT_NUMERATOR, NORMALIZE_TANGENT_DENOMINATOR,
@@ -138,6 +141,10 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal reciprocal_product : unsigned(PRODUCT_WIDTH downto 0) :=
 		(others => '0');
 	signal reciprocal_iteration : natural range 0 to 63 := 0;
+	signal range_shift_chunks : natural range 0 to
+		(PRODUCT_WIDTH - 1) / RANGE_SHIFT_CHUNK := 0;
+	signal range_shift_tail : natural range 0 to RANGE_SHIFT_CHUNK - 1 := 0;
+	signal range_shift_left : std_logic := '0';
 	signal quadrant : unsigned(1 downto 0) := (others => '0');
 	signal cordic_source_z : cordic_value_t := (others => '0');
 	signal tangent_divisor : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
@@ -161,10 +168,10 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal normalization_source : unsigned(CORDIC_WIDTH - 1 downto 0);
 	signal normalization_highest : natural range 0 to CORDIC_WIDTH - 1;
 	signal normalized_value : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal shared_left_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
-	signal shared_right_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_left_a : unsigned(SHARED_WIDTH - 1 downto 0);
+	signal shared_right_a : unsigned(SHARED_WIDTH - 1 downto 0);
 	signal shared_subtract_a : std_logic;
-	signal shared_result_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
+	signal shared_result_a : unsigned(SHARED_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -220,28 +227,28 @@ begin
 		case state is
 			when MULTIPLY_RECIPROCAL =>
 				shared_left_a <= resize(reciprocal_product(
-					PRODUCT_WIDTH downto 64), PRODUCT_WIDTH);
+					PRODUCT_WIDTH downto 64), SHARED_WIDTH);
 				if reciprocal_product(0) = '1' then
 					shared_right_a <= resize(reciprocal_multiplicand,
-						PRODUCT_WIDTH);
+						SHARED_WIDTH);
 				end if;
 			when START_TANGENT_DIVIDE =>
 				if normalized_tangent_numerator <
 						normalized_tangent_denominator then
 					shared_left_a <= shift_left(resize(
-						normalized_tangent_numerator, PRODUCT_WIDTH), 1);
+						normalized_tangent_numerator, SHARED_WIDTH), 1);
 				else
 					shared_left_a <= resize(normalized_tangent_numerator,
-						PRODUCT_WIDTH);
+						SHARED_WIDTH);
 				end if;
 				shared_right_a <= resize(normalized_tangent_denominator,
-					PRODUCT_WIDTH);
+					SHARED_WIDTH);
 				shared_subtract_a <= '1';
 			when DIVIDE_TANGENT =>
 				shifted_remainder := shift_left(tangent_remainder, 1);
-				shared_left_a <= resize(shifted_remainder, PRODUCT_WIDTH);
+				shared_left_a <= resize(shifted_remainder, SHARED_WIDTH);
 				if shifted_remainder >= tangent_divisor then
-					shared_right_a <= resize(tangent_divisor, PRODUCT_WIDTH);
+					shared_right_a <= resize(tangent_divisor, SHARED_WIDTH);
 					shared_subtract_a <= '1';
 				end if;
 			when others => null;
@@ -320,6 +327,7 @@ begin
 		variable shifted_tangent_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable next_tangent_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable next_tangent_quotient : unsigned(65 downto 0);
+		variable range_shift_amount : natural range 0 to PRODUCT_WIDTH - 1;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -332,6 +340,9 @@ begin
 				reciprocal_multiplicand <= (others => '0');
 				reciprocal_product <= (others => '0');
 				reciprocal_iteration <= 0;
+				range_shift_chunks <= 0;
+				range_shift_tail <= 0;
+				range_shift_left <= '0';
 				quadrant <= (others => '0');
 				cordic_source_z <= (others => '0');
 				tangent_divisor <= (others => '0');
@@ -374,6 +385,9 @@ begin
 							reciprocal_multiplicand <= (others => '0');
 							reciprocal_product <= (others => '0');
 							reciprocal_iteration <= 0;
+							range_shift_chunks <= 0;
+							range_shift_tail <= 0;
+							range_shift_left <= '0';
 							quadrant <= (others => '0');
 							cordic_source_z <= (others => '0');
 							tangent_divisor <= (others => '0');
@@ -492,26 +506,70 @@ begin
 							reciprocal_product(63 downto 0), 1);
 						reciprocal_product <= next_reciprocal_product;
 						if reciprocal_iteration = 63 then
-							state <= REDUCE_RANGE;
+							shift_position := 255 - source_exponent_latched;
+							if shift_position >= FRACTION_BITS then
+								range_shift_amount := shift_position - FRACTION_BITS;
+								range_shift_left <= '0';
+							elsif FRACTION_BITS - shift_position < PRODUCT_WIDTH then
+								range_shift_amount := FRACTION_BITS - shift_position;
+								range_shift_left <= '1';
+							else
+								range_shift_amount := 0;
+								reciprocal_product <= (others => '0');
+							end if;
+							range_shift_chunks <=
+								range_shift_amount / RANGE_SHIFT_CHUNK;
+							range_shift_tail <=
+								range_shift_amount mod RANGE_SHIFT_CHUNK;
+							if range_shift_amount = 0 then
+								state <= REDUCE_RANGE;
+							elsif range_shift_amount < RANGE_SHIFT_CHUNK then
+								state <= ALIGN_RANGE_TAIL;
+							else
+								state <= ALIGN_RANGE;
+							end if;
 						else
 							reciprocal_iteration <= reciprocal_iteration + 1;
 						end if;
 
+					when ALIGN_RANGE =>
+						if range_shift_left = '1' then
+							aligned_product := shift_left(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0), RANGE_SHIFT_CHUNK);
+						else
+							aligned_product := shift_right(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0), RANGE_SHIFT_CHUNK);
+						end if;
+						reciprocal_product <= resize(aligned_product,
+							PRODUCT_WIDTH + 1);
+						if range_shift_chunks = 1 then
+							range_shift_chunks <= 0;
+							if range_shift_tail = 0 then
+								state <= REDUCE_RANGE;
+							else
+								state <= ALIGN_RANGE_TAIL;
+							end if;
+						else
+							range_shift_chunks <= range_shift_chunks - 1;
+						end if;
+
+					when ALIGN_RANGE_TAIL =>
+						if range_shift_left = '1' then
+							aligned_product := shift_left(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0), range_shift_tail);
+						else
+							aligned_product := shift_right(reciprocal_product(
+								PRODUCT_WIDTH - 1 downto 0), range_shift_tail);
+						end if;
+						reciprocal_product <= resize(aligned_product,
+							PRODUCT_WIDTH + 1);
+						state <= REDUCE_RANGE;
+
 					when REDUCE_RANGE =>
 						-- The aligned product is x*(2/pi) in Q144.  Rounding it to
 						-- the nearest integer selects both the quadrant and residual.
-						shift_position := 255 - source_exponent_latched;
-						if shift_position >= FRACTION_BITS then
-							aligned_product := shift_right(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0),
-								shift_position - FRACTION_BITS);
-						elsif FRACTION_BITS - shift_position < PRODUCT_WIDTH then
-							aligned_product := shift_left(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0),
-								FRACTION_BITS - shift_position);
-						else
-							aligned_product := (others => '0');
-						end if;
+						aligned_product := reciprocal_product(
+							PRODUCT_WIDTH - 1 downto 0);
 						fraction_value := aligned_product(FRACTION_BITS - 1 downto 0);
 						quadrant_sum := resize(aligned_product(
 							FRACTION_BITS + 1 downto FRACTION_BITS), 3);
