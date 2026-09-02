@@ -52,6 +52,7 @@ begin
 		variable source_exponent : natural range 0 to FPU_EXTENDED_EXPONENT_MAX;
 		variable leading_position : natural range 0 to 63;
 		variable shift_count : natural range 0 to 63;
+		variable normalize_significand : boolean;
 	begin
 		result := FPU_RESET_NAN;
 		valid := '1';
@@ -64,6 +65,7 @@ begin
 		source_exponent := 0;
 		leading_position := 0;
 		shift_count := 0;
+		normalize_significand := false;
 
 		case source_format is
 			when FPU_FORMAT_BYTE_INTEGER | FPU_FORMAT_WORD_INTEGER |
@@ -88,12 +90,12 @@ begin
 					end if;
 					significand := resize(magnitude, 64);
 					leading_position := highest_set_bit(significand);
-					significand := shift_left(significand, 63 - leading_position);
+					shift_count := 63 - leading_position;
+					normalize_significand := true;
 					exponent_value := FPU_EXTENDED_EXPONENT_BIAS +
 						leading_position;
 					result(78 downto 64) := std_logic_vector(
 						to_unsigned(exponent_value, 15));
-					result(63 downto 0) := std_logic_vector(significand);
 				end if;
 
 			when FPU_FORMAT_SINGLE =>
@@ -105,13 +107,12 @@ begin
 					if fraction_single /= 0 then
 						significand := resize(fraction_single, 64);
 						leading_position := highest_set_bit(significand);
-						significand := shift_left(significand,
-							63 - leading_position);
+						shift_count := 63 - leading_position;
+						normalize_significand := true;
 						exponent_value := FPU_EXTENDED_EXPONENT_BIAS +
 							leading_position - 149;
 						result(78 downto 64) := std_logic_vector(
 							to_unsigned(exponent_value, 15));
-						result(63 downto 0) := std_logic_vector(significand);
 					end if;
 				elsif source_exponent = 255 then
 					result(78 downto 64) := (others => '1');
@@ -135,13 +136,12 @@ begin
 					if fraction_double /= 0 then
 						significand := resize(fraction_double, 64);
 						leading_position := highest_set_bit(significand);
-						significand := shift_left(significand,
-							63 - leading_position);
+						shift_count := 63 - leading_position;
+						normalize_significand := true;
 						exponent_value := FPU_EXTENDED_EXPONENT_BIAS +
 							leading_position - 1074;
 						result(78 downto 64) := std_logic_vector(
 							to_unsigned(exponent_value, 15));
-						result(63 downto 0) := std_logic_vector(significand);
 					end if;
 				elsif source_exponent = 2047 then
 					result(78 downto 64) := (others => '1');
@@ -169,22 +169,24 @@ begin
 						leading_position := highest_set_bit(significand);
 						shift_count := 63 - leading_position;
 						if source_exponent >= shift_count then
-							significand := shift_left(significand, shift_count);
 							exponent_value := source_exponent - shift_count;
 						else
-							significand := shift_left(significand,
-								source_exponent);
+							shift_count := source_exponent;
 							exponent_value := 0;
 						end if;
+						normalize_significand := true;
 						result(78 downto 64) := std_logic_vector(
 							to_unsigned(exponent_value, 15));
-						result(63 downto 0) := std_logic_vector(significand);
 					end if;
 				end if;
 
 			when FPU_FORMAT_PACKED | FPU_FORMAT_DYNAMIC_PACKED =>
 				valid := '0';
 		end case;
+		if normalize_significand then
+			result(63 downto 0) := std_logic_vector(
+				shift_left(significand, shift_count));
+		end if;
 
 		extended_data <= result;
 		conversion_valid <= valid;
