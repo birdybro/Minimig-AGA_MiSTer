@@ -51,7 +51,7 @@ architecture rtl of TG68K_FPU_Square_Root is
 	end function;
 
 	signal state : square_root_state_t := IDLE;
-	signal radicand_register : unsigned(131 downto 0) := (others => '0');
+	signal radicand_register : unsigned(65 downto 0) := (others => '0');
 	signal remainder_register : unsigned(68 downto 0) := (others => '0');
 	signal root_register : unsigned(65 downto 0) := (others => '0');
 	signal iteration_count : natural range 0 to ROOT_BIT_COUNT - 1 := 0;
@@ -120,7 +120,7 @@ begin
 		variable source_significand : unsigned(63 downto 0);
 		variable normalization_shift : natural range 0 to 63;
 		variable selected_nan : fpu_extended_t;
-		variable initial_radicand : unsigned(131 downto 0);
+		variable initial_radicand : unsigned(65 downto 0);
 		variable shifted_remainder : unsigned(68 downto 0);
 		variable trial_divisor : unsigned(68 downto 0);
 		variable next_remainder : unsigned(68 downto 0);
@@ -194,12 +194,10 @@ begin
 								source_exponent := source_exponent -
 									normalization_shift;
 								if source_exponent mod 2 = 0 then
-									initial_radicand(130 downto 67) :=
-										source_significand;
+									initial_radicand := '0' & source_significand & '0';
 									result_exponent := source_exponent / 2;
 								else
-									initial_radicand(131 downto 68) :=
-										source_significand;
+									initial_radicand := source_significand & "00";
 									result_exponent := (source_exponent - 1) / 2;
 								end if;
 								radicand_register <= initial_radicand;
@@ -213,7 +211,7 @@ begin
 					when CALCULATE =>
 						shifted_remainder := shift_left(remainder_register, 2);
 						shifted_remainder(1 downto 0) :=
-							radicand_register(131 downto 130);
+							radicand_register(65 downto 64);
 						trial_divisor := shift_left(resize(root_register, 69), 2);
 						trial_divisor(0) := '1';
 						next_root := shift_left(root_register, 1);
