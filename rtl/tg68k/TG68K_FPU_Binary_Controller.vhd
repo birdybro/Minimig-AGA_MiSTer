@@ -227,6 +227,21 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal sine_cosine_round_input : fpu_round_input_t;
 	signal sine_cosine_secondary_round_input : fpu_round_input_t;
 	signal sine_cosine_base_status : std_logic_vector(7 downto 0);
+	signal arc_cordic_start : std_logic;
+	signal arc_cordic_x_input : signed(147 downto 0);
+	signal arc_cordic_y_input : signed(147 downto 0);
+	signal arc_cordic_z_input : signed(147 downto 0);
+	signal sine_cordic_start : std_logic;
+	signal sine_cordic_x_input : signed(147 downto 0);
+	signal sine_cordic_y_input : signed(147 downto 0);
+	signal sine_cordic_z_input : signed(147 downto 0);
+	signal circular_cordic_x_input : signed(147 downto 0);
+	signal circular_cordic_y_input : signed(147 downto 0);
+	signal circular_cordic_z_input : signed(147 downto 0);
+	signal circular_cordic_x_result : signed(147 downto 0);
+	signal circular_cordic_y_result : signed(147 downto 0);
+	signal circular_cordic_z_result : signed(147 downto 0);
+	signal circular_cordic_done : std_logic;
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -462,6 +477,30 @@ begin
 
 	arc_tangent_start <= '1' when state = EXECUTE and
 		arc_tangent_latched = '1' else '0';
+	circular_cordic_x_input <= arc_cordic_x_input when
+		arc_cordic_start = '1' else sine_cordic_x_input;
+	circular_cordic_y_input <= arc_cordic_y_input when
+		arc_cordic_start = '1' else sine_cordic_y_input;
+	circular_cordic_z_input <= arc_cordic_z_input when
+		arc_cordic_start = '1' else sine_cordic_z_input;
+
+	circular_cordic : entity work.TG68K_FPU_Circular_CORDIC
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => arc_cordic_start or sine_cordic_start,
+			vectoring => arc_cordic_start,
+			narrow_precision => arc_cordic_start,
+			rotate_on_start => sine_cordic_start,
+			x_input => circular_cordic_x_input,
+			y_input => circular_cordic_y_input,
+			z_input => circular_cordic_z_input,
+			x_result => circular_cordic_x_result,
+			y_result => circular_cordic_y_result,
+			z_result => circular_cordic_z_result,
+			busy => open,
+			done => circular_cordic_done
+		);
 
 	arc_tangent : entity work.TG68K_FPU_Arc_Tangent
 		generic map(
@@ -476,6 +515,12 @@ begin
 			arc_cosine => arc_cosine_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			cordic_start => arc_cordic_start,
+			cordic_x_input => arc_cordic_x_input,
+			cordic_y_input => arc_cordic_y_input,
+			cordic_z_input => arc_cordic_z_input,
+			cordic_z_result => circular_cordic_z_result,
+			cordic_done => circular_cordic_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -502,6 +547,13 @@ begin
 			source => source_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			cordic_start => sine_cordic_start,
+			cordic_x_input => sine_cordic_x_input,
+			cordic_y_input => sine_cordic_y_input,
+			cordic_z_input => sine_cordic_z_input,
+			cordic_x_result => circular_cordic_x_result,
+			cordic_y_result => circular_cordic_y_result,
+			cordic_done => circular_cordic_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,

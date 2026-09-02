@@ -161,6 +161,7 @@ def emit_testbench(cosine: bool, tangent: bool = False) -> None:
     vectors = make_vectors(cosine, tangent)
     print(f"""library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -196,8 +197,25 @@ architecture test of tb_tg68k_fpu_{operation}_differential is
     signal condition_codes : std_logic_vector(3 downto 0);
     signal exception_status : std_logic_vector(7 downto 0);
     signal done : std_logic;
+    signal cordic_start : std_logic;
+    signal cordic_x_input : signed(147 downto 0);
+    signal cordic_y_input : signed(147 downto 0);
+    signal cordic_z_input : signed(147 downto 0);
+    signal cordic_x_result : signed(147 downto 0);
+    signal cordic_y_result : signed(147 downto 0);
+    signal cordic_done : std_logic;
 begin
     clk <= not clk after CLK_PERIOD / 2;
+
+    cordic : entity work.TG68K_FPU_Circular_CORDIC
+        port map(
+            clk => clk, nReset => nReset, start => cordic_start,
+            vectoring => '0', narrow_precision => '0',
+            rotate_on_start => '1', x_input => cordic_x_input,
+            y_input => cordic_y_input, z_input => cordic_z_input,
+            x_result => cordic_x_result, y_result => cordic_y_result,
+            z_result => open, busy => open, done => cordic_done
+        );
 
     dut : entity work.TG68K_FPU_Sine_Cosine
         port map(
@@ -210,6 +228,13 @@ begin
             source => source,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
+            cordic_start => cordic_start,
+            cordic_x_input => cordic_x_input,
+            cordic_y_input => cordic_y_input,
+            cordic_z_input => cordic_z_input,
+            cordic_x_result => cordic_x_result,
+            cordic_y_result => cordic_y_result,
+            cordic_done => cordic_done,
             result => result,
             condition_codes => condition_codes,
             exception_status => exception_status,

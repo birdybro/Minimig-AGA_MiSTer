@@ -28,6 +28,13 @@ entity TG68K_FPU_Sine_Cosine is
 		source : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		cordic_start : out std_logic;
+		cordic_x_input : out signed(147 downto 0);
+		cordic_y_input : out signed(147 downto 0);
+		cordic_z_input : out signed(147 downto 0);
+		cordic_x_result : in signed(147 downto 0);
+		cordic_y_result : in signed(147 downto 0);
+		cordic_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -48,12 +55,11 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, REDUCE_RANGE,
-		ROTATE_CORDIC_XY, ROTATE_CORDIC_Z, FINISH_CORDIC,
+		START_CORDIC, WAIT_CORDIC,
 		CONVERT_PRIMARY, CONVERT_SECONDARY,
 		NORMALIZE_TANGENT_NUMERATOR, NORMALIZE_TANGENT_DENOMINATOR,
 		START_TANGENT_DIVIDE, DIVIDE_TANGENT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
-	type cordic_angle_rom_t is array(0 to 63) of cordic_value_t;
 
 	-- Q192 is sufficient for extended-precision reduction throughout the
 	-- Motorola-documented useful FSIN argument range.
@@ -63,62 +69,6 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		unsigned'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289");
 	constant UNIT_FIXED : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		shift_left(to_unsigned(1, CORDIC_WIDTH), FRACTION_BITS);
-	constant CORDIC_TAIL_START : cordic_value_t :=
-		signed'(x"0000000000000A2F9836E4E441529FC2757D2");
-	signal cordic_angle_rom : cordic_angle_rom_t := (
-		0 => signed'(x"0800000000000000000000000000000000000"),
-		1 => signed'(x"04B90147677CC21995A23DB6B8D4656BF2816"),
-		2 => signed'(x"027ECE16D7B8E7A377D0FCF2824878347837D"),
-		3 => signed'(x"0144447507776686DFE49572C7C78A5A99849"),
-		4 => signed'(x"00A2C350C39626BB303300048A6DA76F3C743"),
-		5 => signed'(x"005175F85641189E15A72537A0B6BDCE8F2BC"),
-		6 => signed'(x"0028BD87970A098A6135AFD62D2D16923D3FE"),
-		7 => signed'(x"00145F15447510ABA8B0C1B2B7AAA6C7A4C3E"),
-		8 => signed'(x"000A2F94D1B430CDBF245E9BAC7B0F2ADF9EA"),
-		9 => signed'(x"000517CBAECC2ACDEE4D07CB50E3BA1098D82"),
-		10 => signed'(x"00028BE600246E9ED9FD0EA488467200A23AA"),
-		11 => signed'(x"000145F3052A032DC1E23C00E5D9AAF496522"),
-		12 => signed'(x"0000A2F98337FB186652DD8577A994773CBB6"),
-		13 => signed'(x"0000517CC1B05CBC91ABD2FE7F4921E75B03A"),
-		14 => signed'(x"000028BE60DABA445614E76D187CE4F82DE6B"),
-		15 => signed'(x"0000145F306DAE9EECBDC8FF826B712438A54"),
-		16 => signed'(x"00000A2F9836E17F0E95AAD539E4055427C4D"),
-		17 => signed'(x"00000517CC1B72057A51B112AED731E455262"),
-		18 => signed'(x"0000028BE60DB92B7B89B41544BEBA46F7E97"),
-		19 => signed'(x"00000145F306DC9AD590F57CD762752A02B35"),
-		20 => signed'(x"000000A2F9836E4E0DC1FE2CB80C6334B29BF"),
-		21 => signed'(x"000000517CC1B7271B402F8425BF6CDB467B9"),
-		22 => signed'(x"00000028BE60DB93902BFDCFCC184C87289BB"),
-		23 => signed'(x"000000145F306DC9C8677BA99D33447C50375"),
-		24 => signed'(x"0000000A2F9836E4E43DED6D057E8660EBF2D"),
-		25 => signed'(x"0000000517CC1B7272203CA9899BDFB7ABD71"),
-		26 => signed'(x"000000028BE60DB93910471325A9836CD3926"),
-		27 => signed'(x"0000000145F306DC9C8828A15EF034288A356"),
-		28 => signed'(x"00000000A2F9836E4E4414F3A8FB8862892DF"),
-		29 => signed'(x"00000000517CC1B727220A8E33AE31FB0D199"),
-		30 => signed'(x"0000000028BE60DB93910549A5BD26B6BF9D2"),
-		31 => signed'(x"00000000145F306DC9C882A5245B551286F0A"),
-		32 => signed'(x"000000000A2F9836E4E441529C5D42C0285C9"),
-		33 => signed'(x"000000000517CC1B727220A94F749466F0CAD"),
-		34 => signed'(x"00000000028BE60DB9391054A7E3089453F90"),
-		35 => signed'(x"000000000145F306DC9C882A53F69C16456EF"),
-		36 => signed'(x"0000000000A2F9836E4E441529FBF104A625C"),
-		37 => signed'(x"0000000000517CC1B727220A94FE0CE18380B"),
-		38 => signed'(x"000000000028BE60DB9391054A7F08FCA7CE1"),
-		39 => signed'(x"0000000000145F306DC9C882A53F84CFD0A8C"),
-		40 => signed'(x"00000000000A2F9836E4E441529FC27217EC9"),
-		41 => signed'(x"00000000000517CC1B727220A94FE13A51E95"),
-		42 => signed'(x"0000000000028BE60DB9391054A7F09D51B31"),
-		43 => signed'(x"00000000000145F306DC9C882A53F84EADF15"),
-		44 => signed'(x"000000000000A2F9836E4E441529FC27579BA"),
-		45 => signed'(x"000000000000517CC1B727220A94FE13ABE23"),
-		46 => signed'(x"00000000000028BE60DB9391054A7F09D5F3A"),
-		47 => signed'(x"000000000000145F306DC9C882A53F84EAFA2"),
-		48 to 63 => (others => '0')
-	);
-	attribute ramstyle : string;
-	attribute ramstyle of cordic_angle_rom : signal is "M10K";
-
 	function highest_set_bit(value : unsigned) return natural is
 	begin
 		for index in value'high downto value'low loop
@@ -189,16 +139,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		(others => '0');
 	signal reciprocal_iteration : natural range 0 to 63 := 0;
 	signal quadrant : unsigned(1 downto 0) := (others => '0');
-	signal cordic_x : cordic_value_t := (others => '0');
-	signal cordic_y : cordic_value_t := (others => '0');
-	signal cordic_z : cordic_value_t := (others => '0');
-	signal cordic_iteration : natural range 0 to FRACTION_BITS := 0;
-	signal cordic_angle_address : natural range 0 to 47 := 0;
-	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
-	signal cordic_shift_angle : cordic_value_t := (others => '0');
-	signal cordic_z_previous : cordic_value_t := (others => '0');
-	signal cordic_angle_previous : cordic_value_t := (others => '0');
-	signal cordic_direction_previous : std_logic := '0';
+	signal cordic_source_z : cordic_value_t := (others => '0');
 	signal tangent_divisor : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
 	signal tangent_remainder : unsigned(CORDIC_WIDTH downto 0) := (others => '0');
 	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
@@ -222,12 +163,8 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal normalized_value : unsigned(CORDIC_WIDTH - 1 downto 0);
 	signal shared_left_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
 	signal shared_right_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
-	signal shared_left_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
-	signal shared_right_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
 	signal shared_subtract_a : std_logic;
-	signal shared_subtract_b : std_logic;
 	signal shared_result_a : unsigned(PRODUCT_WIDTH - 1 downto 0);
-	signal shared_result_b : unsigned(PRODUCT_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -247,6 +184,10 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
+	cordic_start <= '1' when state = START_CORDIC else '0';
+	cordic_x_input <= signed(CORDIC_GAIN_INVERSE);
+	cordic_y_input <= (others => '0');
+	cordic_z_input <= cordic_source_z;
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -268,19 +209,14 @@ begin
 		CORDIC_WIDTH - 1 - normalization_highest);
 
 	shared_operands : process(state, reciprocal_product,
-		reciprocal_multiplicand, cordic_x, cordic_y,
-		cordic_z, cordic_iteration, cordic_z_previous,
-		cordic_angle_previous, cordic_direction_previous,
+		reciprocal_multiplicand,
 		normalized_tangent_numerator, normalized_tangent_denominator,
 		tangent_remainder, tangent_divisor)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
 		shared_left_a <= (others => '0');
 		shared_right_a <= (others => '0');
-		shared_left_b <= (others => '0');
-		shared_right_b <= (others => '0');
 		shared_subtract_a <= '0';
-		shared_subtract_b <= '0';
 		case state is
 			when MULTIPLY_RECIPROCAL =>
 				shared_left_a <= resize(reciprocal_product(
@@ -289,24 +225,6 @@ begin
 					shared_right_a <= resize(reciprocal_multiplicand,
 						PRODUCT_WIDTH);
 				end if;
-			when ROTATE_CORDIC_XY =>
-				shared_left_a <= unsigned(resize(cordic_x, PRODUCT_WIDTH));
-				shared_right_a <= unsigned(resize(shift_right(cordic_y,
-					cordic_iteration), PRODUCT_WIDTH));
-				shared_left_b <= unsigned(resize(cordic_y, PRODUCT_WIDTH));
-				shared_right_b <= unsigned(resize(shift_right(cordic_x,
-					cordic_iteration), PRODUCT_WIDTH));
-				if cordic_z >= 0 then
-					shared_subtract_a <= '1';
-				else
-					shared_subtract_b <= '1';
-				end if;
-			when ROTATE_CORDIC_Z =>
-				shared_left_a <= unsigned(resize(cordic_z_previous,
-					PRODUCT_WIDTH));
-				shared_right_a <= unsigned(resize(cordic_angle_previous,
-					PRODUCT_WIDTH));
-				shared_subtract_a <= cordic_direction_previous;
 			when START_TANGENT_DIVIDE =>
 				if normalized_tangent_numerator <
 						normalized_tangent_denominator then
@@ -331,24 +249,12 @@ begin
 	end process;
 
 	shared_add_subtract : process(shared_subtract_a, shared_left_a,
-		shared_right_a, shared_subtract_b, shared_left_b, shared_right_b)
+		shared_right_a)
 	begin
 		if shared_subtract_a = '1' then
 			shared_result_a <= shared_left_a - shared_right_a;
 		else
 			shared_result_a <= shared_left_a + shared_right_a;
-		end if;
-		if shared_subtract_b = '1' then
-			shared_result_b <= shared_left_b - shared_right_b;
-		else
-			shared_result_b <= shared_left_b + shared_right_b;
-		end if;
-	end process;
-
-	angle_rom_read : process(clk)
-	begin
-		if rising_edge(clk) then
-			cordic_angle_rom_data <= cordic_angle_rom(cordic_angle_address);
 		end if;
 	end process;
 
@@ -404,7 +310,6 @@ begin
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable reduced_angle : cordic_value_t;
 		variable quadrant_sum : unsigned(2 downto 0);
-		variable next_angle : cordic_value_t;
 		variable selected_value : cordic_value_t;
 		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable final_sign : std_logic;
@@ -428,15 +333,7 @@ begin
 				reciprocal_product <= (others => '0');
 				reciprocal_iteration <= 0;
 				quadrant <= (others => '0');
-				cordic_x <= (others => '0');
-				cordic_y <= (others => '0');
-				cordic_z <= (others => '0');
-				cordic_iteration <= 0;
-				cordic_angle_address <= 0;
-				cordic_shift_angle <= (others => '0');
-				cordic_z_previous <= (others => '0');
-				cordic_angle_previous <= (others => '0');
-				cordic_direction_previous <= '0';
+				cordic_source_z <= (others => '0');
 				tangent_divisor <= (others => '0');
 				tangent_remainder <= (others => '0');
 				tangent_quotient <= (others => '0');
@@ -478,15 +375,7 @@ begin
 							reciprocal_product <= (others => '0');
 							reciprocal_iteration <= 0;
 							quadrant <= (others => '0');
-							cordic_x <= (others => '0');
-							cordic_y <= (others => '0');
-							cordic_z <= (others => '0');
-							cordic_iteration <= 0;
-							cordic_angle_address <= 0;
-							cordic_shift_angle <= (others => '0');
-							cordic_z_previous <= (others => '0');
-							cordic_angle_previous <= (others => '0');
-							cordic_direction_previous <= '0';
+							cordic_source_z <= (others => '0');
 							tangent_divisor <= (others => '0');
 							tangent_remainder <= (others => '0');
 							tangent_quotient <= (others => '0');
@@ -638,104 +527,68 @@ begin
 							quadrant_sum := quadrant_sum + 1;
 						end if;
 						quadrant <= quadrant_sum(1 downto 0);
-						cordic_x <= signed(CORDIC_GAIN_INVERSE);
-						cordic_y <= (others => '0');
-						cordic_z <= reduced_angle;
-						cordic_iteration <= 0;
-						cordic_angle_address <= 0;
-						state <= ROTATE_CORDIC_XY;
+						cordic_source_z <= reduced_angle;
+						state <= START_CORDIC;
 
-					when ROTATE_CORDIC_XY =>
-						if cordic_iteration <= 47 then
-							next_angle := cordic_angle_rom_data;
-						else
-							next_angle := cordic_shift_angle;
-						end if;
-						cordic_z_previous <= cordic_z;
-						cordic_angle_previous <= next_angle;
-						if cordic_z >= 0 then
-							cordic_direction_previous <= '1';
-						else
-							cordic_direction_previous <= '0';
-						end if;
-						cordic_x <= signed(shared_result_a(
-							CORDIC_WIDTH - 1 downto 0));
-						cordic_y <= signed(shared_result_b(
-							CORDIC_WIDTH - 1 downto 0));
-						if cordic_iteration < 47 then
-							cordic_angle_address <= cordic_iteration + 1;
-						elsif cordic_iteration = 47 then
-							cordic_shift_angle <= CORDIC_TAIL_START;
-						else
-							cordic_shift_angle <= shift_right(
-								cordic_shift_angle, 1);
-						end if;
-						state <= ROTATE_CORDIC_Z;
+					when START_CORDIC =>
+						state <= WAIT_CORDIC;
 
-					when ROTATE_CORDIC_Z =>
-						cordic_z <= signed(shared_result_a(
-							CORDIC_WIDTH - 1 downto 0));
-						if cordic_iteration = FRACTION_BITS then
-							state <= FINISH_CORDIC;
-						else
-							cordic_iteration <= cordic_iteration + 1;
-							state <= ROTATE_CORDIC_XY;
-						end if;
-
-					when FINISH_CORDIC =>
-						if tangent_latched = '1' then
-							if cordic_y < 0 then
-								final_sign := '1';
-								magnitude := unsigned(-cordic_y);
+					when WAIT_CORDIC =>
+						if cordic_done = '1' then
+							if tangent_latched = '1' then
+								if cordic_y_result < 0 then
+									final_sign := '1';
+									magnitude := unsigned(-cordic_y_result);
+								else
+									final_sign := '0';
+									magnitude := unsigned(cordic_y_result);
+								end if;
+								if quadrant(0) = '0' then
+									tangent_numerator := magnitude;
+									tangent_denominator := unsigned(cordic_x_result);
+								else
+									tangent_numerator := unsigned(cordic_x_result);
+									tangent_denominator := magnitude;
+									final_sign := not final_sign;
+								end if;
+								if source_sign_latched = '1' then
+									final_sign := not final_sign;
+								end if;
+								intermediate_sign <= final_sign;
+								tangent_numerator_latched <= tangent_numerator;
+								tangent_denominator_latched <= tangent_denominator;
+								if tangent_denominator = 0 then
+									intermediate_class <= FPU_CLASS_INFINITY;
+									state <= COMPLETE;
+								elsif tangent_numerator = 0 then
+									intermediate_class <= FPU_CLASS_ZERO;
+									state <= COMPLETE;
+								else
+									state <= NORMALIZE_TANGENT_NUMERATOR;
+								end if;
 							else
-								final_sign := '0';
-								magnitude := unsigned(cordic_y);
-							end if;
-							if quadrant(0) = '0' then
-								tangent_numerator := magnitude;
-								tangent_denominator := unsigned(cordic_x);
-							else
-								tangent_numerator := unsigned(cordic_x);
-								tangent_denominator := magnitude;
-								final_sign := not final_sign;
-							end if;
-							if source_sign_latched = '1' then
-								final_sign := not final_sign;
-							end if;
-							intermediate_sign <= final_sign;
-							tangent_numerator_latched <= tangent_numerator;
-							tangent_denominator_latched <= tangent_denominator;
-							if tangent_denominator = 0 then
-								intermediate_class <= FPU_CLASS_INFINITY;
-								state <= COMPLETE;
-							elsif tangent_numerator = 0 then
-								intermediate_class <= FPU_CLASS_ZERO;
-								state <= COMPLETE;
-							else
-								state <= NORMALIZE_TANGENT_NUMERATOR;
-							end if;
-						else
-							case quadrant is
-								when "00" => selected_value := cordic_y;
-								when "01" => selected_value := cordic_x;
-								when "10" => selected_value := -cordic_y;
-								when others => selected_value := -cordic_x;
-							end case;
-							if cosine_latched = '0' and
-									source_sign_latched = '1' then
-								selected_value := -selected_value;
-							end if;
-							primary_fixed_value <= selected_value;
-							if simultaneous_latched = '1' then
 								case quadrant is
-									when "00" => cosine_value := cordic_x;
-									when "01" => cosine_value := -cordic_y;
-									when "10" => cosine_value := -cordic_x;
-									when others => cosine_value := cordic_y;
+									when "00" => selected_value := cordic_y_result;
+									when "01" => selected_value := cordic_x_result;
+									when "10" => selected_value := -cordic_y_result;
+									when others => selected_value := -cordic_x_result;
 								end case;
-								secondary_fixed_value <= cosine_value;
+								if cosine_latched = '0' and
+										source_sign_latched = '1' then
+									selected_value := -selected_value;
+								end if;
+								primary_fixed_value <= selected_value;
+								if simultaneous_latched = '1' then
+									case quadrant is
+										when "00" => cosine_value := cordic_x_result;
+										when "01" => cosine_value := -cordic_y_result;
+										when "10" => cosine_value := -cordic_x_result;
+										when others => cosine_value := cordic_y_result;
+									end case;
+									secondary_fixed_value <= cosine_value;
+								end if;
+								state <= CONVERT_PRIMARY;
 							end if;
-							state <= CONVERT_PRIMARY;
 						end if;
 
 					when CONVERT_PRIMARY =>

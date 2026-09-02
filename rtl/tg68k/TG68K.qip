@@ -34,6 +34,7 @@ set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Square_Root.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Exponential.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Logarithm.vhd ]
+set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Circular_CORDIC.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Arc_Tangent.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Sine_Cosine.vhd ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) TG68K_FPU_Integer.vhd ]

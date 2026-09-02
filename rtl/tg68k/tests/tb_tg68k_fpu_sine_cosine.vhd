@@ -22,8 +22,33 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 	signal secondary_round_input : fpu_round_input_t;
 	signal secondary_result : fpu_extended_t;
 	signal done : std_logic;
+	signal cordic_start : std_logic;
+	signal cordic_x_input : signed(147 downto 0);
+	signal cordic_y_input : signed(147 downto 0);
+	signal cordic_z_input : signed(147 downto 0);
+	signal cordic_x_result : signed(147 downto 0);
+	signal cordic_y_result : signed(147 downto 0);
+	signal cordic_done : std_logic;
 begin
 	clk <= not clk after CLK_PERIOD / 2;
+
+	cordic : entity work.TG68K_FPU_Circular_CORDIC
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => cordic_start,
+			vectoring => '0',
+			narrow_precision => '0',
+			rotate_on_start => '1',
+			x_input => cordic_x_input,
+			y_input => cordic_y_input,
+			z_input => cordic_z_input,
+			x_result => cordic_x_result,
+			y_result => cordic_y_result,
+			z_result => open,
+			busy => open,
+			done => cordic_done
+		);
 
 	dut : entity work.TG68K_FPU_Sine_Cosine
 		port map(
@@ -36,6 +61,13 @@ begin
 			source => source,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
+			cordic_start => cordic_start,
+			cordic_x_input => cordic_x_input,
+			cordic_y_input => cordic_y_input,
+			cordic_z_input => cordic_z_input,
+			cordic_x_result => cordic_x_result,
+			cordic_y_result => cordic_y_result,
+			cordic_done => cordic_done,
 			result => result,
 			condition_codes => condition_codes,
 			exception_status => exception_status,

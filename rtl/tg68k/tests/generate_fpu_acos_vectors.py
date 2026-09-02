@@ -60,6 +60,7 @@ def emit_testbench() -> None:
     vectors = make_vectors()
     print("""library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -95,8 +96,25 @@ architecture test of tb_tg68k_fpu_acos_differential is
     signal condition_codes : std_logic_vector(3 downto 0);
     signal exception_status : std_logic_vector(7 downto 0);
     signal done : std_logic;
+    signal cordic_start : std_logic;
+    signal cordic_x_input : signed(147 downto 0);
+    signal cordic_y_input : signed(147 downto 0);
+    signal cordic_z_input : signed(147 downto 0);
+    signal cordic_z_result : signed(147 downto 0);
+    signal cordic_done : std_logic;
 begin
     clk <= not clk after CLK_PERIOD / 2;
+
+    cordic : entity work.TG68K_FPU_Circular_CORDIC
+        port map(
+            clk => clk, nReset => nReset, start => cordic_start,
+            vectoring => '1', narrow_precision => '1',
+            rotate_on_start => '0', x_input => cordic_x_input,
+            y_input => cordic_y_input, z_input => cordic_z_input,
+            x_result => open, y_result => open,
+            z_result => cordic_z_result, busy => open,
+            done => cordic_done
+        );
 
     dut : entity work.TG68K_FPU_Arc_Tangent
         port map(
@@ -107,6 +125,12 @@ begin
             arc_cosine => '1',
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
+            cordic_start => cordic_start,
+            cordic_x_input => cordic_x_input,
+            cordic_y_input => cordic_y_input,
+            cordic_z_input => cordic_z_input,
+            cordic_z_result => cordic_z_result,
+            cordic_done => cordic_done,
             result => result,
             condition_codes => condition_codes,
             exception_status => exception_status,
