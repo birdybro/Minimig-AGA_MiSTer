@@ -713,7 +713,7 @@ begin
 	end generate;
 
 	outputs : process(state, format_latched, address_latched,
-		function_code_latched, transfer_index, result_latched,
+		function_code_latched, transfer_index, external_buffer, result_latched,
 		cosine_result_latched,
 		condition_codes_latched, status_latched, write_result_latched,
 		quotient_latched, remainder_latched, snan_enable_latched,

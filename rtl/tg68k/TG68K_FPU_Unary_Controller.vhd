@@ -190,8 +190,8 @@ begin
 		);
 
 	outputs : process(state, format_latched, address_latched,
-		function_code_latched, transfer_index, result_latched, status_latched,
-		write_result_latched, snan_enable_latched,
+		function_code_latched, transfer_index, external_buffer, result_latched,
+		status_latched, write_result_latched, snan_enable_latched,
 		operand_error_enable_latched)
 		variable suppress_write : boolean;
 	begin
