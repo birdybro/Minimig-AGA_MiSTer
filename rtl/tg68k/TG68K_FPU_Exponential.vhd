@@ -65,7 +65,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant NEGATIVE_REMAINDER_BOUND_BIT : natural := 118;
 	type exponential_state_t is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
-			DIVIDE_CUBE_TERM, SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
+			DIVIDE_CUBE_TERM, ALIGN_INPUT_MAGNITUDE,
+			SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
 			MULTIPLY_LOG2, START_CORDIC, WAIT_CORDIC,
 			FORM_CORDIC_SUM, FORM_CORDIC_DIFFERENCE,
 			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
@@ -109,6 +110,9 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal multiply_index : natural range 0 to FRACTION_BITS - 1 := 0;
 	signal scale_magnitude_register : unsigned(FIXED_WIDTH - 1 downto 0) :=
 		(others => '0');
+	signal input_alignment_remaining : natural range 0 to 63 := 0;
+	signal input_alignment_left : std_logic := '0';
+	signal exponential_base_latched : fpu_exponential_base_t := FPU_EXP_BASE_TWO;
 	signal scale_accumulator : unsigned(FIXED_WIDTH + 2 downto 0) :=
 		(others => '0');
 	signal scale_index : natural range 0 to FIXED_WIDTH - 1 := 0;
@@ -575,6 +579,40 @@ begin
 			end if;
 		end procedure;
 
+		procedure begin_aligned_magnitude(
+				constant magnitude : in unsigned(FIXED_WIDTH - 1 downto 0)) is
+		begin
+			if magnitude = 0 then
+				intermediate_class <= FPU_CLASS_NORMAL;
+				base_status(1) <= '1';
+				if hyperbolic_cosine_latched = '1' then
+					intermediate_significand(66) <= '1';
+					intermediate_significand(0) <= '1';
+				elsif source_sign_latched = '0' then
+					intermediate_significand(66) <= '1';
+					intermediate_significand(0) <= '1';
+				else
+					intermediate_exponent <= to_signed(-1, 17);
+					intermediate_significand <= (others => '1');
+				end if;
+				state <= COMPLETE;
+			elsif hyperbolic_sine_latched = '1' or
+					hyperbolic_cosine_latched = '1' or
+					hyperbolic_tangent_latched = '1' or
+					exponential_base_latched = FPU_EXP_BASE_E then
+				scale_accumulator <= (others => '0');
+				scale_index <= 0;
+				state <= SCALE_E_TO_BASE_TWO;
+			elsif exponential_base_latched = FPU_EXP_BASE_TEN then
+				scale_accumulator <= (others => '0');
+				scale_index <= 0;
+				state <= SCALE_TEN_TO_BASE_TWO;
+			else
+				begin_reduced_exponential(magnitude, source_sign_latched,
+					subtract_one_latched);
+			end if;
+		end procedure;
+
 		procedure complete_small_series(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
 			variable final_significand : fpu_significand_grs_t;
@@ -609,6 +647,7 @@ begin
 		variable normalization_shift : natural range 0 to 63;
 		variable shift_amount : integer range -65536 to 65535;
 		variable magnitude_fixed : unsigned(FIXED_WIDTH - 1 downto 0);
+		variable next_magnitude : unsigned(FIXED_WIDTH - 1 downto 0);
 		variable exponent_value : integer range -65536 to 65535;
 		variable selected_nan : fpu_extended_t;
 		variable next_accumulator : unsigned(FRACTION_BITS downto 0);
@@ -646,6 +685,9 @@ begin
 				log2_product <= (others => '0');
 				multiply_index <= 0;
 				scale_magnitude_register <= (others => '0');
+				input_alignment_remaining <= 0;
+				input_alignment_left <= '0';
+				exponential_base_latched <= FPU_EXP_BASE_TWO;
 				scale_accumulator <= (others => '0');
 				scale_index <= 0;
 				source_sign_latched <= '0';
@@ -690,6 +732,9 @@ begin
 							log2_product <= (others => '0');
 							multiply_index <= 0;
 							scale_magnitude_register <= (others => '0');
+							input_alignment_remaining <= 0;
+							input_alignment_left <= '0';
+							exponential_base_latched <= exponential_base;
 							scale_accumulator <= (others => '0');
 							scale_index <= 0;
 							source_sign_latched <= source(79);
@@ -861,7 +906,6 @@ begin
 										state <= SQUARE_SMALL_ARGUMENT;
 									end if;
 								else
-									magnitude_fixed := (others => '0');
 									shift_amount := source_exponent + FRACTION_BITS - 63;
 									if (exponential_base = FPU_EXP_BASE_TWO and
 											source_exponent > 15) or
@@ -902,48 +946,45 @@ begin
 										end if;
 										state <= COMPLETE;
 									else
-										if shift_amount >= 0 then
-											magnitude_fixed := shift_left(resize(
-												source_significand, FIXED_WIDTH), shift_amount);
-										elsif -shift_amount < FIXED_WIDTH then
-											magnitude_fixed := shift_right(resize(
-												source_significand, FIXED_WIDTH), -shift_amount);
-										end if;
-										if magnitude_fixed = 0 then
-											intermediate_class <= FPU_CLASS_NORMAL;
-											base_status(1) <= '1';
-											if hyperbolic_cosine = '1' then
-												intermediate_significand(66) <= '1';
-												intermediate_significand(0) <= '1';
-											elsif source(79) = '0' then
-												intermediate_significand(66) <= '1';
-												intermediate_significand(0) <= '1';
-											else
-												intermediate_exponent <= to_signed(-1, 17);
-												intermediate_significand <= (others => '1');
-											end if;
-											state <= COMPLETE;
+										magnitude_fixed := resize(source_significand,
+											FIXED_WIDTH);
+										scale_magnitude_register <= magnitude_fixed;
+										if shift_amount > 0 then
+											input_alignment_remaining <= shift_amount;
+											input_alignment_left <= '1';
+										elsif shift_amount < 0 and -shift_amount <= 63 then
+											input_alignment_remaining <= -shift_amount;
+											input_alignment_left <= '0';
 										else
-											if hyperbolic_sine = '1' or
-													hyperbolic_cosine = '1' or
-													hyperbolic_tangent = '1' or
-													exponential_base = FPU_EXP_BASE_E then
-												scale_magnitude_register <= magnitude_fixed;
-												scale_accumulator <= (others => '0');
-												scale_index <= 0;
-												state <= SCALE_E_TO_BASE_TWO;
-											elsif exponential_base = FPU_EXP_BASE_TEN then
-												scale_magnitude_register <= magnitude_fixed;
-												scale_accumulator <= (others => '0');
-												scale_index <= 0;
-												state <= SCALE_TEN_TO_BASE_TWO;
-											else
-												begin_reduced_exponential(
-													magnitude_fixed, source(79), subtract_one);
+											input_alignment_remaining <= 0;
+											input_alignment_left <= '0';
+											if shift_amount < -63 then
+												scale_magnitude_register <= (others => '0');
 											end if;
 										end if;
+										state <= ALIGN_INPUT_MAGNITUDE;
 									end if;
 								end if;
+							end if;
+						end if;
+
+					when ALIGN_INPUT_MAGNITUDE =>
+						next_magnitude := scale_magnitude_register;
+						if input_alignment_remaining = 0 then
+							begin_aligned_magnitude(next_magnitude);
+						else
+							if input_alignment_left = '1' then
+								next_magnitude := shift_left(next_magnitude, 1);
+							else
+								next_magnitude := shift_right(next_magnitude, 1);
+							end if;
+							scale_magnitude_register <= next_magnitude;
+							if input_alignment_remaining = 1 then
+								input_alignment_remaining <= 0;
+								begin_aligned_magnitude(next_magnitude);
+							else
+								input_alignment_remaining <=
+									input_alignment_remaining - 1;
 							end if;
 						end if;
 

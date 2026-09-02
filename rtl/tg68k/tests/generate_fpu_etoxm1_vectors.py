@@ -165,7 +165,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 450
+                assert cycles < 548
                     report "differential FETOXM1 timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and

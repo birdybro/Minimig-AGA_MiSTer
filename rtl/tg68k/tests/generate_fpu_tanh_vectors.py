@@ -176,7 +176,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 650
+                assert cycles < 664
                     report "differential FTANH timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and
