@@ -145,11 +145,11 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	signal normalization_exponent : signed(16 downto 0) := (others => '0');
 	signal arc_sine_magnitude : unsigned(FRACTION_BITS downto 0) :=
 		(others => '0');
-	signal square_multiplier : unsigned(FRACTION_BITS downto 0) :=
+	-- The combined accumulator|multiplier shifts right around a stationary
+	-- multiplicand, avoiding two full-width square-multiplier shifters.
+	signal square_multiplicand : unsigned(FRACTION_BITS downto 0) :=
 		(others => '0');
-	signal square_multiplicand : unsigned(2 * FRACTION_BITS + 1 downto 0) :=
-		(others => '0');
-	signal square_accumulator : unsigned(2 * FRACTION_BITS + 1 downto 0) :=
+	signal square_product : unsigned(2 * FRACTION_BITS + 2 downto 0) :=
 		(others => '0');
 	signal square_iteration : natural range 0 to FRACTION_BITS := 0;
 	signal root_radicand : unsigned(2 * FRACTION_BITS + 1 downto 0) :=
@@ -309,7 +309,8 @@ begin
 		variable arc_sine_fixed : unsigned(FRACTION_BITS downto 0);
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
-		variable next_square : unsigned(2 * FRACTION_BITS + 1 downto 0);
+		variable square_accumulator_sum : unsigned(FRACTION_BITS + 1 downto 0);
+		variable next_square_product : unsigned(2 * FRACTION_BITS + 2 downto 0);
 		variable unit_square : unsigned(2 * FRACTION_BITS + 1 downto 0);
 		variable shifted_remainder : unsigned(FRACTION_BITS + 2 downto 0);
 		variable trial_divisor : unsigned(FRACTION_BITS + 2 downto 0);
@@ -337,9 +338,8 @@ begin
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
 				arc_sine_magnitude <= (others => '0');
-				square_multiplier <= (others => '0');
 				square_multiplicand <= (others => '0');
-				square_accumulator <= (others => '0');
+				square_product <= (others => '0');
 				square_iteration <= 0;
 				root_radicand <= (others => '0');
 				root_remainder <= (others => '0');
@@ -374,9 +374,8 @@ begin
 							normalization_value <= (others => '0');
 							normalization_exponent <= (others => '0');
 							arc_sine_magnitude <= (others => '0');
-							square_multiplier <= (others => '0');
 							square_multiplicand <= (others => '0');
-							square_accumulator <= (others => '0');
+							square_product <= (others => '0');
 							square_iteration <= 0;
 							root_radicand <= (others => '0');
 							root_remainder <= (others => '0');
@@ -461,10 +460,9 @@ begin
 										arc_sine_fixed := shift_right(arc_sine_fixed,
 											-source_exponent);
 										arc_sine_magnitude <= arc_sine_fixed;
-										square_multiplier <= arc_sine_fixed;
-										square_multiplicand <= resize(arc_sine_fixed,
-											2 * FRACTION_BITS + 2);
-										square_accumulator <= (others => '0');
+										square_multiplicand <= arc_sine_fixed;
+										square_product <= resize(arc_sine_fixed,
+											2 * FRACTION_BITS + 3);
 										square_iteration <= 0;
 										state <= MULTIPLY_ARC_SINE_SOURCE;
 									end if;
@@ -515,17 +513,20 @@ begin
 					when MULTIPLY_ARC_SINE_SOURCE =>
 						-- asin(x) = atan2(x, sqrt(1-x*x)); keep both CORDIC
 						-- operands in Q112 until the single architectural rounding.
-						next_square := square_accumulator;
-						if square_multiplier(0) = '1' then
-							next_square := next_square + square_multiplicand;
+						square_accumulator_sum := square_product(
+							2 * FRACTION_BITS + 2 downto FRACTION_BITS + 1);
+						if square_product(0) = '1' then
+							square_accumulator_sum := square_accumulator_sum +
+								resize(square_multiplicand, FRACTION_BITS + 2);
 						end if;
-						square_accumulator <= next_square;
-						square_multiplier <= shift_right(square_multiplier, 1);
-						square_multiplicand <= shift_left(square_multiplicand, 1);
+						next_square_product := shift_right(square_accumulator_sum &
+							square_product(FRACTION_BITS downto 0), 1);
+						square_product <= next_square_product;
 						if square_iteration = FRACTION_BITS then
 							unit_square := (others => '0');
 							unit_square(2 * FRACTION_BITS) := '1';
-							root_radicand <= unit_square - next_square;
+							root_radicand <= unit_square -
+								next_square_product(2 * FRACTION_BITS + 1 downto 0);
 							root_remainder <= (others => '0');
 							root_value <= (others => '0');
 							root_iteration <= 0;
