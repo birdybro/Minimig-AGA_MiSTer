@@ -65,7 +65,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	constant NEGATIVE_REMAINDER_BOUND_BIT : natural := 118;
 	type exponential_state_t is
 		(IDLE, SQUARE_SMALL_ARGUMENT, CUBE_SMALL_ARGUMENT,
-			DIVIDE_CUBE_TERM, ALIGN_INPUT_MAGNITUDE,
+			DIVIDE_CUBE_TERM, APPLY_SERIES_SQUARE,
+			APPLY_SERIES_CUBE, ALIGN_INPUT_MAGNITUDE,
 			SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
 			MULTIPLY_LOG2, START_CORDIC, WAIT_CORDIC,
 			FORM_CORDIC_SUM, FORM_CORDIC_DIFFERENCE,
@@ -73,6 +74,9 @@ architecture rtl of TG68K_FPU_Exponential is
 			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
 			NORMALIZE_SUBTRACTION, FORMAT_NORMALIZED_RESULT,
 			WRITE_PENDING_RESULT, COMPLETE);
+	type series_base_adjustment_t is
+		(SERIES_BASE_UNADJUSTED, SERIES_BASE_PLUS_ONE,
+			SERIES_BASE_MINUS_ONE, SERIES_BASE_MINUS_REMAINDER_BOUND);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 
 	constant LN2_FIXED : unsigned(FRACTION_BITS - 1 downto 0) :=
@@ -132,6 +136,13 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal series_index : natural range 0 to 79 := 0;
 	signal cube_accumulator : unsigned(16 downto 0) := (others => '0');
 	signal cube_remainder : natural range 0 to 5 := 0;
+	signal series_accumulator : unsigned(SERIES_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal series_serial_bits_remaining : natural range 0 to SERIES_WIDTH := 0;
+	signal series_term_bits_remaining : natural range 0 to 128 := 0;
+	signal series_alignment_remaining : natural range 0 to 66 := 0;
+	signal series_carry_borrow : std_logic := '0';
+	signal series_term_subtract : std_logic := '0';
 	signal subtraction_value : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
 	signal subtraction_one : unsigned(CORDIC_WIDTH downto 0) :=
@@ -613,6 +624,35 @@ begin
 			end if;
 		end procedure;
 
+		procedure load_series_base(
+				constant adjustment : in series_base_adjustment_t) is
+			variable base_value : unsigned(SERIES_WIDTH - 1 downto 0);
+		begin
+			base_value := (others => '0');
+			case adjustment is
+				when SERIES_BASE_UNADJUSTED =>
+					base_value(SERIES_NORMAL_BIT downto
+						SERIES_NORMAL_BIT - 63) := series_source_significand;
+				when SERIES_BASE_PLUS_ONE =>
+					base_value(SERIES_NORMAL_BIT downto
+						SERIES_NORMAL_BIT - 63) := series_source_significand;
+					base_value(0) := '1';
+				when SERIES_BASE_MINUS_ONE =>
+					base_value(SERIES_NORMAL_BIT downto
+						SERIES_NORMAL_BIT - 63) :=
+						series_source_significand - 1;
+					base_value(SERIES_NORMAL_BIT - 64 downto 0) :=
+						(others => '1');
+				when SERIES_BASE_MINUS_REMAINDER_BOUND =>
+					base_value(SERIES_NORMAL_BIT downto
+						SERIES_NORMAL_BIT - 63) :=
+						series_source_significand - 1;
+					base_value(SERIES_NORMAL_BIT - 64 downto
+						NEGATIVE_REMAINDER_BOUND_BIT) := (others => '1');
+			end case;
+			series_accumulator <= base_value;
+		end procedure;
+
 		procedure complete_small_series(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0)) is
 			variable final_significand : fpu_significand_grs_t;
@@ -670,14 +710,20 @@ begin
 		variable tangent_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable tangent_next_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable tangent_next_quotient : unsigned(65 downto 0);
-		variable series_base : unsigned(SERIES_WIDTH - 1 downto 0);
-		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
-		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
-		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable tiny_significand : fpu_significand_grs_t;
 		variable cosh_increment : fpu_significand_grs_t;
 		variable series_shift : natural range 1 to 42;
 		variable cube_alignment_shift : natural range 54 to 66;
+		variable serial_term_pair : unsigned(1 downto 0);
+		variable serial_accumulator : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable serial_product : unsigned(128 downto 0);
+		variable serial_alignment : natural range 0 to 66;
+		variable serial_term_bits : natural range 0 to 128;
+		variable serial_total : natural range 0 to 7;
+		variable serial_subtrahend : natural range 0 to 4;
+		variable serial_result : natural range 0 to 3;
+		variable serial_next_carry_borrow : std_logic;
+		variable serial_width : natural range 1 to 2;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -703,6 +749,12 @@ begin
 				series_index <= 0;
 				cube_accumulator <= (others => '0');
 				cube_remainder <= 0;
+				series_accumulator <= (others => '0');
+				series_serial_bits_remaining <= 0;
+				series_term_bits_remaining <= 0;
+				series_alignment_remaining <= 0;
+				series_carry_borrow <= '0';
+				series_term_subtract <= '0';
 				subtraction_value <= (others => '0');
 				subtraction_one <= (others => '0');
 				subtraction_exponent <= (others => '0');
@@ -750,6 +802,12 @@ begin
 							series_index <= 0;
 							cube_accumulator <= (others => '0');
 							cube_remainder <= 0;
+							series_accumulator <= (others => '0');
+							series_serial_bits_remaining <= 0;
+							series_term_bits_remaining <= 0;
+							series_alignment_remaining <= 0;
+							series_carry_borrow <= '0';
+							series_term_subtract <= '0';
 							subtraction_value <= (others => '0');
 							subtraction_one <= (others => '0');
 							subtraction_exponent <= (others => '0');
@@ -1032,29 +1090,44 @@ begin
 								intermediate_significand <= cosh_increment;
 								state <= COMPLETE;
 							else
-								series_base := shift_left(resize(
-									series_source_significand, SERIES_WIDTH),
-									SERIES_NORMAL_BIT - 63);
 								series_shift := to_integer(series_exponent) + 68;
-								series_correction := shift_left(resize(
-									next_square, SERIES_WIDTH), series_shift);
 								if to_integer(series_exponent) <
 										SERIES_CUBIC_MIN_EXPONENT then
-									if source_sign_latched = '0' then
-										series_value := series_base + series_correction;
-									else
-										series_value := series_base - series_correction;
-									end if;
-									complete_small_series(series_value);
+									load_series_base(SERIES_BASE_UNADJUSTED);
+									series_product <= '0' & next_square;
+									series_serial_bits_remaining <= SERIES_WIDTH;
+									series_term_bits_remaining <= 128;
+									series_alignment_remaining <= series_shift;
+									series_carry_borrow <= '0';
+									series_term_subtract <= source_sign_latched;
+									state <= APPLY_SERIES_SQUARE;
 								else
-									series_multiplier <= series_source_significand;
 									-- The discarded square bits are below sticky throughout
 									-- the bounded cubic range.
 									series_multiplicand <= resize(next_square(
 										127 downto CUBE_SQUARE_LOW_BIT), 128);
-									cube_accumulator <= (others => '0');
-									series_index <= 0;
-									state <= CUBE_SMALL_ARGUMENT;
+									if hyperbolic_sine_latched = '1' or
+											hyperbolic_tangent_latched = '1' then
+										load_series_base(SERIES_BASE_UNADJUSTED);
+										series_multiplier <= series_source_significand;
+										cube_accumulator <= (others => '0');
+										series_index <= 0;
+										state <= CUBE_SMALL_ARGUMENT;
+									else
+										if source_sign_latched = '1' then
+											load_series_base(
+												SERIES_BASE_MINUS_REMAINDER_BOUND);
+										else
+											load_series_base(SERIES_BASE_UNADJUSTED);
+										end if;
+										series_product <= '0' & next_square;
+										series_serial_bits_remaining <= SERIES_WIDTH;
+										series_term_bits_remaining <= 128;
+										series_alignment_remaining <= series_shift;
+										series_carry_borrow <= '0';
+										series_term_subtract <= source_sign_latched;
+										state <= APPLY_SERIES_SQUARE;
+									end if;
 								end if;
 							end if;
 						else
@@ -1096,46 +1169,157 @@ begin
 							division_trial := division_trial - cube_divisor;
 						end if;
 						if series_index = 79 then
-							series_base := shift_left(resize(
-								series_source_significand, SERIES_WIDTH),
-								SERIES_NORMAL_BIT - 63);
-							series_shift := to_integer(series_exponent) + 68;
-							series_correction := shift_left(resize(
-								series_product(127 downto 0), SERIES_WIDTH),
-								series_shift);
 							cube_alignment_shift := 2 *
 								to_integer(series_exponent) + CUBE_ALIGNMENT_BASE;
-							series_cube_correction := shift_left(resize(
-								next_cube_quotient, SERIES_WIDTH),
-								cube_alignment_shift);
+							series_product <= resize(next_cube_quotient,
+								series_product'length);
+							series_serial_bits_remaining <= SERIES_WIDTH;
+							series_term_bits_remaining <= 80;
+							series_alignment_remaining <= cube_alignment_shift;
+							series_carry_borrow <= '0';
 							if hyperbolic_tangent_latched = '1' then
 								if division_trial = 0 then
-									series_value := series_base -
-										series_cube_correction + 1;
+									load_series_base(SERIES_BASE_PLUS_ONE);
 								else
-									series_value := series_base -
-										series_cube_correction - 1;
+									load_series_base(SERIES_BASE_MINUS_ONE);
 								end if;
-							elsif hyperbolic_sine_latched = '1' then
-								series_value := series_base + series_cube_correction;
-							elsif source_sign_latched = '0' then
-								series_value := series_base + series_correction +
-									series_cube_correction;
+								series_term_subtract <= '1';
 							else
-								-- Bias below the alternating fourth-order remainder;
-								-- sticky then represents the exact negative magnitude.
-								series_value := series_base - series_correction +
-									series_cube_correction -
-									shift_left(to_unsigned(1, SERIES_WIDTH),
-										NEGATIVE_REMAINDER_BOUND_BIT);
+								series_term_subtract <= '0';
 							end if;
-							complete_small_series(series_value);
+							state <= APPLY_SERIES_CUBE;
 						else
 							cube_accumulator <= '0' &
 								next_cube_quotient(79 downto 64);
 							series_multiplier <= next_cube_quotient(63 downto 0);
 							cube_remainder <= division_trial;
 							series_index <= series_index + 1;
+						end if;
+
+					when APPLY_SERIES_SQUARE | APPLY_SERIES_CUBE =>
+						-- The initial odd bit followed by two-bit steps rotates the
+						-- completed sum back into place without a second wide register.
+						serial_accumulator := series_accumulator;
+						serial_product := series_product;
+						serial_alignment := series_alignment_remaining;
+						serial_term_bits := series_term_bits_remaining;
+						serial_term_pair := (others => '0');
+						if series_serial_bits_remaining mod 2 = 1 then
+							serial_width := 1;
+							if serial_alignment > 0 then
+								serial_alignment := serial_alignment - 1;
+							elsif serial_term_bits > 0 then
+								serial_term_pair(0) := serial_product(0);
+								serial_product := shift_right(serial_product, 1);
+								serial_term_bits := serial_term_bits - 1;
+							end if;
+							serial_total := 0;
+							if serial_accumulator(0) = '1' then
+								serial_total := 1;
+							end if;
+							if series_term_subtract = '1' then
+								serial_subtrahend := 0;
+								if serial_term_pair(0) = '1' then
+									serial_subtrahend := serial_subtrahend + 1;
+								end if;
+								if series_carry_borrow = '1' then
+									serial_subtrahend := serial_subtrahend + 1;
+								end if;
+								if serial_total >= serial_subtrahend then
+									serial_result := serial_total - serial_subtrahend;
+									serial_next_carry_borrow := '0';
+								else
+									serial_result := serial_total + 2 - serial_subtrahend;
+									serial_next_carry_borrow := '1';
+								end if;
+							else
+								if serial_term_pair(0) = '1' then
+									serial_total := serial_total + 1;
+								end if;
+								if series_carry_borrow = '1' then
+									serial_total := serial_total + 1;
+								end if;
+								serial_result := serial_total mod 2;
+								if serial_total >= 2 then
+									serial_next_carry_borrow := '1';
+								else
+									serial_next_carry_borrow := '0';
+								end if;
+							end if;
+							serial_accumulator := shift_right(serial_accumulator, 1);
+							if serial_result = 1 then
+								serial_accumulator(SERIES_WIDTH - 1) := '1';
+							end if;
+						else
+							serial_width := 2;
+							if serial_alignment >= 2 then
+								serial_alignment := serial_alignment - 2;
+							elsif serial_alignment = 1 then
+								serial_alignment := 0;
+								if serial_term_bits > 0 then
+									serial_term_pair(1) := serial_product(0);
+									serial_product := shift_right(serial_product, 1);
+									serial_term_bits := serial_term_bits - 1;
+								end if;
+							elsif serial_term_bits = 1 then
+								serial_term_pair(0) := serial_product(0);
+								serial_product := shift_right(serial_product, 1);
+								serial_term_bits := 0;
+							elsif serial_term_bits >= 2 then
+								serial_term_pair := serial_product(1 downto 0);
+								serial_product := shift_right(serial_product, 2);
+								serial_term_bits := serial_term_bits - 2;
+							end if;
+							serial_total := to_integer(serial_accumulator(1 downto 0));
+							if series_term_subtract = '1' then
+								serial_subtrahend := to_integer(serial_term_pair);
+								if series_carry_borrow = '1' then
+									serial_subtrahend := serial_subtrahend + 1;
+								end if;
+								if serial_total >= serial_subtrahend then
+									serial_result := serial_total - serial_subtrahend;
+									serial_next_carry_borrow := '0';
+								else
+									serial_result := serial_total + 4 - serial_subtrahend;
+									serial_next_carry_borrow := '1';
+								end if;
+							else
+								serial_total := serial_total +
+									to_integer(serial_term_pair);
+								if series_carry_borrow = '1' then
+									serial_total := serial_total + 1;
+								end if;
+								serial_result := serial_total mod 4;
+								if serial_total >= 4 then
+									serial_next_carry_borrow := '1';
+								else
+									serial_next_carry_borrow := '0';
+								end if;
+							end if;
+							serial_accumulator := shift_right(serial_accumulator, 2);
+							serial_accumulator(SERIES_WIDTH - 1 downto
+								SERIES_WIDTH - 2) := to_unsigned(serial_result, 2);
+						end if;
+						series_accumulator <= serial_accumulator;
+						series_product <= serial_product;
+						series_alignment_remaining <= serial_alignment;
+						series_term_bits_remaining <= serial_term_bits;
+						series_carry_borrow <= serial_next_carry_borrow;
+						if series_serial_bits_remaining <= serial_width then
+							series_serial_bits_remaining <= 0;
+							if state = APPLY_SERIES_SQUARE and
+									to_integer(series_exponent) >=
+									SERIES_CUBIC_MIN_EXPONENT then
+								series_multiplier <= series_source_significand;
+								cube_accumulator <= (others => '0');
+								series_index <= 0;
+								state <= CUBE_SMALL_ARGUMENT;
+							else
+								complete_small_series(serial_accumulator);
+							end if;
+						else
+							series_serial_bits_remaining <=
+								series_serial_bits_remaining - serial_width;
 						end if;
 
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
