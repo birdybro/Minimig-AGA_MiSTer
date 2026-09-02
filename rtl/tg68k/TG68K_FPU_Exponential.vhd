@@ -136,9 +136,9 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal series_index : natural range 0 to 79 := 0;
 	signal cube_accumulator : unsigned(16 downto 0) := (others => '0');
 	signal cube_remainder : natural range 0 to 5 := 0;
-	signal series_accumulator : unsigned(SERIES_WIDTH - 1 downto 0) :=
+	signal series_accumulator : unsigned(SERIES_WIDTH downto 0) :=
 		(others => '0');
-	signal series_serial_bits_remaining : natural range 0 to SERIES_WIDTH := 0;
+	signal series_serial_bits_remaining : natural range 0 to SERIES_WIDTH + 1 := 0;
 	signal series_term_bits_remaining : natural range 0 to 128 := 0;
 	signal series_alignment_remaining : natural range 0 to 66 := 0;
 	signal series_carry_borrow : std_logic := '0';
@@ -650,7 +650,7 @@ begin
 					base_value(SERIES_NORMAL_BIT - 64 downto
 						NEGATIVE_REMAINDER_BOUND_BIT) := (others => '1');
 			end case;
-			series_accumulator <= base_value;
+			series_accumulator <= resize(base_value, series_accumulator'length);
 		end procedure;
 
 		procedure complete_small_series(
@@ -715,7 +715,7 @@ begin
 		variable series_shift : natural range 1 to 42;
 		variable cube_alignment_shift : natural range 54 to 66;
 		variable serial_term_pair : unsigned(1 downto 0);
-		variable serial_accumulator : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable serial_accumulator : unsigned(SERIES_WIDTH downto 0);
 		variable serial_product : unsigned(128 downto 0);
 		variable serial_alignment : natural range 0 to 66;
 		variable serial_term_bits : natural range 0 to 128;
@@ -723,7 +723,6 @@ begin
 		variable serial_subtrahend : natural range 0 to 4;
 		variable serial_result : natural range 0 to 3;
 		variable serial_next_carry_borrow : std_logic;
-		variable serial_width : natural range 1 to 2;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -1062,7 +1061,7 @@ begin
 										SERIES_CUBIC_MIN_EXPONENT then
 									load_series_base(SERIES_BASE_UNADJUSTED);
 									series_product <= '0' & next_square;
-									series_serial_bits_remaining <= SERIES_WIDTH;
+									series_serial_bits_remaining <= SERIES_WIDTH + 1;
 									series_term_bits_remaining <= 128;
 									series_alignment_remaining <= series_shift;
 									series_carry_borrow <= '0';
@@ -1088,7 +1087,7 @@ begin
 											load_series_base(SERIES_BASE_UNADJUSTED);
 										end if;
 										series_product <= '0' & next_square;
-										series_serial_bits_remaining <= SERIES_WIDTH;
+										series_serial_bits_remaining <= SERIES_WIDTH + 1;
 										series_term_bits_remaining <= 128;
 										series_alignment_remaining <= series_shift;
 										series_carry_borrow <= '0';
@@ -1140,7 +1139,7 @@ begin
 								to_integer(series_exponent) + CUBE_ALIGNMENT_BASE;
 							series_product <= resize(next_cube_quotient,
 								series_product'length);
-							series_serial_bits_remaining <= SERIES_WIDTH;
+							series_serial_bits_remaining <= SERIES_WIDTH + 1;
 							series_term_bits_remaining <= 80;
 							series_alignment_remaining <= cube_alignment_shift;
 							series_carry_borrow <= '0';
@@ -1164,115 +1163,66 @@ begin
 						end if;
 
 					when APPLY_SERIES_SQUARE | APPLY_SERIES_CUBE =>
-						-- The initial odd bit followed by two-bit steps rotates the
-						-- completed sum back into place without a second wide register.
+						-- The zero-extended even-width accumulator rotates two result
+						-- bits per cycle; the architectural series value is the low slice.
 						serial_accumulator := series_accumulator;
 						serial_product := series_product;
 						serial_alignment := series_alignment_remaining;
 						serial_term_bits := series_term_bits_remaining;
 						serial_term_pair := (others => '0');
-						if series_serial_bits_remaining mod 2 = 1 then
-							serial_width := 1;
-							if serial_alignment > 0 then
-								serial_alignment := serial_alignment - 1;
-							elsif serial_term_bits > 0 then
-								serial_term_pair(0) := serial_product(0);
+						if serial_alignment >= 2 then
+							serial_alignment := serial_alignment - 2;
+						elsif serial_alignment = 1 then
+							serial_alignment := 0;
+							if serial_term_bits > 0 then
+								serial_term_pair(1) := serial_product(0);
 								serial_product := shift_right(serial_product, 1);
 								serial_term_bits := serial_term_bits - 1;
 							end if;
-							serial_total := 0;
-							if serial_accumulator(0) = '1' then
-								serial_total := 1;
+						elsif serial_term_bits = 1 then
+							serial_term_pair(0) := serial_product(0);
+							serial_product := shift_right(serial_product, 1);
+							serial_term_bits := 0;
+						elsif serial_term_bits >= 2 then
+							serial_term_pair := serial_product(1 downto 0);
+							serial_product := shift_right(serial_product, 2);
+							serial_term_bits := serial_term_bits - 2;
+						end if;
+						serial_total := to_integer(serial_accumulator(1 downto 0));
+						if series_term_subtract = '1' then
+							serial_subtrahend := to_integer(serial_term_pair);
+							if series_carry_borrow = '1' then
+								serial_subtrahend := serial_subtrahend + 1;
 							end if;
-							if series_term_subtract = '1' then
-								serial_subtrahend := 0;
-								if serial_term_pair(0) = '1' then
-									serial_subtrahend := serial_subtrahend + 1;
-								end if;
-								if series_carry_borrow = '1' then
-									serial_subtrahend := serial_subtrahend + 1;
-								end if;
-								if serial_total >= serial_subtrahend then
-									serial_result := serial_total - serial_subtrahend;
-									serial_next_carry_borrow := '0';
-								else
-									serial_result := serial_total + 2 - serial_subtrahend;
-									serial_next_carry_borrow := '1';
-								end if;
+							if serial_total >= serial_subtrahend then
+								serial_result := serial_total - serial_subtrahend;
+								serial_next_carry_borrow := '0';
 							else
-								if serial_term_pair(0) = '1' then
-									serial_total := serial_total + 1;
-								end if;
-								if series_carry_borrow = '1' then
-									serial_total := serial_total + 1;
-								end if;
-								serial_result := serial_total mod 2;
-								if serial_total >= 2 then
-									serial_next_carry_borrow := '1';
-								else
-									serial_next_carry_borrow := '0';
-								end if;
-							end if;
-							serial_accumulator := shift_right(serial_accumulator, 1);
-							if serial_result = 1 then
-								serial_accumulator(SERIES_WIDTH - 1) := '1';
+								serial_result := serial_total + 4 - serial_subtrahend;
+								serial_next_carry_borrow := '1';
 							end if;
 						else
-							serial_width := 2;
-							if serial_alignment >= 2 then
-								serial_alignment := serial_alignment - 2;
-							elsif serial_alignment = 1 then
-								serial_alignment := 0;
-								if serial_term_bits > 0 then
-									serial_term_pair(1) := serial_product(0);
-									serial_product := shift_right(serial_product, 1);
-									serial_term_bits := serial_term_bits - 1;
-								end if;
-							elsif serial_term_bits = 1 then
-								serial_term_pair(0) := serial_product(0);
-								serial_product := shift_right(serial_product, 1);
-								serial_term_bits := 0;
-							elsif serial_term_bits >= 2 then
-								serial_term_pair := serial_product(1 downto 0);
-								serial_product := shift_right(serial_product, 2);
-								serial_term_bits := serial_term_bits - 2;
+							serial_total := serial_total +
+								to_integer(serial_term_pair);
+							if series_carry_borrow = '1' then
+								serial_total := serial_total + 1;
 							end if;
-							serial_total := to_integer(serial_accumulator(1 downto 0));
-							if series_term_subtract = '1' then
-								serial_subtrahend := to_integer(serial_term_pair);
-								if series_carry_borrow = '1' then
-									serial_subtrahend := serial_subtrahend + 1;
-								end if;
-								if serial_total >= serial_subtrahend then
-									serial_result := serial_total - serial_subtrahend;
-									serial_next_carry_borrow := '0';
-								else
-									serial_result := serial_total + 4 - serial_subtrahend;
-									serial_next_carry_borrow := '1';
-								end if;
+							serial_result := serial_total mod 4;
+							if serial_total >= 4 then
+								serial_next_carry_borrow := '1';
 							else
-								serial_total := serial_total +
-									to_integer(serial_term_pair);
-								if series_carry_borrow = '1' then
-									serial_total := serial_total + 1;
-								end if;
-								serial_result := serial_total mod 4;
-								if serial_total >= 4 then
-									serial_next_carry_borrow := '1';
-								else
-									serial_next_carry_borrow := '0';
-								end if;
+								serial_next_carry_borrow := '0';
 							end if;
-							serial_accumulator := shift_right(serial_accumulator, 2);
-							serial_accumulator(SERIES_WIDTH - 1 downto
-								SERIES_WIDTH - 2) := to_unsigned(serial_result, 2);
 						end if;
+						serial_accumulator := shift_right(serial_accumulator, 2);
+						serial_accumulator(SERIES_WIDTH downto
+							SERIES_WIDTH - 1) := to_unsigned(serial_result, 2);
 						series_accumulator <= serial_accumulator;
 						series_product <= serial_product;
 						series_alignment_remaining <= serial_alignment;
 						series_term_bits_remaining <= serial_term_bits;
 						series_carry_borrow <= serial_next_carry_borrow;
-						if series_serial_bits_remaining <= serial_width then
+						if series_serial_bits_remaining <= 2 then
 							series_serial_bits_remaining <= 0;
 							if state = APPLY_SERIES_SQUARE and
 									to_integer(series_exponent) >=
@@ -1282,11 +1232,12 @@ begin
 								series_index <= 0;
 								state <= CUBE_SMALL_ARGUMENT;
 							else
-								complete_small_series(serial_accumulator);
+								complete_small_series(serial_accumulator(
+									SERIES_WIDTH - 1 downto 0));
 							end if;
 						else
 							series_serial_bits_remaining <=
-								series_serial_bits_remaining - serial_width;
+								series_serial_bits_remaining - 2;
 						end if;
 
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
