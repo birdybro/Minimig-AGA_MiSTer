@@ -148,7 +148,6 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal power_multiplicand : unsigned(191 downto 0) := (others => '0');
 	signal power_product : unsigned(384 downto 0) := (others => '0');
 	signal power_iteration : natural range 0 to 191 := 0;
-	signal source_multiplicand : unsigned(383 downto 0) := (others => '0');
 	signal source_product : unsigned(448 downto 0) := (others => '0');
 	signal source_iteration : natural range 0 to 63 := 0;
 	-- Keep the wide product stationary while serially extracting the scaled
@@ -330,7 +329,6 @@ begin
 				power_multiplicand <= (others => '0');
 				power_product <= (others => '0');
 				power_iteration <= 0;
-				source_multiplicand <= (others => '0');
 				source_product <= (others => '0');
 				source_iteration <= 0;
 				scaled_integer_register <= (others => '0');
@@ -427,7 +425,6 @@ begin
 							power_product(191 downto 0), 1);
 						power_product <= next_power_product;
 						if power_iteration = 191 then
-							source_multiplicand <= next_power_product(383 downto 0);
 							source_product <= resize(
 								unsigned(source_latched(63 downto 0)), 449);
 							source_iteration <= 0;
@@ -440,7 +437,7 @@ begin
 						source_accumulator_sum := source_product(448 downto 64);
 						if source_product(0) = '1' then
 							source_accumulator_sum := source_accumulator_sum +
-								resize(source_multiplicand, 385);
+								power_product;
 						end if;
 						next_source_product := shift_right(source_accumulator_sum &
 							source_product(63 downto 0), 1);
