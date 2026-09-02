@@ -134,9 +134,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	end function;
 
 	signal state : exponential_state_t := IDLE;
-	signal fraction_register : unsigned(FRACTION_BITS - 1 downto 0) :=
-		(others => '0');
-	signal product_accumulator : unsigned(FRACTION_BITS downto 0) :=
+	-- The upper accumulator and lower multiplier shift around the fixed LN2.
+	signal log2_product : unsigned(2 * FRACTION_BITS downto 0) :=
 		(others => '0');
 	signal multiply_index : natural range 0 to FRACTION_BITS - 1 := 0;
 	signal scale_magnitude_register : unsigned(FIXED_WIDTH - 1 downto 0) :=
@@ -216,8 +215,8 @@ begin
 
 	arithmetic_operands : process(state, series_product, series_multiplier,
 		series_multiplicand, cube_accumulator, scale_accumulator,
-		scale_magnitude_register, scale_index, product_accumulator,
-		fraction_register, multiply_index, cordic_x, cordic_y, cordic_z,
+		scale_magnitude_register, scale_index, log2_product,
+		cordic_x, cordic_y, cordic_z,
 		cordic_iteration, cordic_z_previous, cordic_angle_previous,
 		cordic_direction_previous, subtraction_value, subtraction_one)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -257,9 +256,9 @@ begin
 						ARITHMETIC_WIDTH);
 				end if;
 			when MULTIPLY_LOG2 =>
-				arithmetic_left_a <= resize(product_accumulator,
-					ARITHMETIC_WIDTH);
-				if fraction_register(multiply_index) = '1' then
+				arithmetic_left_a <= resize(log2_product(
+					2 * FRACTION_BITS downto FRACTION_BITS), ARITHMETIC_WIDTH);
+				if log2_product(0) = '1' then
 					arithmetic_right_a <= resize(LN2_FIXED,
 						ARITHMETIC_WIDTH);
 				end if;
@@ -640,8 +639,7 @@ begin
 						to_signed(exponent_value, 17), minus_one);
 				end if;
 			else
-				fraction_register <= fraction_value;
-				product_accumulator <= (others => '0');
+				log2_product <= resize(fraction_value, log2_product'length);
 				multiply_index <= 0;
 				state <= MULTIPLY_LOG2;
 			end if;
@@ -684,6 +682,7 @@ begin
 		variable exponent_value : integer range -65536 to 65535;
 		variable selected_nan : fpu_extended_t;
 		variable next_accumulator : unsigned(FRACTION_BITS downto 0);
+		variable next_log2_product : unsigned(2 * FRACTION_BITS downto 0);
 		variable next_scale : unsigned(FIXED_WIDTH + 2 downto 0);
 		variable next_angle : cordic_value_t;
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
@@ -715,8 +714,7 @@ begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
-				fraction_register <= (others => '0');
-				product_accumulator <= (others => '0');
+				log2_product <= (others => '0');
 				multiply_index <= 0;
 				scale_magnitude_register <= (others => '0');
 				scale_accumulator <= (others => '0');
@@ -769,8 +767,7 @@ begin
 							source_significand := unsigned(source(63 downto 0));
 							selected_nan := source;
 							selected_nan(62) := '1';
-							fraction_register <= (others => '0');
-							product_accumulator <= (others => '0');
+							log2_product <= (others => '0');
 							multiply_index <= 0;
 							scale_magnitude_register <= (others => '0');
 							scale_accumulator <= (others => '0');
@@ -1209,9 +1206,11 @@ begin
 						end if;
 
 					when MULTIPLY_LOG2 =>
-						next_accumulator := shift_right(arithmetic_result_a(
-							FRACTION_BITS downto 0), 1);
-						product_accumulator <= next_accumulator;
+						next_log2_product := shift_right(arithmetic_result_a(
+							FRACTION_BITS downto 0) & log2_product(
+								FRACTION_BITS - 1 downto 0), 1);
+						next_accumulator := next_log2_product(
+							2 * FRACTION_BITS downto FRACTION_BITS);
 						if multiply_index = FRACTION_BITS - 1 then
 							if next_accumulator = 0 then
 								unit_result := (others => '0');
@@ -1243,6 +1242,7 @@ begin
 								state <= ROTATE_CORDIC_XY;
 							end if;
 						else
+							log2_product <= next_log2_product;
 							multiply_index <= multiply_index + 1;
 						end if;
 
