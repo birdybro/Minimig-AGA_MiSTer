@@ -185,11 +185,14 @@ def expected_latency(source: int, k_factor: int) -> int:
     selected_k = min(k_factor, 17)
     if selected_k <= 0 and estimate < selected_k:
         attempts.append(selected_k)
-    shifts = []
+    alignment_cycles = []
     for exponent in attempts:
         shift = approximate_scale(source, exponent)[1]
-        shifts.append(min(-shift, 448) if shift < 0 else shift)
-    return 79 + sum(261 + shift for shift in shifts)
+        if shift < 0:
+            alignment_cycles.append(max(64, min(-shift, 448)))
+        else:
+            alignment_cycles.append(64)
+    return 79 + sum(261 + cycles for cycles in alignment_cycles)
 
 
 def extended_from_fraction(value: Fraction) -> int:

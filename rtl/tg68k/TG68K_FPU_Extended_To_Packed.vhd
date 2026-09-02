@@ -42,7 +42,7 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 
 	type converter_state_t is (IDLE, START_POWER, READ_CHUNK,
 		CAPTURE_CHUNK, CAPTURE_RESIDUAL, MULTIPLY_POWER, MULTIPLY_SOURCE,
-		ALIGN_RIGHT, ALIGN_LEFT, WAIT_FOR_FACTORS, EVALUATE_SCALE, CONVERT_TO_BCD,
+		ALIGN_PRODUCT, WAIT_FOR_FACTORS, EVALUATE_SCALE, CONVERT_TO_BCD,
 		ROUND_AND_PACK, CONVERT_EXPONENT_TO_BCD, PACK_EXPONENT, COMPLETE);
 	subtype bcd_digit_t is unsigned(3 downto 0);
 	function highest_set_bit(value : unsigned(63 downto 0)) return natural is
@@ -151,9 +151,13 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal source_multiplier : unsigned(63 downto 0) := (others => '0');
 	signal source_product : unsigned(447 downto 0) := (others => '0');
 	signal source_iteration : natural range 0 to 63 := 0;
-	signal aligned_product : unsigned(447 downto 0) := (others => '0');
+	-- Keep the wide product stationary while serially extracting the scaled
+	-- low word and sticky bit; a bidirectional 448-bit shift mux is larger.
+	signal scaled_integer_register : unsigned(63 downto 0) := (others => '0');
 	signal alignment_sticky : std_logic := '0';
-	signal shift_remaining : natural range 0 to 511 := 0;
+	signal alignment_shift : integer range -448 to 448 := 0;
+	signal alignment_iteration : natural range 0 to 447 := 0;
+	signal alignment_limit : natural range 63 to 447 := 63;
 	signal factor_value : unsigned(63 downto 0) := (others => '0');
 	signal factor_quotient : unsigned(63 downto 0) := (others => '0');
 	signal factor_remainder : unsigned(2 downto 0) := (others => '0');
@@ -278,8 +282,9 @@ begin
 		variable next_power_product : unsigned(383 downto 0);
 		variable next_source_product : unsigned(447 downto 0);
 		variable shift_value : integer range -32768 to 32767;
-		variable next_aligned : unsigned(447 downto 0);
+		variable next_scaled_integer : unsigned(63 downto 0);
 		variable next_sticky : std_logic;
+		variable source_index : integer range -448 to 895;
 		variable scaled_integer : unsigned(63 downto 0);
 		variable scale_lsb_exponent : integer range -5017 to 4983;
 		variable scale_is_exact : boolean;
@@ -328,9 +333,11 @@ begin
 				source_multiplier <= (others => '0');
 				source_product <= (others => '0');
 				source_iteration <= 0;
-				aligned_product <= (others => '0');
+				scaled_integer_register <= (others => '0');
 				alignment_sticky <= '0';
-				shift_remaining <= 0;
+				alignment_shift <= 0;
+				alignment_iteration <= 0;
+				alignment_limit <= 63;
 				binary_to_bcd <= (others => '0');
 				bcd_value <= (others => '0');
 				bcd_iteration <= 0;
@@ -448,42 +455,51 @@ begin
 									integer(power_bit_sum) + 4 -
 									2 * POWER_PRECISION;
 							end if;
-							aligned_product <= next_source_product;
+							scaled_integer_register <= (others => '0');
 							alignment_sticky <= '0';
-							if shift_value < 0 then
-								if shift_value <= -448 then
-									shift_remaining <= 448;
-								else
-									shift_remaining <= natural(-shift_value);
-								end if;
-								state <= ALIGN_RIGHT;
-							elsif shift_value > 0 then
-								shift_remaining <= natural(shift_value);
-								state <= ALIGN_LEFT;
+							alignment_iteration <= 0;
+							if shift_value <= -448 then
+								alignment_shift <= -448;
+								alignment_limit <= 447;
+							elsif shift_value < -64 then
+								alignment_shift <= shift_value;
+								alignment_limit <= natural(-shift_value) - 1;
+							elsif shift_value > 448 then
+								alignment_shift <= 448;
+								alignment_limit <= 63;
 							else
-								state <= EVALUATE_SCALE;
+								alignment_shift <= shift_value;
+								alignment_limit <= 63;
 							end if;
+							state <= ALIGN_PRODUCT;
 						else
 							source_iteration <= source_iteration + 1;
 						end if;
 
-					when ALIGN_RIGHT =>
-						next_aligned := shift_right(aligned_product, 1);
-						next_sticky := alignment_sticky or aligned_product(0);
-						aligned_product <= next_aligned;
-						alignment_sticky <= next_sticky;
-						if shift_remaining = 1 then
-							state <= EVALUATE_SCALE;
-						else
-							shift_remaining <= shift_remaining - 1;
+					when ALIGN_PRODUCT =>
+						next_scaled_integer := scaled_integer_register;
+						if alignment_iteration <= 63 then
+							source_index := integer(alignment_iteration) -
+								alignment_shift;
+							if source_index >= 0 and source_index <= 447 then
+								next_scaled_integer(alignment_iteration) :=
+									source_product(source_index);
+							else
+								next_scaled_integer(alignment_iteration) := '0';
+							end if;
 						end if;
-
-					when ALIGN_LEFT =>
-						aligned_product <= shift_left(aligned_product, 1);
-						if shift_remaining = 1 then
+						next_sticky := alignment_sticky;
+						if alignment_shift < 0 and integer(alignment_iteration) <
+								-alignment_shift then
+							next_sticky := next_sticky or
+								source_product(alignment_iteration);
+						end if;
+						scaled_integer_register <= next_scaled_integer;
+						alignment_sticky <= next_sticky;
+						if alignment_iteration = alignment_limit then
 							state <= EVALUATE_SCALE;
 						else
-							shift_remaining <= shift_remaining - 1;
+							alignment_iteration <= alignment_iteration + 1;
 						end if;
 
 					when WAIT_FOR_FACTORS =>
@@ -495,7 +511,7 @@ begin
 						if factor_done = '0' then
 							state <= WAIT_FOR_FACTORS;
 						else
-							scaled_integer := aligned_product(63 downto 0);
+							scaled_integer := scaled_integer_register;
 							scale_lsb_exponent := scale_exponent - 17;
 							scale_is_exact := false;
 							if scale_lsb_exponent >= 0 then
