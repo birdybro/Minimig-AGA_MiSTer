@@ -54,6 +54,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
 	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
+	constant RANGE_SHIFT_TAIL_CHUNK : natural := 4;
 	constant NORMALIZATION_SHIFT_CHUNK : natural := 48;
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
@@ -593,16 +594,50 @@ begin
 						end if;
 
 					when ALIGN_RANGE_TAIL =>
-						if range_shift_left = '1' then
-							aligned_product := shift_left(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), range_shift_tail);
+						if range_shift_tail >= RANGE_SHIFT_TAIL_CHUNK then
+							if range_shift_left = '1' then
+								aligned_product := shift_left(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0),
+									RANGE_SHIFT_TAIL_CHUNK);
+							else
+								aligned_product := shift_right(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0),
+									RANGE_SHIFT_TAIL_CHUNK);
+							end if;
+						elsif range_shift_tail = 3 then
+							if range_shift_left = '1' then
+								aligned_product := shift_left(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 3);
+							else
+								aligned_product := shift_right(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 3);
+							end if;
+						elsif range_shift_tail = 2 then
+							if range_shift_left = '1' then
+								aligned_product := shift_left(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 2);
+							else
+								aligned_product := shift_right(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 2);
+							end if;
 						else
-							aligned_product := shift_right(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), range_shift_tail);
+							if range_shift_left = '1' then
+								aligned_product := shift_left(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 1);
+							else
+								aligned_product := shift_right(reciprocal_product(
+									PRODUCT_WIDTH - 1 downto 0), 1);
+							end if;
 						end if;
 						reciprocal_product <= resize(aligned_product,
 							PRODUCT_WIDTH + 1);
-						state <= REDUCE_RANGE;
+						if range_shift_tail <= RANGE_SHIFT_TAIL_CHUNK then
+							range_shift_tail <= 0;
+							state <= REDUCE_RANGE;
+						else
+							range_shift_tail <= range_shift_tail -
+								RANGE_SHIFT_TAIL_CHUNK;
+						end if;
 
 					when REDUCE_RANGE =>
 						-- The aligned product is x*(2/pi) in Q144.  Rounding it to
