@@ -64,10 +64,13 @@ architecture rtl of TG68K_FPU_Logarithm is
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_ATANH_RATIO, DIVIDE_ATANH_RATIO,
-			NORMALIZE_INPUT, START_CORDIC, LOAD_CORDIC_ANGLE, WAIT_CORDIC,
+			ALIGN_SOURCE, NORMALIZE_INPUT, START_CORDIC,
+			LOAD_CORDIC_ANGLE, WAIT_CORDIC,
 			MULTIPLY_LN2, SCALE_LOGARITHM_BASE,
 			LOAD_FIXED_RESULT, NORMALIZE_RESULT, FORMAT_SMALL_SERIES_RESULT,
 			COMPLETE);
+	type input_alignment_target_t is
+		(ALIGN_ATANH_SOURCE, ALIGN_LOGNP1_SOURCE, ALIGN_LOGNP1_UNIT);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 
 	constant LN2_FIXED : unsigned(FRACTION_BITS - 1 downto 0) :=
@@ -119,6 +122,9 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal input_mantissa : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal input_exponent : signed(16 downto 0) := (others => '0');
+	signal input_alignment_target : input_alignment_target_t :=
+		ALIGN_ATANH_SOURCE;
+	signal input_alignment_remaining : natural range 0 to FRACTION_BITS := 0;
 	signal cordic_source_x : cordic_value_t := (others => '0');
 	signal cordic_source_y : cordic_value_t := (others => '0');
 	signal atanh_numerator : unsigned(CORDIC_WIDTH downto 0) :=
@@ -392,6 +398,17 @@ begin
 			state <= NORMALIZE_ATANH_RATIO;
 		end procedure;
 
+		procedure begin_input_alignment(
+				constant value : in unsigned(CORDIC_WIDTH - 1 downto 0);
+				constant shift_count : in natural;
+				constant target : in input_alignment_target_t) is
+		begin
+			input_mantissa <= value;
+			input_alignment_remaining <= shift_count;
+			input_alignment_target <= target;
+			state <= ALIGN_SOURCE;
+		end procedure;
+
 		procedure write_small_series_result(
 				constant series_result : in unsigned(SERIES_WIDTH - 1 downto 0);
 				constant result_exponent : in signed(16 downto 0)) is
@@ -450,7 +467,6 @@ begin
 		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
-		variable atanh_aligned_source : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_shifted_denominator : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_next_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -479,6 +495,8 @@ begin
 				cube_shift_count <= 0;
 				input_mantissa <= (others => '0');
 				input_exponent <= (others => '0');
+				input_alignment_target <= ALIGN_ATANH_SOURCE;
+				input_alignment_remaining <= 0;
 				cordic_source_x <= (others => '0');
 				cordic_source_y <= (others => '0');
 				atanh_numerator <= (others => '0');
@@ -602,11 +620,9 @@ begin
 										end if;
 									else
 										base_status(1) <= '1';
-										atanh_aligned_source := shift_left(resize(
-											source_significand, CORDIC_WIDTH + 1), 33);
-										atanh_aligned_source := shift_right(
-											atanh_aligned_source, -source_exponent);
-										begin_atanh_ratio(atanh_aligned_source);
+										begin_input_alignment(shift_left(resize(
+											source_significand, CORDIC_WIDTH), 8),
+											source_exponent + 25, ALIGN_ATANH_SOURCE);
 									end if;
 								elsif add_one = '0' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_QUIET_NAN;
@@ -702,37 +718,67 @@ begin
 									aligned_unit := (others => '0');
 									aligned_unit(FRACTION_BITS) := '1';
 									if source_exponent >= 0 then
-										initial_mantissa := aligned_source;
 										if source_exponent <= FRACTION_BITS then
-											initial_mantissa := initial_mantissa +
-												shift_right(aligned_unit, source_exponent);
-										end if;
-										if initial_mantissa(FRACTION_BITS + 1) = '1' then
-											initial_mantissa := shift_right(
-												initial_mantissa, 1);
-											begin_cordic(initial_mantissa,
-												to_signed(source_exponent + 1, 17), logarithm_base);
+											series_source_significand <= source_significand;
+											input_exponent <= to_signed(source_exponent, 17);
+											begin_input_alignment(aligned_unit,
+												source_exponent, ALIGN_LOGNP1_UNIT);
 										else
-											begin_cordic(initial_mantissa,
+											begin_cordic(aligned_source,
 												to_signed(source_exponent, 17), logarithm_base);
 										end if;
 									else
-										aligned_source := shift_left(resize(
-											source_significand, CORDIC_WIDTH),
-											source_exponent + 33);
-										if source(79) = '0' then
-											initial_mantissa := aligned_unit + aligned_source;
-											begin_cordic(initial_mantissa,
-												to_signed(0, 17), logarithm_base);
-										else
-											initial_mantissa := aligned_unit - aligned_source;
-											input_mantissa <= initial_mantissa;
-											input_exponent <= to_signed(0, 17);
-											state <= NORMALIZE_INPUT;
-										end if;
+										begin_input_alignment(shift_left(resize(
+											source_significand, CORDIC_WIDTH), 8),
+											source_exponent + 25, ALIGN_LOGNP1_SOURCE);
 									end if;
 								end if;
 							end if;
+						end if;
+
+					when ALIGN_SOURCE =>
+						next_input := input_mantissa;
+						if input_alignment_remaining > 0 then
+							if input_alignment_target = ALIGN_LOGNP1_UNIT then
+								next_input := shift_right(input_mantissa, 1);
+							else
+								next_input := shift_left(input_mantissa, 1);
+							end if;
+							input_mantissa <= next_input;
+						end if;
+						if input_alignment_remaining <= 1 then
+							case input_alignment_target is
+								when ALIGN_ATANH_SOURCE =>
+									begin_atanh_ratio(resize(next_input,
+										CORDIC_WIDTH + 1));
+								when ALIGN_LOGNP1_SOURCE =>
+									aligned_unit := (others => '0');
+									aligned_unit(FRACTION_BITS) := '1';
+									if source_sign_latched = '0' then
+										initial_mantissa := aligned_unit + next_input;
+										begin_cordic(initial_mantissa,
+											to_signed(0, 17), logarithm_base_latched);
+									else
+										initial_mantissa := aligned_unit - next_input;
+										input_mantissa <= initial_mantissa;
+										input_exponent <= to_signed(0, 17);
+										state <= NORMALIZE_INPUT;
+									end if;
+								when ALIGN_LOGNP1_UNIT =>
+									initial_mantissa := shift_left(resize(
+										series_source_significand, CORDIC_WIDTH), 33) +
+										next_input;
+									if initial_mantissa(FRACTION_BITS + 1) = '1' then
+										begin_cordic(shift_right(initial_mantissa, 1),
+											input_exponent + 1, logarithm_base_latched);
+									else
+										begin_cordic(initial_mantissa, input_exponent,
+											logarithm_base_latched);
+									end if;
+							end case;
+						else
+							input_alignment_remaining <=
+								input_alignment_remaining - 1;
 						end if;
 
 					when NORMALIZE_SERIES_ARGUMENT =>
