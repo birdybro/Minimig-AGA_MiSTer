@@ -182,8 +182,12 @@ begin
 				end if;
 			else
 				fractional_bits := 63 - result_exponent;
-				integral_significand := shift_left(shift_right(
-					normalized_significand, fractional_bits), fractional_bits);
+				integral_significand := normalized_significand;
+				for bit_index in integral_significand'range loop
+					if bit_index < fractional_bits then
+						integral_significand(bit_index) := '0';
+					end if;
+				end loop;
 				fractional_value := normalized_significand -
 					integral_significand;
 				if fractional_value /= 0 then
