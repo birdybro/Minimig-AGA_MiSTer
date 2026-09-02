@@ -120,6 +120,11 @@ begin
 			when x"00006004" => memory_read_data <= x"A000";
 			when x"00006006" | x"00006008" => memory_read_data <= x"0000";
 			when x"0000600A" => memory_read_data <= x"0005";
+			when x"00008800" => memory_read_data <= x"3F8F";
+			when x"00008802" => memory_read_data <= x"0000";
+			when x"00008804" => memory_read_data <= x"8000";
+			when x"00008806" | x"00008808" | x"0000880A" =>
+				memory_read_data <= x"0000";
 			when x"00009000" => memory_read_data <= x"BFC0";
 			when x"00009002" => memory_read_data <= x"0000";
 			when x"00009004" => memory_read_data <= x"3F00";
@@ -1458,6 +1463,26 @@ begin
 			fp_registers(5) = x"3FFF860A91C16B9B2C23" and
 			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
 			report "memory single FACOS system result mismatch" severity failure;
+
+		clear_observations;
+		effective_address <= x"00008800";
+		function_code <= "101";
+		start_instruction(x"F210", x"4980", '1');
+		command_word <= x"0000";
+		wait_done;
+		assert trace_count = 6 and fp_registers(3) =
+			x"3F8F8000000000000000"
+			report "FACOS alignment-boundary setup mismatch" severity failure;
+
+		clear_observations;
+		start_instruction(x"F200", x"0F1C", '1');
+		command_word <= x"0000";
+		wait_done(628);
+		assert trace_count = 0 and
+			fp_registers(6) = x"3FFFC90FDAA22168C235" and
+			fpsr(31 downto 28) = "0000" and fpsr(15 downto 8) = x"02"
+			report "register FACOS alignment-boundary timing mismatch"
+			severity failure;
 
 		clear_observations;
 		effective_address <= x"00009004";
