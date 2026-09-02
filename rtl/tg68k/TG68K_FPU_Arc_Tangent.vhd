@@ -44,7 +44,8 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	constant TINY_EXPONENT : integer := -34;
 	constant ARC_SINE_TINY_EXPONENT : integer := -33;
 	type arc_tangent_state_t is (IDLE, MULTIPLY_ARC_SINE_SOURCE,
-		SQUARE_ROOT_ARC_SINE_COMPLEMENT, LOAD_CORDIC_ANGLE, CORDIC,
+		SQUARE_ROOT_ARC_SINE_COMPLEMENT, LOAD_CORDIC_ANGLE,
+		ROTATE_CORDIC_XY, ROTATE_CORDIC_Z, FINISH_CORDIC,
 		NORMALIZE_RESULT, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type cordic_angle_rom_t is array(0 to 63) of cordic_value_t;
@@ -136,6 +137,9 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	signal cordic_angle_address : natural range 0 to 47 := 0;
 	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
 	signal cordic_shift_angle : cordic_value_t := (others => '0');
+	signal cordic_z_previous : cordic_value_t := (others => '0');
+	signal cordic_angle_previous : cordic_value_t := (others => '0');
+	signal cordic_direction_previous : std_logic := '0';
 	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalization_exponent : signed(16 downto 0) := (others => '0');
@@ -154,6 +158,14 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 		(others => '0');
 	signal root_value : unsigned(FRACTION_BITS downto 0) := (others => '0');
 	signal root_iteration : natural range 0 to FRACTION_BITS := 0;
+	signal arithmetic_left_a : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_a : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal arithmetic_left_b : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal arithmetic_right_b : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal arithmetic_subtract_a : std_logic;
+	signal arithmetic_subtract_b : std_logic;
+	signal arithmetic_result_a : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal arithmetic_result_b : unsigned(CORDIC_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -174,6 +186,57 @@ begin
 	round_input.significand <= intermediate_significand;
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
+
+	arithmetic_operands : process(state, cordic_x, cordic_y,
+		cordic_iteration, cordic_z_previous, cordic_angle_previous,
+		cordic_direction_previous)
+	begin
+		arithmetic_left_a <= (others => '0');
+		arithmetic_right_a <= (others => '0');
+		arithmetic_left_b <= (others => '0');
+		arithmetic_right_b <= (others => '0');
+		arithmetic_subtract_a <= '0';
+		arithmetic_subtract_b <= '0';
+		case state is
+			when ROTATE_CORDIC_XY =>
+				arithmetic_left_a <= unsigned(cordic_x);
+				arithmetic_left_b <= unsigned(cordic_y);
+				if cordic_y > 0 then
+					arithmetic_right_a <= unsigned(shift_right(cordic_y,
+						cordic_iteration));
+					arithmetic_right_b <= unsigned(shift_right(cordic_x,
+						cordic_iteration));
+					arithmetic_subtract_b <= '1';
+				elsif cordic_y < 0 then
+					arithmetic_right_a <= unsigned(shift_right(cordic_y,
+						cordic_iteration));
+					arithmetic_right_b <= unsigned(shift_right(cordic_x,
+						cordic_iteration));
+					arithmetic_subtract_a <= '1';
+				end if;
+			when ROTATE_CORDIC_Z =>
+				arithmetic_left_a <= unsigned(cordic_z_previous);
+				arithmetic_right_a <= unsigned(cordic_angle_previous);
+				arithmetic_subtract_a <= not cordic_direction_previous;
+			when others => null;
+		end case;
+	end process;
+
+	arithmetic_add_subtract : process(arithmetic_subtract_a,
+		arithmetic_left_a, arithmetic_right_a, arithmetic_subtract_b,
+		arithmetic_left_b, arithmetic_right_b)
+	begin
+		if arithmetic_subtract_a = '1' then
+			arithmetic_result_a <= arithmetic_left_a - arithmetic_right_a;
+		else
+			arithmetic_result_a <= arithmetic_left_a + arithmetic_right_a;
+		end if;
+		if arithmetic_subtract_b = '1' then
+			arithmetic_result_b <= arithmetic_left_b - arithmetic_right_b;
+		else
+			arithmetic_result_b <= arithmetic_left_b + arithmetic_right_b;
+		end if;
+	end process;
 
 	angle_rom_read : process(clk)
 	begin
@@ -252,9 +315,6 @@ begin
 		variable trial_divisor : unsigned(FRACTION_BITS + 2 downto 0);
 		variable next_remainder : unsigned(FRACTION_BITS + 2 downto 0);
 		variable next_root : unsigned(FRACTION_BITS downto 0);
-		variable next_x : cordic_value_t;
-		variable next_y : cordic_value_t;
-		variable next_z : cordic_value_t;
 		variable next_angle : cordic_value_t;
 		variable final_significand : fpu_significand_grs_t;
 		variable next_normalization : unsigned(CORDIC_WIDTH - 1 downto 0);
@@ -271,6 +331,9 @@ begin
 				cordic_iteration <= 0;
 				cordic_angle_address <= 0;
 				cordic_shift_angle <= (others => '0');
+				cordic_z_previous <= (others => '0');
+				cordic_angle_previous <= (others => '0');
+				cordic_direction_previous <= '0';
 				normalization_value <= (others => '0');
 				normalization_exponent <= (others => '0');
 				arc_sine_magnitude <= (others => '0');
@@ -305,6 +368,9 @@ begin
 							cordic_iteration <= 0;
 							cordic_angle_address <= 0;
 							cordic_shift_angle <= (others => '0');
+							cordic_z_previous <= (others => '0');
+							cordic_angle_previous <= (others => '0');
+							cordic_direction_previous <= '0';
 							normalization_value <= (others => '0');
 							normalization_exponent <= (others => '0');
 							arc_sine_magnitude <= (others => '0');
@@ -499,58 +565,59 @@ begin
 						end if;
 
 					when LOAD_CORDIC_ANGLE =>
-						state <= CORDIC;
+						state <= ROTATE_CORDIC_XY;
 
-					when CORDIC =>
+					when ROTATE_CORDIC_XY =>
 						if cordic_iteration <= 47 then
 							next_angle := cordic_angle_rom_data;
 						else
 							next_angle := cordic_shift_angle;
 						end if;
-						next_x := cordic_x;
-						next_y := cordic_y;
-						next_z := cordic_z;
+						cordic_z_previous <= cordic_z;
 						if cordic_y > 0 then
-							next_x := cordic_x + shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y - shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z + next_angle;
+							cordic_angle_previous <= next_angle;
+							cordic_direction_previous <= '1';
 						elsif cordic_y < 0 then
-							next_x := cordic_x - shift_right(cordic_y,
-								cordic_iteration);
-							next_y := cordic_y + shift_right(cordic_x,
-								cordic_iteration);
-							next_z := cordic_z - next_angle;
+							cordic_angle_previous <= next_angle;
+							cordic_direction_previous <= '0';
+						else
+							cordic_angle_previous <= (others => '0');
+							cordic_direction_previous <= '1';
 						end if;
-						cordic_x <= next_x;
-						cordic_y <= next_y;
-						cordic_z <= next_z;
+						cordic_x <= signed(arithmetic_result_a);
+						cordic_y <= signed(arithmetic_result_b);
+						if cordic_iteration < 47 then
+							cordic_angle_address <= cordic_iteration + 1;
+						elsif cordic_iteration = 47 then
+							next_angle := (others => '0');
+							next_angle(FRACTION_BITS - 48) := '1';
+							cordic_shift_angle <= next_angle;
+						elsif cordic_iteration < FRACTION_BITS then
+							cordic_shift_angle <= shift_right(
+								cordic_shift_angle, 1);
+						end if;
+						state <= ROTATE_CORDIC_Z;
+
+					when ROTATE_CORDIC_Z =>
+						cordic_z <= signed(arithmetic_result_a);
 						if cordic_iteration = FRACTION_BITS then
-							if arc_cosine_mode = '1' then
-								if result_sign = '1' then
-									begin_fixed_angle(PI_BY_TWO_FIXED +
-										unsigned(next_z), '0');
-								else
-									begin_fixed_angle(PI_BY_TWO_FIXED -
-										unsigned(next_z), '0');
-								end if;
-							else
-								begin_fixed_angle(unsigned(next_z), result_sign);
-							end if;
+							state <= FINISH_CORDIC;
 						else
 							cordic_iteration <= cordic_iteration + 1;
-							if cordic_iteration < 47 then
-								cordic_angle_address <= cordic_iteration + 1;
-								state <= LOAD_CORDIC_ANGLE;
-							elsif cordic_iteration = 47 then
-								next_angle := (others => '0');
-								next_angle(FRACTION_BITS - 48) := '1';
-								cordic_shift_angle <= next_angle;
+							state <= ROTATE_CORDIC_XY;
+						end if;
+
+					when FINISH_CORDIC =>
+						if arc_cosine_mode = '1' then
+							if result_sign = '1' then
+								begin_fixed_angle(PI_BY_TWO_FIXED +
+									unsigned(cordic_z), '0');
 							else
-								cordic_shift_angle <= shift_right(
-									cordic_shift_angle, 1);
+								begin_fixed_angle(PI_BY_TWO_FIXED -
+									unsigned(cordic_z), '0');
 							end if;
+						else
+							begin_fixed_angle(unsigned(cordic_z), result_sign);
 						end if;
 
 					when NORMALIZE_RESULT =>

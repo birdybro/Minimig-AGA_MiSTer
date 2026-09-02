@@ -180,7 +180,7 @@ begin
                 wait until rising_edge(clk);
                 wait for 1 ns;
                 cycles := cycles + 1;
-                assert cycles < 300
+                assert cycles < 400
                     report "differential FATAN timeout" severity failure;
             end loop;
             assert result = vectors(index).expected_result and

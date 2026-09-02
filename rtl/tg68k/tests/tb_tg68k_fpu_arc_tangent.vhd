@@ -63,7 +63,7 @@ begin
 				wait until rising_edge(clk);
 				wait for 1 ns;
 				cycles := cycles + 1;
-				assert cycles < 450 report "inverse circular timeout" severity failure;
+				assert cycles < 550 report "inverse circular timeout" severity failure;
 			end loop;
 			if expected_cycles /= 0 then
 				assert cycles = expected_cycles
@@ -99,10 +99,10 @@ begin
 		execute(x"80000000000000000000", x"80000000000000000000", x"C", x"00", '1');
 		execute(x"3FFF8000000000000000", x"3FFFC90FDAA22168C235", x"0", x"02", '1');
 		execute(x"BFFF8000000000000000", x"BFFFC90FDAA22168C235", x"8", x"02", '1');
-		execute(x"3FFE8000000000000000", x"3FFE860A91C16B9B2C23", x"0", x"02", '1', 389);
+		execute(x"3FFE8000000000000000", x"3FFE860A91C16B9B2C23", x"0", x"02", '1', 456);
 		execute(x"BFFE8000000000000000", x"BFFE860A91C16B9B2C23", x"8", x"02", '1');
 		execute(x"3FFEC000000000000000", x"3FFED91A98AE3406E041", x"0", x"02", '1');
-		execute(x"3FFEFFFFFFFFFFFFFFFF", x"3FFFC90FDAA16C63CF01", x"0", x"02", '1', 388);
+		execute(x"3FFEFFFFFFFFFFFFFFFF", x"3FFFC90FDAA16C63CF01", x"0", x"02", '1', 455);
 		execute(x"3FE58000000000000000", x"3FE58000000000000155", x"0", x"02", '1');
 		execute(x"3FDD8000000000000000", x"3FDD8000000000000000", x"0", x"02", '1');
 		execute(x"40008000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20", '1');
@@ -114,10 +114,10 @@ begin
 		execute(x"80000000000000000000", x"3FFFC90FDAA22168C235", x"0", x"02", '0', 0, '1');
 		execute(x"3FFF8000000000000000", x"00000000000000000000", x"4", x"00", '0', 0, '1');
 		execute(x"BFFF8000000000000000", x"4000C90FDAA22168C235", x"0", x"02", '0', 0, '1');
-		execute(x"3FFE8000000000000000", x"3FFF860A91C16B9B2C23", x"0", x"02", '0', 388, '1');
-		execute(x"BFFE8000000000000000", x"4000860A91C16B9B2C23", x"0", x"02", '0', 388, '1');
-		execute(x"3FFEFFFFFFFFFFFFFFFF", x"3FDFB504F333F9DE6484", x"0", x"02", '0', 420, '1');
-		execute(x"3F8E8000000000000000", x"3FFFC90FDAA22168C235", x"0", x"02", '0', 388, '1');
+		execute(x"3FFE8000000000000000", x"3FFF860A91C16B9B2C23", x"0", x"02", '0', 455, '1');
+		execute(x"BFFE8000000000000000", x"4000860A91C16B9B2C23", x"0", x"02", '0', 455, '1');
+		execute(x"3FFEFFFFFFFFFFFFFFFF", x"3FDFB504F333F9DE6484", x"0", x"02", '0', 487, '1');
+		execute(x"3F8E8000000000000000", x"3FFFC90FDAA22168C235", x"0", x"02", '0', 455, '1');
 		execute(x"40008000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20", '0', 0, '1');
 		execute(x"7FFF8000000000000000", x"7FFFFFFFFFFFFFFFFFFF", x"1", x"20", '0', 0, '1');
 		execute(x"7FFFC000000000000042", x"7FFFC000000000000042", x"1", x"00", '0', 0, '1');
