@@ -133,7 +133,7 @@ architecture test of tb_tg68k_fpu_cosh_differential is
 begin
     clk <= not clk after CLK_PERIOD / 2;
 
-    dut : entity work.TG68K_FPU_Exponential
+    dut : entity work.TG68K_FPU_Exponential_With_CORDIC
         port map(
             clk => clk,
             nReset => nReset,

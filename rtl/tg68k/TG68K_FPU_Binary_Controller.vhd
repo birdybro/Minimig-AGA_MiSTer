@@ -218,6 +218,21 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal logarithm_done : std_logic;
 	signal logarithm_round_input : fpu_round_input_t;
 	signal logarithm_base_status : std_logic_vector(7 downto 0);
+	signal exponential_cordic_start : std_logic;
+	signal exponential_cordic_x_input : signed(99 downto 0);
+	signal exponential_cordic_y_input : signed(99 downto 0);
+	signal exponential_cordic_z_input : signed(112 downto 0);
+	signal logarithm_cordic_start : std_logic;
+	signal logarithm_cordic_x_input : signed(99 downto 0);
+	signal logarithm_cordic_y_input : signed(99 downto 0);
+	signal logarithm_cordic_z_input : signed(112 downto 0);
+	signal hyperbolic_cordic_x_input : signed(99 downto 0);
+	signal hyperbolic_cordic_y_input : signed(99 downto 0);
+	signal hyperbolic_cordic_z_input : signed(112 downto 0);
+	signal hyperbolic_cordic_x_result : signed(99 downto 0);
+	signal hyperbolic_cordic_y_result : signed(99 downto 0);
+	signal hyperbolic_cordic_z_result : signed(112 downto 0);
+	signal hyperbolic_cordic_done : std_logic;
 	signal arc_tangent_start : std_logic;
 	signal arc_tangent_done : std_logic;
 	signal arc_tangent_round_input : fpu_round_input_t;
@@ -422,6 +437,29 @@ begin
 
 	exponential_start <= '1' when state = EXECUTE and
 		exponential_latched = '1' else '0';
+	hyperbolic_cordic_x_input <= exponential_cordic_x_input when
+		exponential_cordic_start = '1' else logarithm_cordic_x_input;
+	hyperbolic_cordic_y_input <= exponential_cordic_y_input when
+		exponential_cordic_start = '1' else logarithm_cordic_y_input;
+	hyperbolic_cordic_z_input <= exponential_cordic_z_input when
+		exponential_cordic_start = '1' else logarithm_cordic_z_input;
+
+	hyperbolic_cordic : entity work.TG68K_FPU_Hyperbolic_CORDIC
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => exponential_cordic_start or logarithm_cordic_start,
+			vectoring => logarithm_cordic_start,
+			rotate_on_start => exponential_cordic_start,
+			x_input => hyperbolic_cordic_x_input,
+			y_input => hyperbolic_cordic_y_input,
+			z_input => hyperbolic_cordic_z_input,
+			x_result => hyperbolic_cordic_x_result,
+			y_result => hyperbolic_cordic_y_result,
+			z_result => hyperbolic_cordic_z_result,
+			busy => open,
+			done => hyperbolic_cordic_done
+		);
 
 	exponential : entity work.TG68K_FPU_Exponential
 		generic map(
@@ -439,6 +477,13 @@ begin
 			hyperbolic_tangent => hyperbolic_tangent_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			cordic_start => exponential_cordic_start,
+			cordic_x_input => exponential_cordic_x_input,
+			cordic_y_input => exponential_cordic_y_input,
+			cordic_z_input => exponential_cordic_z_input,
+			cordic_x_result => hyperbolic_cordic_x_result,
+			cordic_y_result => hyperbolic_cordic_y_result,
+			cordic_done => hyperbolic_cordic_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -466,6 +511,12 @@ begin
 				inverse_hyperbolic_tangent_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			cordic_start => logarithm_cordic_start,
+			cordic_x_input => logarithm_cordic_x_input,
+			cordic_y_input => logarithm_cordic_y_input,
+			cordic_z_input => logarithm_cordic_z_input,
+			cordic_z_result => hyperbolic_cordic_z_result,
+			cordic_done => hyperbolic_cordic_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,

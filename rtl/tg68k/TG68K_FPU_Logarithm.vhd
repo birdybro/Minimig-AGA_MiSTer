@@ -28,6 +28,12 @@ entity TG68K_FPU_Logarithm is
 		inverse_hyperbolic_tangent : in std_logic := '0';
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		cordic_start : out std_logic;
+		cordic_x_input : out signed(99 downto 0);
+		cordic_y_input : out signed(99 downto 0);
+		cordic_z_input : out signed(112 downto 0);
+		cordic_z_result : in signed(112 downto 0);
+		cordic_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -58,13 +64,11 @@ architecture rtl of TG68K_FPU_Logarithm is
 			ALIGN_SQUARE_TERM,
 			CUBE_SMALL_ARGUMENT, DIVIDE_CUBE_TERM, ALIGN_CUBE_TERM,
 			NORMALIZE_ATANH_RATIO, DIVIDE_ATANH_RATIO,
-			NORMALIZE_INPUT, START_CORDIC, LOAD_CORDIC_ANGLE, ROTATE_CORDIC_XY,
-			ROTATE_CORDIC_Z,
-			FINISH_CORDIC, MULTIPLY_LN2, SCALE_LOGARITHM_BASE,
+			NORMALIZE_INPUT, START_CORDIC, LOAD_CORDIC_ANGLE, WAIT_CORDIC,
+			MULTIPLY_LN2, SCALE_LOGARITHM_BASE,
 			LOAD_FIXED_RESULT, NORMALIZE_RESULT, FORMAT_SMALL_SERIES_RESULT,
 			COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
-	type cordic_angle_rom_t is array(0 to 31) of cordic_value_t;
 
 	constant LN2_FIXED : unsigned(FRACTION_BITS - 1 downto 0) :=
 		x"B17217F7D1CF79ABC9E3B398";
@@ -72,42 +76,6 @@ architecture rtl of TG68K_FPU_Logarithm is
 		unsigned'("1" & x"71547652B82FE1777D0FFDA0D23A");
 	constant LOG10_E_FIXED : unsigned(RESULT_WIDTH - 1 downto 0) :=
 		unsigned'("0" & x"6F2DEC549B9438CA9AADD557D69A");
-	signal cordic_angle_rom : cordic_angle_rom_t := (
-		0 => (others => '0'),
-		1 => signed'(x"08C9F53D5681854BB520CC6AB"),
-		2 => signed'(x"04162BBEA0451469C9DAF0BE1"),
-		3 => signed'(x"0202B12393D5DEED328CF41ED"),
-		4 => signed'(x"01005588AD375ACDCB1312A56"),
-		5 => signed'(x"00800AAC448D77125A4EE9FEE"),
-		6 => signed'(x"004001556222B47263834E959"),
-		7 => signed'(x"0020002AAB111235A6E87A2A0"),
-		8 => signed'(x"001000055558888AD1AEE1EF9"),
-		9 => signed'(x"00080000AAAAC44448D68E4C6"),
-		10 => signed'(x"0004000015555622222B46B4E"),
-		11 => signed'(x"0002000002AAAAB11111235A3"),
-		12 => signed'(x"0001000000555555888888AD2"),
-		13 => signed'(x"00008000000AAAAAAC4444449"),
-		14 => signed'(x"0000400000015555556222222"),
-		15 => signed'(x"0000200000002AAAAAAB11111"),
-		16 => signed'(x"0000100000000555555558889"),
-		17 => signed'(x"00000800000000AAAAAAAAC44"),
-		18 => signed'(x"0000040000000015555555562"),
-		19 => signed'(x"0000020000000002AAAAAAAAB"),
-		20 => signed'(x"0000010000000000555555555"),
-		21 => signed'(x"00000080000000000AAAAAAAB"),
-		22 => signed'(x"0000004000000000015555555"),
-		23 => signed'(x"0000002000000000002AAAAAB"),
-		24 => signed'(x"0000001000000000000555555"),
-		25 => signed'(x"00000008000000000000AAAAB"),
-		26 => signed'(x"0000000400000000000015555"),
-		27 => signed'(x"0000000200000000000002AAB"),
-		28 => signed'(x"0000000100000000000000555"),
-		29 => signed'(x"00000000800000000000000AB"),
-		30 => signed'(x"0000000040000000000000015"),
-		31 => signed'(x"0000000020000000000000003")
-	);
-	attribute ramstyle : string;
-	attribute ramstyle of cordic_angle_rom : signal is "M10K";
 
 	function highest_set_bit(value : unsigned) return natural is
 	begin
@@ -151,18 +119,8 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal input_mantissa : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal input_exponent : signed(16 downto 0) := (others => '0');
-	signal cordic_x : cordic_value_t := (others => '0');
-	signal cordic_y : cordic_value_t := (others => '0');
-	signal cordic_z : signed(RESULT_WIDTH - 1 downto 0) := (others => '0');
-	signal cordic_iteration : natural range 1 to FRACTION_BITS := 1;
-	signal repeat_iteration : std_logic := '0';
-	signal cordic_angle_rom_data : cordic_value_t := (others => '0');
-	signal cordic_shift_angle : cordic_value_t := (others => '0');
-	signal cordic_angle_address : natural range 1 to 31 := 1;
-	signal cordic_z_previous : signed(RESULT_WIDTH - 1 downto 0) :=
-		(others => '0');
-	signal cordic_angle_previous : cordic_value_t := (others => '0');
-	signal cordic_direction_previous : std_logic := '0';
+	signal cordic_source_x : cordic_value_t := (others => '0');
+	signal cordic_source_y : cordic_value_t := (others => '0');
 	signal atanh_numerator : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
 	signal atanh_denominator : unsigned(CORDIC_WIDTH downto 0) :=
@@ -198,12 +156,8 @@ architecture rtl of TG68K_FPU_Logarithm is
 
 	signal arithmetic_left_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 	signal arithmetic_right_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
-	signal arithmetic_left_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
-	signal arithmetic_right_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 	signal arithmetic_subtract_a : std_logic;
-	signal arithmetic_subtract_b : std_logic;
 	signal arithmetic_result_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
-	signal arithmetic_result_b : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -219,6 +173,10 @@ architecture rtl of TG68K_FPU_Logarithm is
 begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
+	cordic_start <= '1' when state = LOAD_CORDIC_ANGLE else '0';
+	cordic_x_input <= cordic_source_x;
+	cordic_y_input <= cordic_source_y;
+	cordic_z_input <= (others => '0');
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -228,9 +186,7 @@ begin
 
 	arithmetic_operands : process(state, series_product, series_multiplier,
 		series_multiplicand, cube_accumulator, atanh_numerator,
-		atanh_denominator, cordic_x, cordic_y, cordic_iteration,
-		cordic_z_previous, cordic_angle_previous,
-		cordic_direction_previous, ln2_product,
+		atanh_denominator, ln2_product,
 		base_scale_accumulator, base_scale_multiplier,
 		base_scale_index, logarithm_base_latched)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -238,10 +194,7 @@ begin
 	begin
 		arithmetic_left_a <= (others => '0');
 		arithmetic_right_a <= (others => '0');
-		arithmetic_left_b <= (others => '0');
-		arithmetic_right_b <= (others => '0');
 		arithmetic_subtract_a <= '0';
-		arithmetic_subtract_b <= '0';
 		case state is
 			when SQUARE_SMALL_ARGUMENT =>
 				arithmetic_left_a <= resize(series_product(128 downto 64),
@@ -269,25 +222,6 @@ begin
 						ARITHMETIC_WIDTH);
 					arithmetic_subtract_a <= '1';
 				end if;
-			when ROTATE_CORDIC_XY =>
-				arithmetic_left_a <= unsigned(resize(cordic_x,
-					ARITHMETIC_WIDTH));
-				arithmetic_right_a <= unsigned(resize(shift_right(cordic_y,
-					cordic_iteration), ARITHMETIC_WIDTH));
-				arithmetic_left_b <= unsigned(resize(cordic_y,
-					ARITHMETIC_WIDTH));
-				arithmetic_right_b <= unsigned(resize(shift_right(cordic_x,
-					cordic_iteration), ARITHMETIC_WIDTH));
-				if cordic_y >= 0 then
-					arithmetic_subtract_a <= '1';
-					arithmetic_subtract_b <= '1';
-				end if;
-			when ROTATE_CORDIC_Z =>
-				arithmetic_left_a <= unsigned(resize(cordic_z_previous,
-					ARITHMETIC_WIDTH));
-				arithmetic_right_a <= unsigned(resize(cordic_angle_previous,
-					ARITHMETIC_WIDTH));
-				arithmetic_subtract_a <= not cordic_direction_previous;
 			when MULTIPLY_LN2 =>
 				arithmetic_left_a <= resize(ln2_product(
 					RESULT_WIDTH + LN2_MULTIPLIER_BITS downto
@@ -313,25 +247,12 @@ begin
 	end process;
 
 	arithmetic_add_subtract : process(arithmetic_subtract_a,
-		arithmetic_left_a, arithmetic_right_a, arithmetic_subtract_b,
-		arithmetic_left_b, arithmetic_right_b)
+		arithmetic_left_a, arithmetic_right_a)
 	begin
 		if arithmetic_subtract_a = '1' then
 			arithmetic_result_a <= arithmetic_left_a - arithmetic_right_a;
 		else
 			arithmetic_result_a <= arithmetic_left_a + arithmetic_right_a;
-		end if;
-		if arithmetic_subtract_b = '1' then
-			arithmetic_result_b <= arithmetic_left_b - arithmetic_right_b;
-		else
-			arithmetic_result_b <= arithmetic_left_b + arithmetic_right_b;
-		end if;
-	end process;
-
-	angle_rom_read : process(clk)
-	begin
-		if rising_edge(clk) then
-			cordic_angle_rom_data <= cordic_angle_rom(cordic_angle_address);
 		end if;
 	end process;
 
@@ -508,7 +429,6 @@ begin
 		variable selected_nan : fpu_extended_t;
 		variable next_input : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable next_input_exponent : signed(16 downto 0);
-		variable next_angle : cordic_value_t;
 		variable fractional_log : signed(RESULT_WIDTH - 1 downto 0);
 		variable next_ln2 : unsigned(RESULT_WIDTH - 1 downto 0);
 		variable next_ln2_product : unsigned(
@@ -559,16 +479,8 @@ begin
 				cube_shift_count <= 0;
 				input_mantissa <= (others => '0');
 				input_exponent <= (others => '0');
-				cordic_x <= (others => '0');
-				cordic_y <= (others => '0');
-				cordic_z <= (others => '0');
-				cordic_iteration <= 1;
-				repeat_iteration <= '0';
-				cordic_shift_angle <= (others => '0');
-				cordic_angle_address <= 1;
-				cordic_z_previous <= (others => '0');
-				cordic_angle_previous <= (others => '0');
-				cordic_direction_previous <= '0';
+				cordic_source_x <= (others => '0');
+				cordic_source_y <= (others => '0');
 				atanh_numerator <= (others => '0');
 				atanh_denominator <= (others => '0');
 				atanh_quotient <= (others => '0');
@@ -620,16 +532,8 @@ begin
 							cube_shift_count <= 0;
 							input_mantissa <= (others => '0');
 							input_exponent <= (others => '0');
-							cordic_x <= (others => '0');
-							cordic_y <= (others => '0');
-							cordic_z <= (others => '0');
-							cordic_iteration <= 1;
-							repeat_iteration <= '0';
-							cordic_shift_angle <= (others => '0');
-							cordic_angle_address <= 1;
-							cordic_z_previous <= (others => '0');
-							cordic_angle_previous <= (others => '0');
-							cordic_direction_previous <= '0';
+							cordic_source_x <= (others => '0');
+							cordic_source_y <= (others => '0');
 							atanh_numerator <= (others => '0');
 							atanh_denominator <= (others => '0');
 							atanh_quotient <= (others => '0');
@@ -1059,70 +963,20 @@ begin
 							begin_log_combine(to_signed(0, RESULT_WIDTH),
 								input_exponent, logarithm_base_latched);
 						else
-							cordic_x <= signed(input_mantissa + aligned_unit);
-							cordic_y <= signed(input_mantissa - aligned_unit);
-							cordic_z <= (others => '0');
-							cordic_iteration <= 1;
-							repeat_iteration <= '0';
-							cordic_angle_address <= 1;
+							cordic_source_x <= signed(input_mantissa + aligned_unit);
+							cordic_source_y <= signed(input_mantissa - aligned_unit);
 							state <= LOAD_CORDIC_ANGLE;
 						end if;
 
 					when LOAD_CORDIC_ANGLE =>
-						state <= ROTATE_CORDIC_XY;
+						state <= WAIT_CORDIC;
 
-					when ROTATE_CORDIC_XY =>
-						if cordic_iteration <= 31 then
-							next_angle := cordic_angle_rom_data;
-						else
-							next_angle := cordic_shift_angle;
+					when WAIT_CORDIC =>
+						if cordic_done = '1' then
+							fractional_log := shift_left(cordic_z_result, 1);
+							begin_log_combine(fractional_log, input_exponent,
+								logarithm_base_latched);
 						end if;
-						cordic_z_previous <= cordic_z;
-						cordic_angle_previous <= next_angle;
-						if cordic_y >= 0 then
-							cordic_direction_previous <= '1';
-						else
-							cordic_direction_previous <= '0';
-						end if;
-						cordic_x <= signed(arithmetic_result_a(
-							CORDIC_WIDTH - 1 downto 0));
-						cordic_y <= signed(arithmetic_result_b(
-							CORDIC_WIDTH - 1 downto 0));
-						if not ((cordic_iteration = 4 or
-								cordic_iteration = 13 or cordic_iteration = 40) and
-								repeat_iteration = '0') then
-							if cordic_iteration < 31 then
-								cordic_angle_address <= cordic_iteration + 1;
-							elsif cordic_iteration = 31 then
-								next_angle := (others => '0');
-								next_angle(FRACTION_BITS - 32) := '1';
-								cordic_shift_angle <= next_angle;
-							elsif cordic_iteration < FRACTION_BITS then
-								cordic_shift_angle <= shift_right(
-									cordic_shift_angle, 1);
-							end if;
-						end if;
-						state <= ROTATE_CORDIC_Z;
-
-					when ROTATE_CORDIC_Z =>
-						cordic_z <= signed(arithmetic_result_a(
-							RESULT_WIDTH - 1 downto 0));
-						if (cordic_iteration = 4 or cordic_iteration = 13 or
-								cordic_iteration = 40) and repeat_iteration = '0' then
-							repeat_iteration <= '1';
-							state <= ROTATE_CORDIC_XY;
-						elsif cordic_iteration = FRACTION_BITS then
-							state <= FINISH_CORDIC;
-						else
-							repeat_iteration <= '0';
-							cordic_iteration <= cordic_iteration + 1;
-							state <= ROTATE_CORDIC_XY;
-						end if;
-
-					when FINISH_CORDIC =>
-						fractional_log := shift_left(cordic_z, 1);
-						begin_log_combine(fractional_log, input_exponent,
-							logarithm_base_latched);
 
 					when MULTIPLY_LN2 =>
 						next_ln2_product := shift_right(arithmetic_result_a(

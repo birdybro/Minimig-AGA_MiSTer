@@ -135,7 +135,7 @@ architecture test of tb_tg68k_fpu_atanh_differential is
 begin
     clk <= not clk after CLK_PERIOD / 2;
 
-    dut : entity work.TG68K_FPU_Logarithm
+    dut : entity work.TG68K_FPU_Logarithm_With_CORDIC
         port map(
             clk => clk,
             nReset => nReset,
