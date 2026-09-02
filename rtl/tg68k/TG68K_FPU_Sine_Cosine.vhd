@@ -116,8 +116,6 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
 	-- The combined accumulator|multiplier shifts right around the stationary
 	-- reciprocal, avoiding a second 256-bit range-reduction shifter.
-	signal reciprocal_multiplicand : unsigned(RECIPROCAL_BITS - 1 downto 0) :=
-		(others => '0');
 	signal reciprocal_product : unsigned(PRODUCT_WIDTH downto 0) :=
 		(others => '0');
 	signal reciprocal_iteration : natural range 0 to 63 := 0;
@@ -188,7 +186,6 @@ begin
 	base_exception_status <= base_status;
 
 	shared_operands : process(state, reciprocal_product,
-		reciprocal_multiplicand,
 		normalized_tangent_numerator, normalized_tangent_denominator,
 		tangent_remainder, tangent_divisor)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -201,7 +198,7 @@ begin
 				shared_left_a <= resize(reciprocal_product(
 					PRODUCT_WIDTH downto 64), SHARED_WIDTH);
 				if reciprocal_product(0) = '1' then
-					shared_right_a <= resize(reciprocal_multiplicand,
+					shared_right_a <= resize(TWO_BY_PI,
 						SHARED_WIDTH);
 				end if;
 			when START_TANGENT_DIVIDE =>
@@ -369,7 +366,6 @@ begin
 				simultaneous_latched <= '0';
 				source_sign_latched <= '0';
 				source_exponent_latched <= 0;
-				reciprocal_multiplicand <= (others => '0');
 				reciprocal_product <= (others => '0');
 				reciprocal_iteration <= 0;
 				range_shift_chunks <= 0;
@@ -506,7 +502,6 @@ begin
 									state <= COMPLETE;
 								else
 									source_exponent_latched <= source_exponent;
-									reciprocal_multiplicand <= TWO_BY_PI;
 									reciprocal_product <= resize(source_significand,
 										PRODUCT_WIDTH + 1);
 									reciprocal_iteration <= 0;
