@@ -235,18 +235,6 @@ begin
 							selected_nan(62) := '1';
 							result_sign <= source(79);
 							arc_cosine_mode <= arc_cosine;
-							cordic_source_x <= (others => '0');
-							cordic_source_y <= (others => '0');
-							normalization_value <= (others => '0');
-							normalization_exponent <= (others => '0');
-							arc_sine_magnitude <= (others => '0');
-							square_multiplicand <= (others => '0');
-							square_product <= (others => '0');
-							square_iteration <= 0;
-							root_radicand <= (others => '0');
-							root_remainder <= (others => '0');
-							root_value <= (others => '0');
-							root_iteration <= 0;
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= source(79);
 							intermediate_exponent <= (others => '0');
