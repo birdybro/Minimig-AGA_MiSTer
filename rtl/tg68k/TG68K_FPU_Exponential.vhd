@@ -70,6 +70,7 @@ architecture rtl of TG68K_FPU_Exponential is
 			SCALE_E_TO_BASE_TWO, SCALE_TEN_TO_BASE_TWO,
 			MULTIPLY_LOG2, START_CORDIC, WAIT_CORDIC,
 			FORM_CORDIC_SUM, FORM_CORDIC_DIFFERENCE,
+			COMPLETE_EXPONENTIAL, COMPLETE_HYPERBOLIC,
 			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
 			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
 			NORMALIZE_SUBTRACTION, FORMAT_NORMALIZED_RESULT,
@@ -545,8 +546,7 @@ begin
 
 		procedure begin_reduced_exponential(
 			constant magnitude : in unsigned(FIXED_WIDTH - 1 downto 0);
-			constant sign_value : in std_logic;
-			constant minus_one : in std_logic) is
+			constant sign_value : in std_logic) is
 			variable integer_magnitude : natural range 0 to 65535;
 			variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 			variable exponent_value : integer range -65536 to 65535;
@@ -570,18 +570,15 @@ begin
 			if fraction_value = 0 then
 				unit_value := (others => '0');
 				unit_value(FRACTION_BITS) := '1';
-				if hyperbolic_sine_latched = '1' then
-					complete_hyperbolic_sine(unit_value, unit_value,
-						to_signed(exponent_value, 17), '0');
-				elsif hyperbolic_cosine_latched = '1' then
-					complete_hyperbolic_cosine(unit_value, unit_value,
-						to_signed(exponent_value, 17), '0');
-				elsif hyperbolic_tangent_latched = '1' then
-					complete_hyperbolic_tangent(unit_value, unit_value,
-						to_signed(exponent_value, 17), '0');
+				subtraction_value <= unit_value;
+				if hyperbolic_sine_latched = '1' or
+						hyperbolic_cosine_latched = '1' or
+						hyperbolic_tangent_latched = '1' then
+					subtraction_one <= unit_value;
+					subtraction_sticky <= '0';
+					state <= COMPLETE_HYPERBOLIC;
 				else
-					complete_exponential(unit_value,
-						to_signed(exponent_value, 17), minus_one);
+					state <= COMPLETE_EXPONENTIAL;
 				end if;
 			else
 				log2_product <= resize(fraction_value, log2_product'length);
@@ -619,8 +616,7 @@ begin
 				scale_index <= 0;
 				state <= SCALE_TEN_TO_BASE_TWO;
 			else
-				begin_reduced_exponential(magnitude, source_sign_latched,
-					subtract_one_latched);
+				begin_reduced_exponential(magnitude, source_sign_latched);
 			end if;
 		end procedure;
 
@@ -694,7 +690,6 @@ begin
 		variable next_log2_product : unsigned(2 * FRACTION_BITS downto 0);
 		variable next_scale : unsigned(FIXED_WIDTH + 2 downto 0);
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
-		variable cordic_difference : signed(CORDIC_WIDTH downto 0);
 		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
 		variable next_square : unsigned(127 downto 0);
 		variable next_square_product : unsigned(128 downto 0);
@@ -1249,11 +1244,10 @@ begin
 									hyperbolic_cosine_latched = '1' or
 									hyperbolic_tangent_latched = '1' then
 								begin_reduced_exponential(next_scale(
-									FIXED_WIDTH - 1 downto 0), '0', '0');
+									FIXED_WIDTH - 1 downto 0), '0');
 							else
 								begin_reduced_exponential(next_scale(
-									FIXED_WIDTH - 1 downto 0), source_sign_latched,
-									subtract_one_latched);
+									FIXED_WIDTH - 1 downto 0), source_sign_latched);
 							end if;
 						else
 							scale_index <= scale_index + 1;
@@ -1269,21 +1263,19 @@ begin
 							if next_accumulator = 0 then
 								unit_result := (others => '0');
 								unit_result(FRACTION_BITS) := '1';
-								if hyperbolic_sine_latched = '1' then
-									complete_hyperbolic_sine(unit_result, unit_result,
-										result_exponent, '1');
-								elsif hyperbolic_cosine_latched = '1' then
-									complete_hyperbolic_cosine(unit_result, unit_result,
-										result_exponent, '1');
-								elsif hyperbolic_tangent_latched = '1' then
-									complete_hyperbolic_tangent(unit_result, unit_result,
-										result_exponent, '1');
+								if hyperbolic_sine_latched = '1' or
+										hyperbolic_cosine_latched = '1' or
+										hyperbolic_tangent_latched = '1' then
+									subtraction_value <= unit_result;
+									subtraction_one <= unit_result;
+									subtraction_sticky <= '1';
+									state <= COMPLETE_HYPERBOLIC;
 								else
 									if subtract_one_latched = '0' then
 										unit_result(0) := '1';
 									end if;
-									complete_exponential(unit_result, result_exponent,
-										subtract_one_latched);
+									subtraction_value <= unit_result;
+									state <= COMPLETE_EXPONENTIAL;
 								end if;
 							else
 								cordic_source_z <= signed(resize(next_accumulator,
@@ -1312,22 +1304,33 @@ begin
 							subtraction_value <= unsigned(cordic_sum);
 							state <= FORM_CORDIC_DIFFERENCE;
 						else
-							complete_exponential(unsigned(cordic_sum),
-								result_exponent, subtract_one_latched);
+							subtraction_value <= unsigned(cordic_sum);
+							state <= COMPLETE_EXPONENTIAL;
 						end if;
 
 					when FORM_CORDIC_DIFFERENCE =>
-						cordic_difference := signed(arithmetic_result_a(
-							CORDIC_WIDTH downto 0));
+						subtraction_one <= arithmetic_result_a(
+							CORDIC_WIDTH downto 0);
+						subtraction_sticky <= '0';
+						state <= COMPLETE_HYPERBOLIC;
+
+					when COMPLETE_EXPONENTIAL =>
+						complete_exponential(subtraction_value,
+							result_exponent, subtract_one_latched);
+
+					when COMPLETE_HYPERBOLIC =>
 						if hyperbolic_sine_latched = '1' then
 							complete_hyperbolic_sine(subtraction_value,
-								unsigned(cordic_difference), result_exponent, '0');
+								subtraction_one, result_exponent,
+								subtraction_sticky);
 						elsif hyperbolic_cosine_latched = '1' then
 							complete_hyperbolic_cosine(subtraction_value,
-								unsigned(cordic_difference), result_exponent, '0');
+								subtraction_one, result_exponent,
+								subtraction_sticky);
 						else
 							complete_hyperbolic_tangent(subtraction_value,
-								unsigned(cordic_difference), result_exponent, '0');
+								subtraction_one, result_exponent,
+								subtraction_sticky);
 						end if;
 
 					when ALIGN_HYPERBOLIC =>
