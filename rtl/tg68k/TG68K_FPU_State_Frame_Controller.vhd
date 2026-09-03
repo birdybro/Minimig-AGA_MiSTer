@@ -82,8 +82,7 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	signal pending_latched : std_logic := '0';
 	signal command_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal exceptional_latched : fpu_extended_t := (others => '0');
-	signal busy_context_words : busy_context_word_array_t :=
-		(others => (others => '0'));
+	signal busy_context_words : busy_context_word_array_t;
 	signal transfer_index : natural range 0 to BUSY_WORD_COUNT - 1 := 0;
 	signal word_count_latched : natural range NULL_WORD_COUNT to
 		BUSY_WORD_COUNT := NULL_WORD_COUNT;
@@ -163,6 +162,14 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		return longword_index * 2 + (sequence_index mod 2);
 	end function;
 begin
+	-- The suspended unit holds its continuation context until FSAVE completes.
+	-- A word view avoids duplicating that payload in this transfer controller.
+	busy_context_view : for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1 generate
+		busy_context_words(index) <= busy_context(
+			busy_context'high - index * 16 downto
+			busy_context'high - index * 16 - 15);
+	end generate;
+
 	restore_context_output : process(restore_header, restore_payload)
 		variable context_value : fpu_busy_context_t;
 	begin
@@ -253,7 +260,6 @@ begin
 				pending_latched <= '0';
 				command_latched <= (others => '0');
 				exceptional_latched <= (others => '0');
-				busy_context_words <= (others => (others => '0'));
 				transfer_index <= 0;
 				word_count_latched <= NULL_WORD_COUNT;
 				frame_bytes_latched <= 0;
@@ -277,11 +283,6 @@ begin
 							pending_latched <= exception_pending;
 							command_latched <= command_condition;
 							exceptional_latched <= exceptional_operand;
-							for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1 loop
-								busy_context_words(index) <= busy_context(
-									busy_context'high - index * 16 downto
-									busy_context'high - index * 16 - 15);
-							end loop;
 							restore_header <= (others => '0');
 							restore_payload <= (others => '0');
 							transfer_index <= 0;
