@@ -404,12 +404,17 @@ begin
 		procedure begin_atanh_ratio(
 				constant magnitude_value : in unsigned(CORDIC_WIDTH downto 0)) is
 			variable unit_value : unsigned(CORDIC_WIDTH downto 0);
+			variable numerator_value : unsigned(CORDIC_WIDTH downto 0);
 		begin
 			-- Apply the identity's factor of one half in begin_fixed_result so
 			-- the ratio logarithm is rounded only once.
 			unit_value := (others => '0');
 			unit_value(FRACTION_BITS) := '1';
-			atanh_numerator <= unit_value + magnitude_value;
+			-- The aligned magnitude is strictly fractional, so 1 + magnitude
+			-- is a unit bit concatenated with the existing fraction.
+			numerator_value := magnitude_value;
+			numerator_value(FRACTION_BITS) := '1';
+			atanh_numerator <= numerator_value;
 			atanh_denominator <= unit_value - magnitude_value;
 			atanh_quotient <= (others => '0');
 			atanh_exponent <= (others => '0');
@@ -515,6 +520,9 @@ begin
 		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
+		variable cordic_sum_value : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable cordic_difference_value : unsigned(
+			CORDIC_WIDTH - 1 downto 0);
 		variable atanh_shifted_denominator : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_next_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -1008,8 +1016,15 @@ begin
 							begin_log_combine(to_signed(0, RESULT_WIDTH),
 								input_exponent, logarithm_base_latched);
 						else
-							cordic_source_x <= signed(input_mantissa + aligned_unit);
-							cordic_source_y <= signed(input_mantissa - aligned_unit);
+							-- A normalized mantissa is in [1,2); adding or removing
+							-- the unit value only rewrites its integer bits.
+							cordic_sum_value := input_mantissa;
+							cordic_sum_value(FRACTION_BITS + 1) := '1';
+							cordic_sum_value(FRACTION_BITS) := '0';
+							cordic_difference_value := input_mantissa;
+							cordic_difference_value(FRACTION_BITS) := '0';
+							cordic_source_x <= signed(cordic_sum_value);
+							cordic_source_y <= signed(cordic_difference_value);
 							state <= LOAD_CORDIC_ANGLE;
 						end if;
 
