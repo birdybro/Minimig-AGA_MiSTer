@@ -48,7 +48,7 @@ entity TG68K_FPU_Sine_Cosine is
 end entity;
 
 architecture rtl of TG68K_FPU_Sine_Cosine is
-	constant FRACTION_BITS : natural := 144;
+	constant FRACTION_BITS : natural := 136;
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant RECIPROCAL_BITS : natural := 192;
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
@@ -74,7 +74,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant TWO_BY_PI : unsigned(RECIPROCAL_BITS - 1 downto 0) :=
 		unsigned'(x"A2F9836E4E441529FC2757D1F534DDC0DB6295993C439042");
 	constant CORDIC_GAIN_INVERSE : unsigned(CORDIC_WIDTH - 1 downto 0) :=
-		unsigned'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289");
+		unsigned'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C2");
 	constant UNIT_FIXED : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		shift_left(to_unsigned(1, CORDIC_WIDTH), FRACTION_BITS);
 	function highest_set_bit(value : unsigned) return natural is
@@ -168,9 +168,10 @@ begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
 	cordic_start <= '1' when state = START_CORDIC else '0';
-	cordic_x_input <= signed(CORDIC_GAIN_INVERSE);
+	cordic_x_input <= resize(signed(CORDIC_GAIN_INVERSE),
+		cordic_x_input'length);
 	cordic_y_input <= (others => '0');
-	cordic_z_input <= cordic_source_z;
+	cordic_z_input <= resize(cordic_source_z, cordic_z_input'length);
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -607,7 +608,7 @@ begin
 						end if;
 
 					when REDUCE_RANGE =>
-						-- The aligned product is x*(2/pi) in Q144.  Rounding it to
+						-- The aligned product is x*(2/pi) in Q136.  Rounding it to
 						-- the nearest integer selects both the quadrant and residual.
 						aligned_product := reciprocal_product(
 							PRODUCT_WIDTH - 1 downto 0);
@@ -637,16 +638,20 @@ begin
 							if tangent_latched = '1' then
 								if cordic_y_result < 0 then
 									final_sign := '1';
-									magnitude := unsigned(-cordic_y_result);
+									magnitude := unsigned(-resize(
+										cordic_y_result, CORDIC_WIDTH));
 								else
 									final_sign := '0';
-									magnitude := unsigned(cordic_y_result);
+									magnitude := unsigned(resize(
+										cordic_y_result, CORDIC_WIDTH));
 								end if;
 								if quadrant(0) = '0' then
 									tangent_numerator := magnitude;
-									tangent_denominator := unsigned(cordic_x_result);
+									tangent_denominator := unsigned(resize(
+										cordic_x_result, CORDIC_WIDTH));
 								else
-									tangent_numerator := unsigned(cordic_x_result);
+									tangent_numerator := unsigned(resize(
+										cordic_x_result, CORDIC_WIDTH));
 									tangent_denominator := magnitude;
 									final_sign := not final_sign;
 								end if;
@@ -667,10 +672,14 @@ begin
 								end if;
 							else
 								case quadrant is
-									when "00" => selected_value := cordic_y_result;
-									when "01" => selected_value := cordic_x_result;
-									when "10" => selected_value := -cordic_y_result;
-									when others => selected_value := -cordic_x_result;
+									when "00" => selected_value := resize(
+										cordic_y_result, CORDIC_WIDTH);
+									when "01" => selected_value := resize(
+										cordic_x_result, CORDIC_WIDTH);
+									when "10" => selected_value := -resize(
+										cordic_y_result, CORDIC_WIDTH);
+									when others => selected_value := -resize(
+										cordic_x_result, CORDIC_WIDTH);
 								end case;
 								if cosine_latched = '0' and
 										source_sign_latched = '1' then
@@ -679,10 +688,14 @@ begin
 								primary_fixed_value <= selected_value;
 								if simultaneous_latched = '1' then
 									case quadrant is
-										when "00" => cosine_value := cordic_x_result;
-										when "01" => cosine_value := -cordic_y_result;
-										when "10" => cosine_value := -cordic_x_result;
-										when others => cosine_value := cordic_y_result;
+										when "00" => cosine_value := resize(
+											cordic_x_result, CORDIC_WIDTH);
+										when "01" => cosine_value := -resize(
+											cordic_y_result, CORDIC_WIDTH);
+										when "10" => cosine_value := -resize(
+											cordic_x_result, CORDIC_WIDTH);
+										when others => cosine_value := resize(
+											cordic_y_result, CORDIC_WIDTH);
 									end case;
 									secondary_fixed_value <= cosine_value;
 								end if;

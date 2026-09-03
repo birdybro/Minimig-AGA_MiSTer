@@ -122,7 +122,7 @@ begin
 				assert cycles <= 300 report "circular CORDIC timeout"
 					severity failure;
 			end loop;
-			assert cycles = 290 severity failure;
+			assert cycles = 274 severity failure;
 			baseline_x := x_result;
 			baseline_y := y_result;
 			baseline_z := z_result;
@@ -143,7 +143,7 @@ begin
 				assert cycles <= 300 report "circular CORDIC timeout"
 					severity failure;
 			end loop;
-			assert cycles = 289 and x_result = baseline_x and
+			assert cycles = 273 and x_result = baseline_x and
 					y_result = baseline_y and z_result = baseline_z
 				report "circular CORDIC fast-start mismatch"
 				severity failure;
@@ -173,23 +173,23 @@ begin
 			signed'(x"FFFFFFFFF894E63EA7912C25D480DDD09A1E2"),
 			226);
 		execute('0', '0', '1',
-			signed'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289"),
-			(147 downto 0 => '0'), shift_left(to_signed(1, 148), 142),
-			signed'(x"0EC835E79946A31457E610231AC1D6180F0A9"),
-			signed'(x"061F78A9ABAA58B4698916152CF7EEE1BBDF6"),
-			signed'(x"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-			289);
+			signed'(x"0009B74EDA8435E5A67F5F9092BD7FD40E9C2"),
+			(147 downto 0 => '0'), shift_left(to_signed(1, 148), 134),
+			signed'(x"000EC835E79946A31457E610231AC1D6180EB"),
+			signed'(x"00061F78A9ABAA58B4698916152CF7EEE1BC1"),
+			signed'(x"0000000000000000000000000000000000001"),
+			273);
 		execute('0', '0', '1',
-			signed'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289"),
-			(147 downto 0 => '0'), -shift_left(to_signed(1, 148), 142),
-			signed'(x"0EC835E79946A31457E610231AC1D6180F0A6"),
-			signed'(x"F9E087565455A74B9676E9EAD308111E4420C"),
+			signed'(x"0009B74EDA8435E5A67F5F9092BD7FD40E9C2"),
+			(147 downto 0 => '0'), -shift_left(to_signed(1, 148), 134),
+			signed'(x"000EC835E79946A31457E610231AC1D6180E6"),
+			signed'(x"FFF9E087565455A74B9676E9EAD308111E43F"),
 			signed'(x"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-			289);
+			273);
 		verify_fast_start(
-			signed'(x"09B74EDA8435E5A67F5F9092BD7FD40E9C289"),
-			signed'(x"0100000000000000000000000000000000000"),
-			shift_left(to_signed(1, 148), 142));
+			signed'(x"0009B74EDA8435E5A67F5F9092BD7FD40E9C2"),
+			signed'(x"0001000000000000000000000000000000000"),
+			shift_left(to_signed(1, 148), 134));
 
 		report "PASS: shared circular CORDIC precision, direction, and cycles"
 			severity note;

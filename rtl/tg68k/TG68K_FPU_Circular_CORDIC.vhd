@@ -41,16 +41,16 @@ entity TG68K_FPU_Circular_CORDIC is
 end entity;
 
 architecture rtl of TG68K_FPU_Circular_CORDIC is
-	constant CORDIC_WIDTH : natural := 148;
+	constant CORDIC_WIDTH : natural := 140;
 	constant NARROW_WIDTH : natural := 116;
 	constant NARROW_ITERATIONS : natural := 112;
-	constant WIDE_ITERATIONS : natural := 144;
+	constant WIDE_ITERATIONS : natural := 136;
 	type cordic_state_t is (IDLE, ROTATE_XY, ROTATE_Z, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
-	type wide_angle_rom_t is array(0 to 63) of cordic_value_t;
+	type wide_angle_rom_t is array(0 to 63) of signed(147 downto 0);
 	type narrow_angle_rom_t is array(0 to 63) of signed(NARROW_WIDTH - 1 downto 0);
 	constant WIDE_ANGLE_ZERO : cordic_value_t :=
-		signed'(x"0800000000000000000000000000000000000");
+		signed'(x"08000000000000000000000000000000000");
 	constant NARROW_ANGLE_ZERO : signed(NARROW_WIDTH - 1 downto 0) :=
 		signed'(x"0C90FDAA22168C234C4C6628B80DC");
 
@@ -161,13 +161,13 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	attribute ramstyle of narrow_angle_rom : signal is "M10K";
 
 	function fit_precision(
-			value : cordic_value_t;
+			value : signed;
 			narrow : std_logic) return cordic_value_t is
 	begin
 		if narrow = '1' then
-			return resize(value(NARROW_WIDTH - 1 downto 0), CORDIC_WIDTH);
+			return resize(resize(value, NARROW_WIDTH), CORDIC_WIDTH);
 		end if;
-		return value;
+		return resize(value, CORDIC_WIDTH);
 	end function;
 
 	signal state : cordic_state_t := IDLE;
@@ -223,7 +223,7 @@ begin
 	shift_source <= active_y when state = ROTATE_XY or
 		(state = IDLE and start = '1' and rotate_on_start = '1') else
 		x_value;
-	shift_source_out <= shift_source;
+	shift_source_out <= resize(shift_source, shift_source_out'length);
 	shift_amount_out <= iteration;
 
 	with_shift_stage : if INCLUDE_SHIFT_STAGE generate
@@ -231,14 +231,15 @@ begin
 	end generate;
 
 	without_shift_stage : if not INCLUDE_SHIFT_STAGE generate
-		shifted_coordinate <= external_shifted_coordinate;
+		shifted_coordinate <= resize(external_shifted_coordinate,
+			CORDIC_WIDTH);
 	end generate;
 
 	busy <= '1' when state /= IDLE or start = '1' else '0';
 	done <= '1' when state = COMPLETE else '0';
-	x_result <= x_value;
-	y_result <= y_value;
-	z_result <= z_value;
+	x_result <= resize(x_value, x_result'length);
+	y_result <= resize(y_value, y_result'length);
+	z_result <= resize(z_value, z_result'length);
 
 	arithmetic_operands : process(state, start, rotate_on_start, active_vectoring,
 		active_x, active_y, active_z, active_angle, active_direction,
@@ -308,7 +309,7 @@ begin
 		variable next_tail : cordic_value_t;
 	begin
 		if rising_edge(clk) then
-			wide_angle_data <= wide_angle_rom(angle_address);
+			wide_angle_data <= wide_angle_rom(angle_address)(147 downto 8);
 			narrow_angle_data <= narrow_angle_rom(angle_address);
 			if nReset = '0' then
 				state <= IDLE;
@@ -353,7 +354,7 @@ begin
 								shift_angle <= next_tail;
 							else
 								shift_angle <= signed'(
-									x"0000000000000A2F9836E4E441529FC2757D2");
+								x"0000000000000A2F9836E4E441529FC2757");
 							end if;
 						end if;
 						state <= ROTATE_Z;

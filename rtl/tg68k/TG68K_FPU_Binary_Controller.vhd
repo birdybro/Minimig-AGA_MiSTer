@@ -246,9 +246,9 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal circular_shift_source : signed(147 downto 0);
 	signal circular_shift_amount : natural range 0 to 144;
 	signal circular_shift_result : signed(147 downto 0);
-	signal shared_cordic_shift_source : signed(147 downto 0);
-	signal shared_cordic_shift_amount : natural range 0 to 144;
-	signal shared_cordic_shift_result : signed(147 downto 0);
+	signal shared_cordic_shift_source : signed(139 downto 0);
+	signal shared_cordic_shift_amount : natural range 0 to 136;
+	signal shared_cordic_shift_result : signed(139 downto 0);
 	signal selected_round_input : fpu_round_input_t;
 	signal selected_base_status : std_logic_vector(7 downto 0);
 	signal selected_rounding_mode : fpu_rounding_mode_t;
@@ -456,7 +456,8 @@ begin
 	hyperbolic_cordic_z_input <= exponential_cordic_z_input when
 		exponential_cordic_start = '1' else logarithm_cordic_z_input;
 	-- Circular and hyperbolic operations are mutually exclusive at issue.
-	shared_cordic_shift_source <= circular_shift_source when
+	shared_cordic_shift_source <= resize(circular_shift_source,
+		shared_cordic_shift_source'length) when
 		arc_tangent_latched = '1' or sine_cosine_latched = '1' else
 		resize(hyperbolic_shift_source, shared_cordic_shift_source'length);
 	shared_cordic_shift_amount <= circular_shift_amount when
@@ -464,8 +465,10 @@ begin
 		hyperbolic_shift_amount;
 	shared_cordic_shift_result <= shift_right(shared_cordic_shift_source,
 		shared_cordic_shift_amount);
-	circular_shift_result <= shared_cordic_shift_result;
-	hyperbolic_shift_result <= shared_cordic_shift_result(99 downto 0);
+	circular_shift_result <= resize(shared_cordic_shift_result,
+		circular_shift_result'length);
+	hyperbolic_shift_result <= resize(shared_cordic_shift_result,
+		hyperbolic_shift_result'length);
 
 	hyperbolic_cordic : entity work.TG68K_FPU_Hyperbolic_CORDIC
 		generic map(
