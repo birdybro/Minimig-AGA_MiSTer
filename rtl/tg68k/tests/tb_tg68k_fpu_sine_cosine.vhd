@@ -31,8 +31,7 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 		else
 			alignment_shift := 0;
 		end if;
-		return alignment_shift / 8 +
-			((alignment_shift mod 8) + 3) / 4;
+		return alignment_shift / 8 + alignment_shift mod 8;
 	end function;
 
 	function fixed_normalization_cycles(value : fpu_extended_t)
