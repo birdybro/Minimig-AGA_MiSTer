@@ -57,6 +57,15 @@ architecture rtl of TG68K_MMU_ATC is
 		std_logic_vector(23 downto 0);
 	type function_code_array_t is array (0 to MMU_ATC_ENTRY_COUNT - 1) of
 		std_logic_vector(2 downto 0);
+	constant DATA_PHYSICAL_HIGH : natural := 27;
+	constant DATA_PHYSICAL_LOW : natural := 4;
+	constant DATA_CACHE_INHIBIT_BIT : natural := 3;
+	constant DATA_WRITE_PROTECT_BIT : natural := 2;
+	constant DATA_MODIFIED_BIT : natural := 1;
+	constant DATA_BUS_ERROR_BIT : natural := 0;
+	subtype atc_data_t is std_logic_vector(DATA_PHYSICAL_HIGH downto 0);
+	type atc_data_array_t is array (0 to MMU_ATC_ENTRY_COUNT - 1) of
+		atc_data_t;
 
 	function page_offset_mask(size : std_logic_vector(3 downto 0)) return unsigned is
 		variable result : unsigned(31 downto 0) := (others => '0');
@@ -87,22 +96,24 @@ architecture rtl of TG68K_MMU_ATC is
 		(others => '0');
 	signal logical_addresses : page_address_array_t := (others => (others => '0'));
 	signal function_codes : function_code_array_t := (others => (others => '0'));
-	signal physical_addresses : page_address_array_t := (others => (others => '0'));
-	signal cache_inhibit_bits : std_logic_vector(MMU_ATC_ENTRY_COUNT - 1 downto 0) :=
-		(others => '0');
-	signal write_protect_bits : std_logic_vector(MMU_ATC_ENTRY_COUNT - 1 downto 0) :=
-		(others => '0');
-	signal modified_bits : std_logic_vector(MMU_ATC_ENTRY_COUNT - 1 downto 0) :=
-		(others => '0');
-	signal bus_error_bits : std_logic_vector(MMU_ATC_ENTRY_COUNT - 1 downto 0) :=
-		(others => '0');
+	signal entry_data : atc_data_array_t;
 	signal matched_index : natural range 0 to MMU_ATC_ENTRY_COUNT - 1 := 0;
+	signal matched_data : atc_data_t;
 	signal matched_entry : std_logic := '0';
+	signal matched_write_protected : std_logic := '0';
+	signal matched_modified : std_logic := '0';
+	signal matched_bus_error : std_logic := '0';
+	attribute ramstyle : string;
+	attribute ramstyle of entry_data : signal is "MLAB, no_rw_check";
 begin
+	matched_data <= entry_data(matched_index);
+	lookup_write_protected <= matched_write_protected;
+	lookup_modified <= matched_modified;
+	lookup_bus_error <= matched_bus_error;
+
 	lookup : process(page_size, lookup_request, lookup_logical_address,
 		lookup_function_code, lookup_write, lookup_test, valid_bits, logical_addresses,
-		function_codes, physical_addresses, cache_inhibit_bits,
-		write_protect_bits, modified_bits, bus_error_bits)
+		function_codes, matched_data)
 		variable found : boolean;
 		variable selected_index : natural range 0 to MMU_ATC_ENTRY_COUNT - 1;
 		variable offset_mask : unsigned(31 downto 0);
@@ -128,24 +139,25 @@ begin
 		lookup_requires_walk <= lookup_request;
 		lookup_physical_address <= (others => '0');
 		lookup_cache_inhibit <= '0';
-		lookup_write_protected <= '0';
-		lookup_modified <= '0';
-		lookup_bus_error <= '0';
+		matched_write_protected <= '0';
+		matched_modified <= '0';
+		matched_bus_error <= '0';
 		if lookup_request = '1' and found then
 			matched_entry <= '1';
 			lookup_match <= '1';
-			lookup_cache_inhibit <= cache_inhibit_bits(selected_index);
-			lookup_write_protected <= write_protect_bits(selected_index);
-			lookup_modified <= modified_bits(selected_index);
-			lookup_bus_error <= bus_error_bits(selected_index);
+			lookup_cache_inhibit <= matched_data(DATA_CACHE_INHIBIT_BIT);
+			matched_write_protected <= matched_data(DATA_WRITE_PROTECT_BIT);
+			matched_modified <= matched_data(DATA_MODIFIED_BIT);
+			matched_bus_error <= matched_data(DATA_BUS_ERROR_BIT);
 			translated_base := shift_left(resize(unsigned(
-				physical_addresses(selected_index)), 32), 8) and not offset_mask;
+				matched_data(DATA_PHYSICAL_HIGH downto DATA_PHYSICAL_LOW)), 32), 8) and
+				not offset_mask;
 			lookup_physical_address <= std_logic_vector(translated_base or
 				(unsigned(lookup_logical_address) and offset_mask));
 			if lookup_test = '0' and lookup_write = '1' and
-					modified_bits(selected_index) = '0' and
-					write_protect_bits(selected_index) = '0' and
-					bus_error_bits(selected_index) = '0' then
+					matched_data(DATA_MODIFIED_BIT) = '0' and
+					matched_data(DATA_WRITE_PROTECT_BIT) = '0' and
+					matched_data(DATA_BUS_ERROR_BIT) = '0' then
 				lookup_requires_walk <= '1';
 			else
 				lookup_hit <= '1';
@@ -214,18 +226,17 @@ begin
 
 					logical_addresses(selected_index) <= fill_logical_address(31 downto 8);
 					function_codes(selected_index) <= fill_function_code;
-					physical_addresses(selected_index) <= fill_physical_address(31 downto 8);
-					cache_inhibit_bits(selected_index) <= fill_cache_inhibit;
-					write_protect_bits(selected_index) <= fill_write_protected;
-					modified_bits(selected_index) <= fill_modified;
-					bus_error_bits(selected_index) <= fill_bus_error;
+					entry_data(selected_index) <= fill_physical_address(31 downto 8) &
+						fill_cache_inhibit & fill_write_protected &
+						fill_modified & fill_bus_error;
 					next_valid(selected_index) := '1';
 					mark_recent(next_history, selected_index);
 				elsif lookup_request = '1' and matched_entry = '1' and
 						lookup_test = '0' then
-					if lookup_write = '1' and modified_bits(matched_index) = '0' and
-							write_protect_bits(matched_index) = '0' and
-							bus_error_bits(matched_index) = '0' then
+					if lookup_write = '1' and
+							matched_modified = '0' and
+							matched_write_protected = '0' and
+							matched_bus_error = '0' then
 						next_valid(matched_index) := '0';
 					else
 						mark_recent(next_history, matched_index);
