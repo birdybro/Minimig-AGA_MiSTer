@@ -174,6 +174,9 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal intermediate_sign : std_logic := '0';
 	signal intermediate_exponent : signed(16 downto 0) := (others => '0');
 	signal intermediate_significand : fpu_significand_grs_t := (others => '0');
+	signal direct_significand : fpu_significand_grs_t := (others => '0');
+	signal use_iterative_significand : std_logic := '0';
+	signal selected_significand : fpu_significand_grs_t;
 	signal intermediate_special : fpu_extended_t := (others => '0');
 	signal base_status : std_logic_vector(7 downto 0) := (others => '0');
 
@@ -197,7 +200,9 @@ begin
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
-	round_input.significand <= intermediate_significand;
+	selected_significand <= intermediate_significand when
+		use_iterative_significand = '1' else direct_significand;
+	round_input.significand <= selected_significand;
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
 
@@ -294,7 +299,7 @@ begin
 				input_class => intermediate_class,
 				input_sign => intermediate_sign,
 				input_exponent => intermediate_exponent,
-				input_significand => intermediate_significand,
+				input_significand => selected_significand,
 				special_value => intermediate_special,
 				rounding_precision => rounding_precision,
 				rounding_mode => rounding_mode,
@@ -879,9 +884,14 @@ begin
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
 				intermediate_significand <= (others => '0');
+				direct_significand <= (others => '0');
+				use_iterative_significand <= '0';
 				intermediate_special <= (others => '0');
 				base_status <= (others => '0');
 			else
+				if state /= IDLE then
+					use_iterative_significand <= '1';
+				end if;
 				case state is
 					when IDLE =>
 						if start = '1' then
@@ -899,6 +909,8 @@ begin
 							intermediate_sign <= '0';
 							intermediate_exponent <= (others => '0');
 							intermediate_significand <= (others => '0');
+							direct_significand <= (others => '0');
+							use_iterative_significand <= '0';
 							intermediate_special <= (others => '0');
 							base_status <= (others => '0');
 
@@ -919,14 +931,14 @@ begin
 									intermediate_sign <= source(79);
 								else
 									intermediate_class <= FPU_CLASS_NORMAL;
-									intermediate_significand(66) <= '1';
+									direct_significand(66) <= '1';
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
 								if hyperbolic_tangent = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= source(79);
-									intermediate_significand(66) <= '1';
+									direct_significand(66) <= '1';
 								elsif hyperbolic_cosine = '1' then
 									intermediate_class <= FPU_CLASS_INFINITY;
 								elsif hyperbolic_sine = '1' then
@@ -935,7 +947,7 @@ begin
 								elsif subtract_one = '1' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= '1';
-									intermediate_significand(66) <= '1';
+									direct_significand(66) <= '1';
 								elsif source(79) = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 								else
@@ -961,12 +973,12 @@ begin
 										if tiny_significand(66) = '0' then
 											intermediate_exponent <= to_signed(
 												source_exponent - 1, 17);
-											intermediate_significand <= shift_left(
+											direct_significand <= shift_left(
 												tiny_significand, 1);
 										else
 											intermediate_exponent <= to_signed(
 												source_exponent, 17);
-											intermediate_significand <= tiny_significand;
+											direct_significand <= tiny_significand;
 										end if;
 										state <= COMPLETE;
 									else
@@ -983,8 +995,8 @@ begin
 									base_status(1) <= '1';
 									if source_exponent <= COSH_TINY_MAX_EXPONENT then
 										intermediate_class <= FPU_CLASS_NORMAL;
-										intermediate_significand(66) <= '1';
-										intermediate_significand(0) <= '1';
+										direct_significand(66) <= '1';
+										direct_significand(0) <= '1';
 										state <= COMPLETE;
 									else
 										series_source_significand <= source_significand;
@@ -1006,7 +1018,7 @@ begin
 										intermediate_sign <= source(79);
 										intermediate_exponent <= to_signed(
 											source_exponent, 17);
-										intermediate_significand <= tiny_significand;
+										direct_significand <= tiny_significand;
 										state <= COMPLETE;
 									elsif hyperbolic_sine = '0' and source_exponent < -67 then
 										tiny_significand := shift_left(resize(
@@ -1021,12 +1033,12 @@ begin
 										if tiny_significand(66) = '0' then
 											intermediate_exponent <= to_signed(
 												source_exponent - 1, 17);
-											intermediate_significand <= shift_left(
+											direct_significand <= shift_left(
 												tiny_significand, 1);
 										else
 											intermediate_exponent <= to_signed(
 												source_exponent, 17);
-											intermediate_significand <= tiny_significand;
+											direct_significand <= tiny_significand;
 										end if;
 										state <= COMPLETE;
 									else
@@ -1051,22 +1063,22 @@ begin
 										if hyperbolic_tangent = '1' then
 											intermediate_sign <= source(79);
 											intermediate_exponent <= to_signed(-1, 17);
-											intermediate_significand <= (others => '1');
+											direct_significand <= (others => '1');
 										elsif hyperbolic_sine = '1' then
 											intermediate_sign <= source(79);
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											intermediate_significand(66) <= '1';
+											direct_significand(66) <= '1';
 										elsif hyperbolic_cosine = '1' then
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											intermediate_significand(66) <= '1';
+											direct_significand(66) <= '1';
 										elsif subtract_one = '1' and source(79) = '1' then
 											intermediate_sign <= '1';
 											intermediate_exponent <= to_signed(-1, 17);
-											intermediate_significand <= (others => '1');
+											direct_significand <= (others => '1');
 										else
 											if source(79) = '1' then
 												exponent_value := -65536;
@@ -1075,7 +1087,7 @@ begin
 											end if;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											intermediate_significand(66) <= '1';
+											direct_significand(66) <= '1';
 										end if;
 										state <= COMPLETE;
 									else
