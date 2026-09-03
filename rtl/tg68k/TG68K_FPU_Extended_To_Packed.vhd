@@ -36,6 +36,7 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	constant POWER_PRECISION : natural := 192;
 	constant RETAINED_POWER_BITS : natural := 256;
 	constant SOURCE_PRODUCT_BITS : natural := RETAINED_POWER_BITS + 64;
+	constant MULTIPLY_ARITHMETIC_BITS : natural := RETAINED_POWER_BITS + 1;
 	constant LOG10_TWO_SCALED : integer := 1292913986;
 	constant TEN_TO_17 : unsigned(63 downto 0) :=
 		unsigned'(x"016345785D8A0000");
@@ -162,6 +163,9 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal source_product : unsigned(SOURCE_PRODUCT_BITS downto 0) :=
 		(others => '0');
 	signal source_iteration : natural range 0 to 63 := 0;
+	signal multiply_left : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
+	signal multiply_right : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
+	signal multiply_sum : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
 	-- Keep the wide product stationary while serially extracting the scaled
 	-- low word and sticky bit; a bidirectional 320-bit shift mux is larger.
 	signal scaled_integer_register : unsigned(63 downto 0) := (others => '0');
@@ -212,6 +216,29 @@ begin
 			multiplier => rom_multiplier,
 			power_bits => rom_power_bits
 		);
+
+	multiply_operands : process(state, power_product, power_multiplicand,
+			source_product)
+	begin
+		multiply_left <= (others => '0');
+		multiply_right <= (others => '0');
+		if state = MULTIPLY_POWER then
+			multiply_left <= resize(power_product(384 downto 192),
+				MULTIPLY_ARITHMETIC_BITS);
+			if power_product(0) = '1' then
+				multiply_right <= resize(power_multiplicand,
+					MULTIPLY_ARITHMETIC_BITS);
+			end if;
+		elsif state = MULTIPLY_SOURCE then
+			multiply_left <= source_product(SOURCE_PRODUCT_BITS downto 64);
+			if source_product(0) = '1' then
+				multiply_right <= resize(power_product(383 downto
+					384 - RETAINED_POWER_BITS), MULTIPLY_ARITHMETIC_BITS);
+			end if;
+		end if;
+	end process;
+
+	multiply_sum <= multiply_left + multiply_right;
 
 	-- The power table is deliberately finite precision.  Track the factors
 	-- needed to recognize mathematically exact decimal conversions so that
@@ -289,10 +316,7 @@ begin
 		variable binary_logarithm : integer range -16446 to 16383;
 		variable log_product : signed(49 downto 0);
 		variable estimate : integer range -5000 to 5000;
-		variable power_accumulator_sum : unsigned(192 downto 0);
 		variable next_power_product : unsigned(384 downto 0);
-		variable source_accumulator_sum : unsigned(
-			RETAINED_POWER_BITS downto 0);
 		variable next_source_product : unsigned(SOURCE_PRODUCT_BITS downto 0);
 		variable shift_value : integer range -32768 to 32767;
 		variable retained_shift_value : integer range -32768 to 32767;
@@ -430,12 +454,7 @@ begin
 						state <= MULTIPLY_POWER;
 
 					when MULTIPLY_POWER =>
-						power_accumulator_sum := power_product(384 downto 192);
-						if power_product(0) = '1' then
-							power_accumulator_sum := power_accumulator_sum +
-								resize(power_multiplicand, 193);
-						end if;
-						next_power_product := shift_right(power_accumulator_sum &
+						next_power_product := shift_right(multiply_sum(192 downto 0) &
 							power_product(191 downto 0), 1);
 						power_product <= next_power_product;
 						if power_iteration = 191 then
@@ -449,15 +468,7 @@ begin
 						end if;
 
 					when MULTIPLY_SOURCE =>
-						source_accumulator_sum := source_product(
-							SOURCE_PRODUCT_BITS downto 64);
-						if source_product(0) = '1' then
-							source_accumulator_sum := source_accumulator_sum +
-								resize(power_product(383 downto
-									384 - RETAINED_POWER_BITS),
-									RETAINED_POWER_BITS + 1);
-						end if;
-						next_source_product := shift_right(source_accumulator_sum &
+						next_source_product := shift_right(multiply_sum &
 							source_product(63 downto 0), 1);
 						source_product <= next_source_product;
 						if source_iteration = 63 then
