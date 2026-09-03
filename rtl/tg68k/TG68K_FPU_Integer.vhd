@@ -108,14 +108,14 @@ begin
 		variable normalized_significand : unsigned(63 downto 0);
 		variable integral_significand : unsigned(63 downto 0);
 		variable extended_sum : unsigned(64 downto 0);
-		variable fractional_value : unsigned(63 downto 0);
-		variable half_value : unsigned(63 downto 0);
 		variable source_exponent : integer range -65536 to 65535;
 		variable result_exponent : integer range -65536 to 65535;
 		variable normalization_shift : natural range 0 to 63;
 		variable fractional_bits : natural range 1 to 63;
 		variable increment : boolean;
 		variable inexact : std_logic;
+		variable guard_bit : std_logic;
+		variable lower_discarded : std_logic;
 		variable selected_nan : fpu_extended_t;
 	begin
 		source_class := fpu_classify(source);
@@ -123,14 +123,14 @@ begin
 		normalized_significand := source_significand;
 		integral_significand := (others => '0');
 		extended_sum := (others => '0');
-		fractional_value := (others => '0');
-		half_value := (others => '0');
 		source_exponent := fpu_unbiased_exponent(source);
 		result_exponent := source_exponent;
 		normalization_shift := 0;
 		fractional_bits := 1;
 		increment := false;
 		inexact := '0';
+		guard_bit := '0';
+		lower_discarded := '0';
 		selected_nan := source;
 		selected_nan(62) := '1';
 
@@ -185,19 +185,20 @@ begin
 				integral_significand := normalized_significand;
 				for bit_index in integral_significand'range loop
 					if bit_index < fractional_bits then
+						inexact := inexact or normalized_significand(bit_index);
 						integral_significand(bit_index) := '0';
 					end if;
+					if bit_index < fractional_bits - 1 then
+						lower_discarded := lower_discarded or
+							normalized_significand(bit_index);
+					end if;
 				end loop;
-				fractional_value := normalized_significand -
-					integral_significand;
-				if fractional_value /= 0 then
-					inexact := '1';
+				guard_bit := normalized_significand(fractional_bits - 1);
+				if inexact = '1' then
 					case effective_rounding_mode is
 						when FPU_ROUND_NEAREST =>
-							half_value := shift_left(to_unsigned(1, 64),
-								fractional_bits - 1);
-							if fractional_value > half_value or
-									(fractional_value = half_value and
+							if guard_bit = '1' and
+									(lower_discarded = '1' or
 									integral_significand(fractional_bits) = '1') then
 								increment := true;
 							end if;
