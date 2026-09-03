@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU is
+	generic(
+		EXPOSE_REGISTER_ARRAY : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -58,8 +61,9 @@ entity TG68K_FPU is
 end entity;
 
 architecture rtl of TG68K_FPU is
-	signal fp_registers : fpu_register_array_t :=
-		(others => FPU_RESET_NAN);
+	signal fp_registers : fpu_register_array_t;
+	signal fp_register_valid : std_logic_vector(7 downto 0) :=
+		(others => '0');
 	signal fpcr : std_logic_vector(31 downto 0) := (others => '0');
 	signal fpsr : std_logic_vector(31 downto 0) := (others => '0');
 	signal fpiar : std_logic_vector(31 downto 0) := (others => '0');
@@ -67,15 +71,28 @@ architecture rtl of TG68K_FPU is
 	signal exception_pending : std_logic := '0';
 	signal exception_class_register : fpu_exception_t := FPU_EXCEPTION_NONE;
 	signal enabled_exception_status : std_logic_vector(7 downto 0);
+	attribute ramstyle : string;
+	attribute ramstyle of fp_registers : signal is "MLAB, no_rw_check";
 begin
-	data_register_read_data <= fp_registers(
+	data_register_read_data <= FPU_RESET_NAN when fp_register_valid(
+		to_integer(unsigned(data_register_select))) = '0' else fp_registers(
 		to_integer(unsigned(data_register_select)));
 	with control_register_select select control_register_read_data <=
 		fpcr when FPU_REG_FPCR,
 		fpsr when FPU_REG_FPSR,
 		fpiar when FPU_REG_FPIAR;
 
-	fp_registers_out <= fp_registers;
+	expose_registers : if EXPOSE_REGISTER_ARRAY generate
+		expose_register : for register_index in fp_registers'range generate
+			fp_registers_out(register_index) <= FPU_RESET_NAN when
+				fp_register_valid(register_index) = '0' else
+				fp_registers(register_index);
+		end generate;
+	end generate;
+
+	hide_registers : if not EXPOSE_REGISTER_ARRAY generate
+		fp_registers_out <= (others => FPU_RESET_NAN);
+	end generate;
 	fpcr_out <= fpcr;
 	fpsr_out <= fpsr;
 	fpiar_out <= fpiar;
@@ -104,7 +121,7 @@ begin
 			exception_trap <= '0';
 			exception_class_register <= FPU_EXCEPTION_NONE;
 			if nReset = '0' or null_restore = '1' then
-				fp_registers <= (others => FPU_RESET_NAN);
+				fp_register_valid <= (others => '0');
 				fpcr <= (others => '0');
 				fpsr <= (others => '0');
 				fpiar <= (others => '0');
@@ -125,6 +142,8 @@ begin
 				if data_register_write = '1' then
 					fp_registers(to_integer(unsigned(
 						data_register_select))) <= data_register_write_data;
+					fp_register_valid(to_integer(unsigned(
+						data_register_select))) <= '1';
 				end if;
 				if control_register_write = '1' then
 					case control_register_select is

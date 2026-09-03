@@ -649,6 +649,9 @@ begin
 		);
 
 	fpu : entity work.TG68K_FPU_System
+		generic map(
+			EXPOSE_REGISTER_ARRAY => false
+		)
 		port map(
 			clk => clk,
 			nReset => nReset,

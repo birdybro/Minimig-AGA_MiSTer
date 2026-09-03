@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_System is
+	generic(
+		EXPOSE_REGISTER_ARRAY : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -1445,6 +1448,9 @@ begin
 		);
 
 	state : entity work.TG68K_FPU
+		generic map(
+			EXPOSE_REGISTER_ARRAY => EXPOSE_REGISTER_ARRAY
+		)
 		port map(
 			clk => clk,
 			nReset => nReset,

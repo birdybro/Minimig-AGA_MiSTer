@@ -179,6 +179,9 @@ begin
 	end process;
 
 	dut : entity work.TG68K_FPU_System
+		generic map(
+			EXPOSE_REGISTER_ARRAY => true
+		)
 		port map(
 			clk => clk,
 			nReset => nReset,

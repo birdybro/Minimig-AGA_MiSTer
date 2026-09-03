@@ -52,6 +52,9 @@ begin
 	clk <= not clk after CLK_PERIOD / 2;
 
 	dut : entity work.TG68K_FPU
+		generic map(
+			EXPOSE_REGISTER_ARRAY => true
+		)
 		port map(
 			clk => clk,
 			nReset => nreset,
