@@ -16,7 +16,8 @@ use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Exponential is
 	generic(
-		INCLUDE_ROUNDING_STAGE : boolean := true
+		INCLUDE_ROUNDING_STAGE : boolean := true;
+		INCLUDE_SERIES_ARITHMETIC : boolean := true
 	);
 	port(
 		clk : in std_logic;
@@ -37,6 +38,15 @@ entity TG68K_FPU_Exponential is
 		cordic_x_result : in signed(99 downto 0);
 		cordic_y_result : in signed(99 downto 0);
 		cordic_done : in std_logic;
+		series_arithmetic_done : in std_logic := '0';
+		series_square_result : in unsigned(127 downto 0) := (others => '0');
+		series_cube_quotient : in unsigned(79 downto 0) := (others => '0');
+		series_cube_remainder : in natural range 0 to 5 := 0;
+		series_arithmetic_start : out std_logic;
+		series_cube_divide : out std_logic;
+		series_divide_by_six : out std_logic;
+		series_arithmetic_source : out unsigned(63 downto 0);
+		series_square_high : out unsigned(15 downto 0);
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -178,6 +188,12 @@ begin
 	cordic_x_input <= CORDIC_INVERSE_GAIN;
 	cordic_y_input <= (others => '0');
 	cordic_z_input <= resize(cordic_source_z, 113);
+	series_arithmetic_start <= '1' when not INCLUDE_SERIES_ARITHMETIC and
+		(state = SQUARE_SMALL_ARGUMENT or state = CUBE_SMALL_ARGUMENT) else '0';
+	series_cube_divide <= '1' when state = CUBE_SMALL_ARGUMENT else '0';
+	series_divide_by_six <= not hyperbolic_tangent_latched;
+	series_arithmetic_source <= series_source_significand;
+	series_square_high <= series_product(127 downto CUBE_SQUARE_LOW_BIT);
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -196,17 +212,21 @@ begin
 		arithmetic_subtract_a <= '0';
 		case state is
 			when SQUARE_SMALL_ARGUMENT =>
-				arithmetic_left_a <= resize(series_product(128 downto 64),
-					ARITHMETIC_WIDTH);
-				if series_product(0) = '1' then
-					arithmetic_right_a <= resize(series_multiplicand(63 downto 0),
+				if INCLUDE_SERIES_ARITHMETIC then
+					arithmetic_left_a <= resize(series_product(128 downto 64),
 						ARITHMETIC_WIDTH);
+					if series_product(0) = '1' then
+						arithmetic_right_a <= resize(
+							series_multiplicand(63 downto 0), ARITHMETIC_WIDTH);
+					end if;
 				end if;
 			when CUBE_SMALL_ARGUMENT =>
-				arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
-				if series_multiplier(0) = '1' then
-					arithmetic_right_a <= resize(series_multiplicand(15 downto 0),
-						ARITHMETIC_WIDTH);
+				if INCLUDE_SERIES_ARITHMETIC then
+					arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
+					if series_multiplier(0) = '1' then
+						arithmetic_right_a <= resize(
+							series_multiplicand(15 downto 0), ARITHMETIC_WIDTH);
+					end if;
 				end if;
 			when SCALE_E_TO_BASE_TWO =>
 				arithmetic_left_a <= resize(scale_accumulator,
@@ -673,6 +693,111 @@ begin
 			state <= WRITE_PENDING_RESULT;
 		end procedure;
 
+		procedure complete_series_square(
+				constant square_value : in unsigned(127 downto 0)) is
+			variable cosh_increment_value : fpu_significand_grs_t;
+			variable series_shift_value : natural range 1 to 42;
+		begin
+			series_product <= '0' & square_value;
+			if hyperbolic_cosine_latched = '1' then
+				cosh_increment_value := (others => '0');
+				-- Align x^2/2 to GRS bit 66. Higher-order terms are
+				-- positive and below sticky throughout this range.
+				case to_integer(series_exponent) is
+					when -26 =>
+						cosh_increment_value(14 downto 0) :=
+							square_value(127 downto 113);
+					when -27 =>
+						cosh_increment_value(12 downto 0) :=
+							square_value(127 downto 115);
+					when -28 =>
+						cosh_increment_value(10 downto 0) :=
+							square_value(127 downto 117);
+					when -29 =>
+						cosh_increment_value(8 downto 0) :=
+							square_value(127 downto 119);
+					when -30 =>
+						cosh_increment_value(6 downto 0) :=
+							square_value(127 downto 121);
+					when -31 =>
+						cosh_increment_value(4 downto 0) :=
+							square_value(127 downto 123);
+					when -32 =>
+						cosh_increment_value(2 downto 0) :=
+							square_value(127 downto 125);
+					when -33 =>
+						cosh_increment_value(0) := square_value(127);
+					when others => null;
+				end case;
+				cosh_increment_value(0) := '1';
+				cosh_increment_value(66) := '1';
+				intermediate_class <= FPU_CLASS_NORMAL;
+				intermediate_significand <= cosh_increment_value;
+				state <= COMPLETE;
+			else
+				series_shift_value := to_integer(series_exponent) + 68;
+				if to_integer(series_exponent) < SERIES_CUBIC_MIN_EXPONENT then
+					load_series_base(SERIES_BASE_UNADJUSTED);
+					series_serial_bits_remaining <= SERIES_WIDTH + 1;
+					series_term_bits_remaining <= 128;
+					series_alignment_remaining <= series_shift_value;
+					series_carry_borrow <= '0';
+					series_term_subtract <= source_sign_latched;
+					state <= APPLY_SERIES_SQUARE;
+				else
+					-- The discarded square bits are below sticky throughout
+					-- the bounded cubic range.
+					series_multiplicand <= resize(square_value(
+						127 downto CUBE_SQUARE_LOW_BIT), 128);
+					if hyperbolic_sine_latched = '1' or
+							hyperbolic_tangent_latched = '1' then
+						load_series_base(SERIES_BASE_UNADJUSTED);
+						series_multiplier <= series_source_significand;
+						cube_accumulator <= (others => '0');
+						series_index <= 0;
+						state <= CUBE_SMALL_ARGUMENT;
+					else
+						if source_sign_latched = '1' then
+							load_series_base(SERIES_BASE_MINUS_REMAINDER_BOUND);
+						else
+							load_series_base(SERIES_BASE_UNADJUSTED);
+						end if;
+						series_serial_bits_remaining <= SERIES_WIDTH + 1;
+						series_term_bits_remaining <= 128;
+						series_alignment_remaining <= series_shift_value;
+						series_carry_borrow <= '0';
+						series_term_subtract <= source_sign_latched;
+						state <= APPLY_SERIES_SQUARE;
+					end if;
+				end if;
+			end if;
+		end procedure;
+
+		procedure complete_series_cube(
+				constant quotient_value : in unsigned(79 downto 0);
+				constant remainder_value : in natural range 0 to 5) is
+			variable alignment_shift : natural range 54 to 66;
+		begin
+			alignment_shift := 2 * to_integer(series_exponent) +
+				CUBE_ALIGNMENT_BASE;
+			series_product <= resize(quotient_value, series_product'length);
+			series_serial_bits_remaining <= SERIES_WIDTH + 1;
+			series_term_bits_remaining <= 80;
+			series_alignment_remaining <= alignment_shift;
+			series_carry_borrow <= '0';
+			if hyperbolic_tangent_latched = '1' then
+				if remainder_value = 0 then
+					load_series_base(SERIES_BASE_PLUS_ONE);
+				else
+					load_series_base(SERIES_BASE_MINUS_ONE);
+				end if;
+				series_term_subtract <= '1';
+			else
+				series_term_subtract <= '0';
+			end if;
+			state <= APPLY_SERIES_CUBE;
+		end procedure;
+
 		variable source_class : fpu_data_class_t;
 		variable source_significand : unsigned(63 downto 0);
 		variable source_exponent : integer range -65536 to 65535;
@@ -687,7 +812,6 @@ begin
 		variable next_scale : unsigned(FIXED_WIDTH + 2 downto 0);
 		variable cordic_sum : signed(CORDIC_WIDTH downto 0);
 		variable unit_result : unsigned(CORDIC_WIDTH downto 0);
-		variable next_square : unsigned(127 downto 0);
 		variable next_square_product : unsigned(128 downto 0);
 		variable next_cube : unsigned(80 downto 0);
 		variable next_cube_quotient : unsigned(79 downto 0);
@@ -702,9 +826,6 @@ begin
 		variable tangent_next_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable tangent_next_quotient : unsigned(65 downto 0);
 		variable tiny_significand : fpu_significand_grs_t;
-		variable cosh_increment : fpu_significand_grs_t;
-		variable series_shift : natural range 1 to 42;
-		variable cube_alignment_shift : natural range 54 to 66;
 		variable serial_term_pair : unsigned(1 downto 0);
 		variable serial_accumulator : unsigned(SERIES_WIDTH downto 0);
 		variable serial_product : unsigned(128 downto 0);
@@ -1001,153 +1122,69 @@ begin
 						end if;
 
 					when SQUARE_SMALL_ARGUMENT =>
-						next_square_product := shift_right(
-							arithmetic_result_a(64 downto 0) &
-							series_product(63 downto 0), 1);
-						next_square := next_square_product(127 downto 0);
-						if series_index = 63 then
-							series_product <= '0' & next_square;
-							if hyperbolic_cosine_latched = '1' then
-								cosh_increment := (others => '0');
-								-- Align x^2/2 to GRS bit 66. Higher-order terms are
-								-- positive and below sticky throughout this range.
-								case to_integer(series_exponent) is
-									when -26 =>
-										cosh_increment(14 downto 0) :=
-											next_square(127 downto 113);
-									when -27 =>
-										cosh_increment(12 downto 0) :=
-											next_square(127 downto 115);
-									when -28 =>
-										cosh_increment(10 downto 0) :=
-											next_square(127 downto 117);
-									when -29 =>
-										cosh_increment(8 downto 0) :=
-											next_square(127 downto 119);
-									when -30 =>
-										cosh_increment(6 downto 0) :=
-											next_square(127 downto 121);
-									when -31 =>
-										cosh_increment(4 downto 0) :=
-											next_square(127 downto 123);
-									when -32 =>
-										cosh_increment(2 downto 0) :=
-											next_square(127 downto 125);
-									when -33 =>
-										cosh_increment(0) := next_square(127);
-									when others =>
-										null;
-								end case;
-								cosh_increment(0) := '1';
-								cosh_increment(66) := '1';
-								intermediate_class <= FPU_CLASS_NORMAL;
-								intermediate_significand <= cosh_increment;
-								state <= COMPLETE;
+						if INCLUDE_SERIES_ARITHMETIC then
+							next_square_product := shift_right(
+								arithmetic_result_a(64 downto 0) &
+								series_product(63 downto 0), 1);
+							if series_index = 63 then
+								complete_series_square(
+									next_square_product(127 downto 0));
 							else
-								series_shift := to_integer(series_exponent) + 68;
-								if to_integer(series_exponent) <
-										SERIES_CUBIC_MIN_EXPONENT then
-									load_series_base(SERIES_BASE_UNADJUSTED);
-									series_product <= '0' & next_square;
-									series_serial_bits_remaining <= SERIES_WIDTH + 1;
-									series_term_bits_remaining <= 128;
-									series_alignment_remaining <= series_shift;
-									series_carry_borrow <= '0';
-									series_term_subtract <= source_sign_latched;
-									state <= APPLY_SERIES_SQUARE;
-								else
-									-- The discarded square bits are below sticky throughout
-									-- the bounded cubic range.
-									series_multiplicand <= resize(next_square(
-										127 downto CUBE_SQUARE_LOW_BIT), 128);
-									if hyperbolic_sine_latched = '1' or
-											hyperbolic_tangent_latched = '1' then
-										load_series_base(SERIES_BASE_UNADJUSTED);
-										series_multiplier <= series_source_significand;
-										cube_accumulator <= (others => '0');
-										series_index <= 0;
-										state <= CUBE_SMALL_ARGUMENT;
-									else
-										if source_sign_latched = '1' then
-											load_series_base(
-												SERIES_BASE_MINUS_REMAINDER_BOUND);
-										else
-											load_series_base(SERIES_BASE_UNADJUSTED);
-										end if;
-										series_product <= '0' & next_square;
-										series_serial_bits_remaining <= SERIES_WIDTH + 1;
-										series_term_bits_remaining <= 128;
-										series_alignment_remaining <= series_shift;
-										series_carry_borrow <= '0';
-										series_term_subtract <= source_sign_latched;
-										state <= APPLY_SERIES_SQUARE;
-									end if;
-								end if;
+								series_product <= next_square_product;
+								series_index <= series_index + 1;
 							end if;
-						else
-							series_product <= next_square_product;
-							series_index <= series_index + 1;
+						elsif series_arithmetic_done = '1' then
+							complete_series_square(series_square_result);
 						end if;
 
 					when CUBE_SMALL_ARGUMENT =>
-						next_cube := shift_right(arithmetic_result_a(16 downto 0) &
-							series_multiplier, 1);
-						if series_index = 63 then
-							series_multiplicand <= resize(next_cube(79 downto 0),
-								128);
-							cube_accumulator <= (others => '0');
-							series_multiplier <= (others => '0');
-							cube_remainder <= 0;
-							series_index <= 0;
-							state <= DIVIDE_CUBE_TERM;
-						else
-							cube_accumulator <= next_cube(80 downto 64);
-							series_multiplier <= next_cube(63 downto 0);
-							series_index <= series_index + 1;
+						if INCLUDE_SERIES_ARITHMETIC then
+							next_cube := shift_right(arithmetic_result_a(16 downto 0) &
+								series_multiplier, 1);
+							if series_index = 63 then
+								series_multiplicand <= resize(next_cube(79 downto 0),
+									128);
+								cube_accumulator <= (others => '0');
+								series_multiplier <= (others => '0');
+								cube_remainder <= 0;
+								series_index <= 0;
+								state <= DIVIDE_CUBE_TERM;
+							else
+								cube_accumulator <= next_cube(80 downto 64);
+								series_multiplier <= next_cube(63 downto 0);
+								series_index <= series_index + 1;
+							end if;
+						elsif series_arithmetic_done = '1' then
+							complete_series_cube(series_cube_quotient,
+								series_cube_remainder);
 						end if;
 
 					when DIVIDE_CUBE_TERM =>
-						if hyperbolic_tangent_latched = '1' then
-							cube_divisor := 3;
-						else
-							cube_divisor := 6;
-						end if;
-						division_trial := cube_remainder * 2;
-						if series_multiplicand(79 - series_index) = '1' then
-							division_trial := division_trial + 1;
-						end if;
-						next_cube_quotient := cube_accumulator(15 downto 0) &
-							series_multiplier;
-						if division_trial >= cube_divisor then
-							next_cube_quotient(79 - series_index) := '1';
-							division_trial := division_trial - cube_divisor;
-						end if;
-						if series_index = 79 then
-							cube_alignment_shift := 2 *
-								to_integer(series_exponent) + CUBE_ALIGNMENT_BASE;
-							series_product <= resize(next_cube_quotient,
-								series_product'length);
-							series_serial_bits_remaining <= SERIES_WIDTH + 1;
-							series_term_bits_remaining <= 80;
-							series_alignment_remaining <= cube_alignment_shift;
-							series_carry_borrow <= '0';
+						if INCLUDE_SERIES_ARITHMETIC then
 							if hyperbolic_tangent_latched = '1' then
-								if division_trial = 0 then
-									load_series_base(SERIES_BASE_PLUS_ONE);
-								else
-									load_series_base(SERIES_BASE_MINUS_ONE);
-								end if;
-								series_term_subtract <= '1';
+								cube_divisor := 3;
 							else
-								series_term_subtract <= '0';
+								cube_divisor := 6;
 							end if;
-							state <= APPLY_SERIES_CUBE;
-						else
-							cube_accumulator <= '0' &
-								next_cube_quotient(79 downto 64);
-							series_multiplier <= next_cube_quotient(63 downto 0);
-							cube_remainder <= division_trial;
-							series_index <= series_index + 1;
+							division_trial := cube_remainder * 2;
+							if series_multiplicand(79 - series_index) = '1' then
+								division_trial := division_trial + 1;
+							end if;
+							next_cube_quotient := cube_accumulator(15 downto 0) &
+								series_multiplier;
+							if division_trial >= cube_divisor then
+								next_cube_quotient(79 - series_index) := '1';
+								division_trial := division_trial - cube_divisor;
+							end if;
+							if series_index = 79 then
+								complete_series_cube(next_cube_quotient, division_trial);
+							else
+								cube_accumulator <= '0' &
+									next_cube_quotient(79 downto 64);
+								series_multiplier <= next_cube_quotient(63 downto 0);
+								cube_remainder <= division_trial;
+								series_index <= series_index + 1;
+							end if;
 						end if;
 
 					when APPLY_SERIES_SQUARE | APPLY_SERIES_CUBE =>

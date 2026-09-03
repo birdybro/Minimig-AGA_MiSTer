@@ -201,6 +201,25 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal logarithm_done : std_logic;
 	signal logarithm_round_input : fpu_round_input_t;
 	signal logarithm_base_status : std_logic_vector(7 downto 0);
+	signal exponential_series_start : std_logic;
+	signal exponential_series_cube : std_logic;
+	signal exponential_series_divide_by_six : std_logic;
+	signal exponential_series_source : unsigned(63 downto 0);
+	signal exponential_series_square_high : unsigned(15 downto 0);
+	signal logarithm_series_start : std_logic;
+	signal logarithm_series_cube : std_logic;
+	signal logarithm_series_divide_by_six : std_logic;
+	signal logarithm_series_source : unsigned(63 downto 0);
+	signal logarithm_series_square_high : unsigned(15 downto 0);
+	signal shared_series_start : std_logic;
+	signal shared_series_cube : std_logic;
+	signal shared_series_divide_by_six : std_logic;
+	signal shared_series_source : unsigned(63 downto 0);
+	signal shared_series_square_high : unsigned(15 downto 0);
+	signal shared_series_square_result : unsigned(127 downto 0);
+	signal shared_series_cube_quotient : unsigned(79 downto 0);
+	signal shared_series_cube_remainder : natural range 0 to 5;
+	signal shared_series_done : std_logic;
 	signal exponential_cordic_start : std_logic;
 	signal exponential_cordic_x_input : signed(99 downto 0);
 	signal exponential_cordic_y_input : signed(99 downto 0);
@@ -493,9 +512,36 @@ begin
 			done => hyperbolic_cordic_done
 		);
 
+	shared_series_start <= exponential_series_start or logarithm_series_start;
+	shared_series_cube <= exponential_series_cube when exponential_latched = '1'
+		else logarithm_series_cube;
+	shared_series_divide_by_six <= exponential_series_divide_by_six when
+		exponential_latched = '1' else logarithm_series_divide_by_six;
+	shared_series_source <= exponential_series_source when
+		exponential_latched = '1' else logarithm_series_source;
+	shared_series_square_high <= exponential_series_square_high when
+		exponential_latched = '1' else logarithm_series_square_high;
+
+	series_arithmetic : entity work.TG68K_FPU_Series_Arithmetic
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => shared_series_start,
+			cube_divide => shared_series_cube,
+			divide_by_six => shared_series_divide_by_six,
+			source_significand => shared_series_source,
+			square_high => shared_series_square_high,
+			square_result => shared_series_square_result,
+			cube_quotient => shared_series_cube_quotient,
+			cube_remainder => shared_series_cube_remainder,
+			busy => open,
+			done => shared_series_done
+		);
+
 	exponential : entity work.TG68K_FPU_Exponential
 		generic map(
-			INCLUDE_ROUNDING_STAGE => false
+			INCLUDE_ROUNDING_STAGE => false,
+			INCLUDE_SERIES_ARITHMETIC => false
 		)
 		port map(
 			clk => clk,
@@ -516,6 +562,15 @@ begin
 			cordic_x_result => hyperbolic_cordic_x_result,
 			cordic_y_result => hyperbolic_cordic_y_result,
 			cordic_done => hyperbolic_cordic_done,
+			series_arithmetic_done => shared_series_done,
+			series_square_result => shared_series_square_result,
+			series_cube_quotient => shared_series_cube_quotient,
+			series_cube_remainder => shared_series_cube_remainder,
+			series_arithmetic_start => exponential_series_start,
+			series_cube_divide => exponential_series_cube,
+			series_divide_by_six => exponential_series_divide_by_six,
+			series_arithmetic_source => exponential_series_source,
+			series_square_high => exponential_series_square_high,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -530,7 +585,8 @@ begin
 
 	logarithm : entity work.TG68K_FPU_Logarithm
 		generic map(
-			INCLUDE_ROUNDING_STAGE => false
+			INCLUDE_ROUNDING_STAGE => false,
+			INCLUDE_SERIES_ARITHMETIC => false
 		)
 		port map(
 			clk => clk,
@@ -549,6 +605,14 @@ begin
 			cordic_z_input => logarithm_cordic_z_input,
 			cordic_z_result => hyperbolic_cordic_z_result,
 			cordic_done => hyperbolic_cordic_done,
+			series_arithmetic_done => shared_series_done,
+			series_square_result => shared_series_square_result,
+			series_cube_quotient => shared_series_cube_quotient,
+			series_arithmetic_start => logarithm_series_start,
+			series_cube_divide => logarithm_series_cube,
+			series_divide_by_six => logarithm_series_divide_by_six,
+			series_arithmetic_source => logarithm_series_source,
+			series_square_high => logarithm_series_square_high,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
