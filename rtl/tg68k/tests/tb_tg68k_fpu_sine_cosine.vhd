@@ -45,7 +45,7 @@ architecture test of tb_tg68k_fpu_sine_cosine is
 		if shift_count = 0 then
 			return 1;
 		end if;
-		return (shift_count + 47) / 48;
+		return (shift_count + 8) / 9;
 	end function;
 
 	signal clk : std_logic := '0';

@@ -54,7 +54,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
 	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
-	constant NORMALIZATION_SHIFT_CHUNK : natural := 48;
+	constant NORMALIZATION_SHIFT_CHUNK : natural := 9;
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, ALIGN_RANGE,
