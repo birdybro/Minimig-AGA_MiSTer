@@ -20,14 +20,20 @@ architecture test of tb_tg68k_fpu_hyperbolic_cordic is
 	signal y_result : signed(99 downto 0);
 	signal z_result : signed(112 downto 0);
 	signal done : std_logic;
-	signal shift_source : signed(99 downto 0);
-	signal shift_amount : natural range 1 to 96;
-	signal shifted_coordinate : signed(99 downto 0);
+	signal cordic_x_result : signed(147 downto 0);
+	signal cordic_y_result : signed(147 downto 0);
+	signal cordic_z_result : signed(147 downto 0);
+	signal shift_source : signed(147 downto 0);
+	signal shift_amount : natural range 0 to 144;
+	signal shifted_coordinate : signed(147 downto 0);
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 	shifted_coordinate <= shift_right(shift_source, shift_amount);
+	x_result <= resize(cordic_x_result, x_result'length);
+	y_result <= resize(cordic_y_result, y_result'length);
+	z_result <= resize(cordic_z_result, z_result'length);
 
-	dut : entity work.TG68K_FPU_Hyperbolic_CORDIC
+	dut : entity work.TG68K_FPU_Circular_CORDIC
 		generic map(
 			INCLUDE_SHIFT_STAGE => false
 		)
@@ -36,16 +42,18 @@ begin
 			nReset => nReset,
 			start => start,
 			vectoring => vectoring,
+			narrow_precision => '0',
+			hyperbolic => '1',
 			rotate_on_start => rotate_on_start,
-			x_input => x_input,
-			y_input => y_input,
-			z_input => z_input,
+			x_input => resize(x_input, 148),
+			y_input => resize(y_input, 148),
+			z_input => resize(z_input, 148),
 			external_shifted_coordinate => shifted_coordinate,
 			shift_source_out => shift_source,
 			shift_amount_out => shift_amount,
-			x_result => x_result,
-			y_result => y_result,
-			z_result => z_result,
+			x_result => cordic_x_result,
+			y_result => cordic_y_result,
+			z_result => cordic_z_result,
 			busy => open,
 			done => done
 		);

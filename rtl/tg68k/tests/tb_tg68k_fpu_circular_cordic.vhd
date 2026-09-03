@@ -13,6 +13,7 @@ architecture test of tb_tg68k_fpu_circular_cordic is
 	signal start : std_logic := '0';
 	signal vectoring : std_logic := '0';
 	signal narrow_precision : std_logic := '0';
+	signal hyperbolic : std_logic := '0';
 	signal rotate_on_start : std_logic := '0';
 	signal x_input : signed(147 downto 0) := (others => '0');
 	signal y_input : signed(147 downto 0) := (others => '0');
@@ -38,6 +39,7 @@ begin
 			start => start,
 			vectoring => vectoring,
 			narrow_precision => narrow_precision,
+			hyperbolic => hyperbolic,
 			rotate_on_start => rotate_on_start,
 			x_input => x_input,
 			y_input => y_input,
@@ -191,7 +193,24 @@ begin
 			signed'(x"0001000000000000000000000000000000000"),
 			shift_left(to_signed(1, 148), 134));
 
-		report "PASS: shared circular CORDIC precision, direction, and cycles"
+		hyperbolic <= '1';
+		execute('0', '0', '1',
+			resize(signed'(x"1351E87200EEC232964A4EC8F"), 148),
+			(147 downto 0 => '0'),
+			resize(shift_left(to_signed(1, 100), 94), 148),
+			resize(signed'(x"1080AB05CA6145EDCDE9039A3"), 148),
+			resize(signed'(x"040AB3367420407999D337D03"), 148),
+			(147 downto 0 => '0'), 197);
+		hyperbolic <= '0';
+		execute('0', '0', '1',
+			signed'(x"0009B74EDA8435E5A67F5F9092BD7FD40E9C2"),
+			(147 downto 0 => '0'), shift_left(to_signed(1, 148), 134),
+			signed'(x"000EC835E79946A31457E610231AC1D6180EB"),
+			signed'(x"00061F78A9ABAA58B4698916152CF7EEE1BC1"),
+			signed'(x"0000000000000000000000000000000000001"),
+			273);
+
+		report "PASS: shared circular/hyperbolic CORDIC modes and cycles"
 			severity note;
 		stop;
 	end process;

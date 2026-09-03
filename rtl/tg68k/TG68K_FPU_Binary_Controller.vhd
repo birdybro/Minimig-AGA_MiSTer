@@ -235,9 +235,7 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal hyperbolic_cordic_y_result : signed(99 downto 0);
 	signal hyperbolic_cordic_z_result : signed(112 downto 0);
 	signal hyperbolic_cordic_done : std_logic;
-	signal hyperbolic_shift_source : signed(99 downto 0);
-	signal hyperbolic_shift_amount : natural range 1 to 96;
-	signal hyperbolic_shift_result : signed(99 downto 0);
+	signal shared_cordic_hyperbolic : std_logic;
 	signal arc_tangent_start : std_logic;
 	signal arc_tangent_done : std_logic;
 	signal arc_tangent_round_input : fpu_round_input_t;
@@ -474,43 +472,22 @@ begin
 		exponential_cordic_start = '1' else logarithm_cordic_y_input;
 	hyperbolic_cordic_z_input <= exponential_cordic_z_input when
 		exponential_cordic_start = '1' else logarithm_cordic_z_input;
-	-- Circular and hyperbolic operations are mutually exclusive at issue.
+	shared_cordic_hyperbolic <= exponential_cordic_start or
+		logarithm_cordic_start;
 	shared_cordic_shift_source <= resize(circular_shift_source,
-		shared_cordic_shift_source'length) when
-		arc_tangent_latched = '1' or sine_cosine_latched = '1' else
-		resize(hyperbolic_shift_source, shared_cordic_shift_source'length);
-	shared_cordic_shift_amount <= circular_shift_amount when
-		arc_tangent_latched = '1' or sine_cosine_latched = '1' else
-		hyperbolic_shift_amount;
+		shared_cordic_shift_source'length);
+	shared_cordic_shift_amount <= circular_shift_amount;
 	shared_cordic_shift_result <= shift_right(shared_cordic_shift_source,
 		shared_cordic_shift_amount);
 	circular_shift_result <= resize(shared_cordic_shift_result,
 		circular_shift_result'length);
-	hyperbolic_shift_result <= resize(shared_cordic_shift_result,
-		hyperbolic_shift_result'length);
-
-	hyperbolic_cordic : entity work.TG68K_FPU_Hyperbolic_CORDIC
-		generic map(
-			INCLUDE_SHIFT_STAGE => false
-		)
-		port map(
-			clk => clk,
-			nReset => nReset,
-			start => exponential_cordic_start or logarithm_cordic_start,
-			vectoring => logarithm_cordic_start,
-			rotate_on_start => exponential_cordic_start,
-			x_input => hyperbolic_cordic_x_input,
-			y_input => hyperbolic_cordic_y_input,
-			z_input => hyperbolic_cordic_z_input,
-			external_shifted_coordinate => hyperbolic_shift_result,
-			shift_source_out => hyperbolic_shift_source,
-			shift_amount_out => hyperbolic_shift_amount,
-			x_result => hyperbolic_cordic_x_result,
-			y_result => hyperbolic_cordic_y_result,
-			z_result => hyperbolic_cordic_z_result,
-			busy => open,
-			done => hyperbolic_cordic_done
-		);
+	hyperbolic_cordic_x_result <= resize(circular_cordic_x_result,
+		hyperbolic_cordic_x_result'length);
+	hyperbolic_cordic_y_result <= resize(circular_cordic_y_result,
+		hyperbolic_cordic_y_result'length);
+	hyperbolic_cordic_z_result <= resize(circular_cordic_z_result,
+		hyperbolic_cordic_z_result'length);
+	hyperbolic_cordic_done <= circular_cordic_done;
 
 	shared_series_start <= exponential_series_start or logarithm_series_start;
 	shared_series_cube <= exponential_series_cube when exponential_latched = '1'
@@ -624,11 +601,17 @@ begin
 
 	arc_tangent_start <= '1' when state = EXECUTE and
 		arc_tangent_latched = '1' else '0';
-	circular_cordic_x_input <= arc_cordic_x_input when
+	circular_cordic_x_input <= resize(hyperbolic_cordic_x_input,
+		circular_cordic_x_input'length) when shared_cordic_hyperbolic = '1' else
+		arc_cordic_x_input when
 		arc_cordic_start = '1' else sine_cordic_x_input;
-	circular_cordic_y_input <= arc_cordic_y_input when
+	circular_cordic_y_input <= resize(hyperbolic_cordic_y_input,
+		circular_cordic_y_input'length) when shared_cordic_hyperbolic = '1' else
+		arc_cordic_y_input when
 		arc_cordic_start = '1' else sine_cordic_y_input;
-	circular_cordic_z_input <= arc_cordic_z_input when
+	circular_cordic_z_input <= resize(hyperbolic_cordic_z_input,
+		circular_cordic_z_input'length) when shared_cordic_hyperbolic = '1' else
+		arc_cordic_z_input when
 		arc_cordic_start = '1' else sine_cordic_z_input;
 
 	circular_cordic : entity work.TG68K_FPU_Circular_CORDIC
@@ -638,10 +621,12 @@ begin
 		port map(
 			clk => clk,
 			nReset => nReset,
-			start => arc_cordic_start or sine_cordic_start,
-			vectoring => arc_cordic_start,
+			start => shared_cordic_hyperbolic or arc_cordic_start or
+				sine_cordic_start,
+			vectoring => logarithm_cordic_start or arc_cordic_start,
 			narrow_precision => arc_cordic_start,
-			rotate_on_start => sine_cordic_start,
+			hyperbolic => shared_cordic_hyperbolic,
+			rotate_on_start => exponential_cordic_start or sine_cordic_start,
 			x_input => circular_cordic_x_input,
 			y_input => circular_cordic_y_input,
 			z_input => circular_cordic_z_input,

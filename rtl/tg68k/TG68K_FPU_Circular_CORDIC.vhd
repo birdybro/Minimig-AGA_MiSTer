@@ -23,6 +23,7 @@ entity TG68K_FPU_Circular_CORDIC is
 		start : in std_logic;
 		vectoring : in std_logic;
 		narrow_precision : in std_logic;
+		hyperbolic : in std_logic := '0';
 		rotate_on_start : in std_logic;
 		x_input : in signed(147 downto 0);
 		y_input : in signed(147 downto 0);
@@ -45,14 +46,22 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	constant NARROW_WIDTH : natural := 116;
 	constant NARROW_ITERATIONS : natural := 112;
 	constant WIDE_ITERATIONS : natural := 136;
+	constant HYPERBOLIC_XY_WIDTH : natural := 100;
+	constant HYPERBOLIC_Z_WIDTH : natural := 113;
+	constant HYPERBOLIC_ITERATIONS : natural := 96;
 	type cordic_state_t is (IDLE, ROTATE_XY, ROTATE_Z, COMPLETE);
 	subtype cordic_value_t is signed(CORDIC_WIDTH - 1 downto 0);
 	type wide_angle_rom_t is array(0 to 63) of signed(147 downto 0);
 	type narrow_angle_rom_t is array(0 to 63) of signed(NARROW_WIDTH - 1 downto 0);
+	type hyperbolic_angle_rom_t is array(0 to 31) of
+		signed(HYPERBOLIC_XY_WIDTH - 1 downto 0);
 	constant WIDE_ANGLE_ZERO : cordic_value_t :=
 		signed'(x"08000000000000000000000000000000000");
 	constant NARROW_ANGLE_ZERO : signed(NARROW_WIDTH - 1 downto 0) :=
 		signed'(x"0C90FDAA22168C234C4C6628B80DC");
+	constant HYPERBOLIC_ANGLE_ONE : signed(
+		HYPERBOLIC_XY_WIDTH - 1 downto 0) :=
+		signed'(x"08C9F53D5681854BB520CC6AB");
 
 	signal wide_angle_rom : wide_angle_rom_t := (
 		0 => signed'(x"0800000000000000000000000000000000000"),
@@ -156,9 +165,44 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		47 => signed'(x"00000000000020000000000000000"),
 		48 to 63 => (others => '0')
 	);
+	signal hyperbolic_angle_rom : hyperbolic_angle_rom_t := (
+		0 => (others => '0'),
+		1 => signed'(x"08C9F53D5681854BB520CC6AB"),
+		2 => signed'(x"04162BBEA0451469C9DAF0BE1"),
+		3 => signed'(x"0202B12393D5DEED328CF41ED"),
+		4 => signed'(x"01005588AD375ACDCB1312A56"),
+		5 => signed'(x"00800AAC448D77125A4EE9FEE"),
+		6 => signed'(x"004001556222B47263834E959"),
+		7 => signed'(x"0020002AAB111235A6E87A2A0"),
+		8 => signed'(x"001000055558888AD1AEE1EF9"),
+		9 => signed'(x"00080000AAAAC44448D68E4C6"),
+		10 => signed'(x"0004000015555622222B46B4E"),
+		11 => signed'(x"0002000002AAAAB11111235A3"),
+		12 => signed'(x"0001000000555555888888AD2"),
+		13 => signed'(x"00008000000AAAAAAC4444449"),
+		14 => signed'(x"0000400000015555556222222"),
+		15 => signed'(x"0000200000002AAAAAAB11111"),
+		16 => signed'(x"0000100000000555555558889"),
+		17 => signed'(x"00000800000000AAAAAAAAC44"),
+		18 => signed'(x"0000040000000015555555562"),
+		19 => signed'(x"0000020000000002AAAAAAAAB"),
+		20 => signed'(x"0000010000000000555555555"),
+		21 => signed'(x"00000080000000000AAAAAAAB"),
+		22 => signed'(x"0000004000000000015555555"),
+		23 => signed'(x"0000002000000000002AAAAAB"),
+		24 => signed'(x"0000001000000000000555555"),
+		25 => signed'(x"00000008000000000000AAAAB"),
+		26 => signed'(x"0000000400000000000015555"),
+		27 => signed'(x"0000000200000000000002AAB"),
+		28 => signed'(x"0000000100000000000000555"),
+		29 => signed'(x"00000000800000000000000AB"),
+		30 => signed'(x"0000000040000000000000015"),
+		31 => signed'(x"0000000020000000000000003")
+	);
 	attribute ramstyle : string;
 	attribute ramstyle of wide_angle_rom : signal is "M10K";
 	attribute ramstyle of narrow_angle_rom : signal is "M10K";
+	attribute ramstyle of hyperbolic_angle_rom : signal is "M10K";
 
 	function fit_precision(
 			value : signed;
@@ -170,21 +214,43 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		return resize(value, CORDIC_WIDTH);
 	end function;
 
+	function fit_hyperbolic_xy(value : signed) return cordic_value_t is
+	begin
+		return resize(resize(value, HYPERBOLIC_XY_WIDTH), CORDIC_WIDTH);
+	end function;
+
+	function fit_hyperbolic_z(
+			value : signed;
+			vectoring_mode : std_logic) return cordic_value_t is
+	begin
+		if vectoring_mode = '1' then
+			return resize(resize(value, HYPERBOLIC_Z_WIDTH), CORDIC_WIDTH);
+		end if;
+		return fit_hyperbolic_xy(value);
+	end function;
+
 	signal state : cordic_state_t := IDLE;
 	signal vectoring_latched : std_logic := '0';
 	signal narrow_latched : std_logic := '0';
+	signal hyperbolic_latched : std_logic := '0';
 	signal x_value : cordic_value_t := (others => '0');
 	signal y_value : cordic_value_t := (others => '0');
 	signal x_next : cordic_value_t := (others => '0');
 	signal z_value : cordic_value_t := (others => '0');
 	signal iteration : natural range 0 to WIDE_ITERATIONS := 0;
 	signal angle_address : natural range 0 to 47 := 0;
+	signal hyperbolic_angle_address : natural range 1 to 31 := 1;
 	signal wide_angle_data : cordic_value_t := (others => '0');
 	signal narrow_angle_data : signed(NARROW_WIDTH - 1 downto 0) :=
 		(others => '0');
+	signal hyperbolic_angle_data : signed(
+		HYPERBOLIC_XY_WIDTH - 1 downto 0) := (others => '0');
 	signal shift_angle : cordic_value_t := (others => '0');
+	signal repeat_iteration : std_logic := '0';
 	signal active_vectoring : std_logic;
 	signal active_narrow : std_logic;
+	signal active_hyperbolic : std_logic;
+	signal active_iteration : natural range 0 to WIDE_ITERATIONS;
 	signal active_x : cordic_value_t;
 	signal active_y : cordic_value_t;
 	signal active_z : cordic_value_t;
@@ -207,29 +273,44 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 begin
 	active_vectoring <= vectoring when state = IDLE else vectoring_latched;
 	active_narrow <= narrow_precision when state = IDLE else narrow_latched;
-	active_x <= fit_precision(x_input, narrow_precision) when state = IDLE else
-		x_value;
-	active_y <= fit_precision(y_input, narrow_precision) when state = IDLE else
-		y_value;
-	active_z <= fit_precision(z_input, narrow_precision) when state = IDLE else
-		z_value;
-	active_angle <= resize(NARROW_ANGLE_ZERO, CORDIC_WIDTH) when
+	active_hyperbolic <= hyperbolic when state = IDLE else
+		hyperbolic_latched;
+	active_iteration <= 1 when state = IDLE and hyperbolic = '1' else
+		iteration;
+	active_x <= fit_hyperbolic_xy(x_input) when
+		state = IDLE and hyperbolic = '1' else
+		fit_precision(x_input, narrow_precision) when state = IDLE else x_value;
+	active_y <= fit_hyperbolic_xy(y_input) when
+		state = IDLE and hyperbolic = '1' else
+		fit_precision(y_input, narrow_precision) when state = IDLE else y_value;
+	active_z <= fit_hyperbolic_z(z_input, vectoring) when
+		state = IDLE and hyperbolic = '1' else
+		fit_precision(z_input, narrow_precision) when state = IDLE else z_value;
+	active_angle <= resize(HYPERBOLIC_ANGLE_ONE, CORDIC_WIDTH) when
+		state = IDLE and hyperbolic = '1' else
+		resize(NARROW_ANGLE_ZERO, CORDIC_WIDTH) when
 		state = IDLE and narrow_precision = '1' else
 		WIDE_ANGLE_ZERO when state = IDLE else
+		resize(hyperbolic_angle_data, CORDIC_WIDTH) when
+		active_hyperbolic = '1' and iteration <= 31 else
+		shift_angle when active_hyperbolic = '1' else
 		resize(narrow_angle_data, CORDIC_WIDTH) when
 		active_narrow = '1' and iteration <= 47 else
 		wide_angle_data when iteration <= 47 else shift_angle;
 	active_direction <= '1' when
-		(active_vectoring = '1' and active_y > 0) or
+		(active_vectoring = '1' and active_hyperbolic = '1' and
+			active_y >= 0) or
+		(active_vectoring = '1' and active_hyperbolic = '0' and
+			active_y > 0) or
 		(active_vectoring = '0' and active_z >= 0) else '0';
 	shift_source <= active_y when state = ROTATE_XY or
 		(state = IDLE and start = '1' and rotate_on_start = '1') else
 		x_value;
 	shift_source_out <= resize(shift_source, shift_source_out'length);
-	shift_amount_out <= iteration;
+	shift_amount_out <= active_iteration;
 
 	with_shift_stage : if INCLUDE_SHIFT_STAGE generate
-		shifted_coordinate <= shift_right(shift_source, iteration);
+		shifted_coordinate <= shift_right(shift_source, active_iteration);
 	end generate;
 
 	without_shift_stage : if not INCLUDE_SHIFT_STAGE generate
@@ -243,32 +324,61 @@ begin
 	y_result <= resize(y_value, y_result'length);
 	z_result <= resize(z_value, z_result'length);
 
-	arithmetic_operands : process(active_vectoring, active_y, active_z,
+	arithmetic_operands : process(state, start, rotate_on_start,
+		active_vectoring, active_hyperbolic, active_y, active_z,
 		active_angle, active_direction, shifted_coordinate)
 	begin
-		x_addend <= shifted_coordinate;
-		y_addend <= shifted_coordinate;
-		z_addend <= active_angle;
+		x_addend <= (others => '0');
+		y_addend <= (others => '0');
+		z_addend <= (others => '0');
 		x_subtract <= '0';
 		y_subtract <= '0';
 		z_subtract <= '0';
-		if active_vectoring = '1' then
-			if active_y = 0 then
-				x_addend <= (others => '0');
-				y_addend <= (others => '0');
-				z_addend <= (others => '0');
-			elsif active_y > 0 then
-				y_subtract <= '1';
-			else
-				x_subtract <= '1';
-				z_subtract <= '1';
+		if active_hyperbolic = '1' then
+			if state = ROTATE_XY or
+					(state = IDLE and start = '1' and
+					rotate_on_start = '1') then
+				x_addend <= shifted_coordinate;
+				if (active_vectoring = '1' and active_y >= 0) or
+						(active_vectoring = '0' and active_z < 0) then
+					x_subtract <= '1';
+				end if;
+			elsif state = ROTATE_Z then
+				y_addend <= shifted_coordinate;
+				z_addend <= active_angle;
+				if active_vectoring = '1' then
+					z_subtract <= not active_direction;
+				else
+					z_subtract <= active_direction;
+				end if;
+				if (active_vectoring = '1' and active_direction = '1') or
+						(active_vectoring = '0' and
+						active_direction = '0') then
+					y_subtract <= '1';
+				end if;
 			end if;
 		else
-			if active_direction = '1' then
-				x_subtract <= '1';
-				z_subtract <= '1';
+			x_addend <= shifted_coordinate;
+			y_addend <= shifted_coordinate;
+			z_addend <= active_angle;
+			if active_vectoring = '1' then
+				if active_y = 0 then
+					x_addend <= (others => '0');
+					y_addend <= (others => '0');
+					z_addend <= (others => '0');
+				elsif active_y > 0 then
+					y_subtract <= '1';
+				else
+					x_subtract <= '1';
+					z_subtract <= '1';
+				end if;
 			else
-				y_subtract <= '1';
+				if active_direction = '1' then
+					x_subtract <= '1';
+					z_subtract <= '1';
+				else
+					y_subtract <= '1';
+				end if;
 			end if;
 		end if;
 	end process;
@@ -293,9 +403,15 @@ begin
 		end if;
 	end process;
 
-	fitted_x_result <= fit_precision(signed(x_arithmetic_result), active_narrow);
-	fitted_y_result <= fit_precision(signed(y_arithmetic_result), active_narrow);
-	fitted_z_result <= fit_precision(signed(z_arithmetic_result), active_narrow);
+	fitted_x_result <= fit_hyperbolic_xy(signed(x_arithmetic_result)) when
+		active_hyperbolic = '1' else
+		fit_precision(signed(x_arithmetic_result), active_narrow);
+	fitted_y_result <= fit_hyperbolic_xy(signed(y_arithmetic_result)) when
+		active_hyperbolic = '1' else
+		fit_precision(signed(y_arithmetic_result), active_narrow);
+	fitted_z_result <= fit_hyperbolic_z(signed(z_arithmetic_result),
+		active_vectoring) when active_hyperbolic = '1' else
+		fit_precision(signed(z_arithmetic_result), active_narrow);
 
 	cordic_sequence : process(clk)
 		variable next_tail : cordic_value_t;
@@ -303,32 +419,48 @@ begin
 		if rising_edge(clk) then
 			wide_angle_data <= wide_angle_rom(angle_address)(147 downto 8);
 			narrow_angle_data <= narrow_angle_rom(angle_address);
+			hyperbolic_angle_data <=
+				hyperbolic_angle_rom(hyperbolic_angle_address);
 			if nReset = '0' then
 				state <= IDLE;
 				vectoring_latched <= '0';
 				narrow_latched <= '0';
+				hyperbolic_latched <= '0';
 				x_value <= (others => '0');
 				y_value <= (others => '0');
 				x_next <= (others => '0');
 				z_value <= (others => '0');
 				iteration <= 0;
 				angle_address <= 0;
+				hyperbolic_angle_address <= 1;
 				shift_angle <= (others => '0');
+				repeat_iteration <= '0';
 			else
 				case state is
 					when IDLE =>
 						angle_address <= 0;
-						iteration <= 0;
+						hyperbolic_angle_address <= 1;
+						repeat_iteration <= '0';
+						if hyperbolic = '1' then
+							iteration <= 1;
+						else
+							iteration <= 0;
+						end if;
 						if start = '1' then
 							vectoring_latched <= vectoring;
 							narrow_latched <= narrow_precision;
+							hyperbolic_latched <= hyperbolic;
 							x_value <= active_x;
 							y_value <= active_y;
 							z_value <= active_z;
 							shift_angle <= (others => '0');
 							if rotate_on_start = '1' then
 								x_next <= fitted_x_result;
-								angle_address <= 1;
+								if hyperbolic = '1' then
+									hyperbolic_angle_address <= 2;
+								else
+									angle_address <= 1;
+								end if;
 								state <= ROTATE_Z;
 							else
 								state <= ROTATE_XY;
@@ -337,7 +469,19 @@ begin
 
 					when ROTATE_XY =>
 						x_next <= fitted_x_result;
-						if iteration < 47 then
+						if hyperbolic_latched = '1' then
+							if not ((iteration = 4 or iteration = 13 or
+									iteration = 40) and
+									repeat_iteration = '0') then
+								if iteration < 31 then
+									hyperbolic_angle_address <= iteration + 1;
+								elsif iteration = 31 then
+									next_tail := (others => '0');
+									next_tail(64) := '1';
+									shift_angle <= next_tail;
+								end if;
+							end if;
+						elsif iteration < 47 then
 							angle_address <= iteration + 1;
 						elsif iteration = 47 then
 							if narrow_latched = '1' then
@@ -355,21 +499,34 @@ begin
 						x_value <= x_next;
 						z_value <= fitted_z_result;
 						y_value <= fitted_y_result;
-						if (narrow_latched = '1' and
+						if hyperbolic_latched = '1' and
+								(iteration = 4 or iteration = 13 or
+								iteration = 40) and repeat_iteration = '0' then
+							repeat_iteration <= '1';
+							state <= ROTATE_XY;
+						elsif hyperbolic_latched = '1' and
+								iteration = HYPERBOLIC_ITERATIONS then
+							state <= COMPLETE;
+						elsif hyperbolic_latched = '0' and
+								((narrow_latched = '1' and
 								iteration = NARROW_ITERATIONS) or
 								(narrow_latched = '0' and
-								iteration = WIDE_ITERATIONS) then
+								iteration = WIDE_ITERATIONS)) then
 							state <= COMPLETE;
 						else
-							if iteration > 47 then
+							if (hyperbolic_latched = '1' and iteration > 31) or
+									(hyperbolic_latched = '0' and iteration > 47) then
 								shift_angle <= shift_right(shift_angle, 1);
 							end if;
+							repeat_iteration <= '0';
 							iteration <= iteration + 1;
 							state <= ROTATE_XY;
 						end if;
 
 					when COMPLETE =>
 						angle_address <= 0;
+						hyperbolic_angle_address <= 1;
+						repeat_iteration <= '0';
 						iteration <= 0;
 						state <= IDLE;
 				end case;

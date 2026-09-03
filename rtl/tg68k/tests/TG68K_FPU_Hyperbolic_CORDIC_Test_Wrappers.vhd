@@ -36,23 +36,30 @@ architecture test of TG68K_FPU_Exponential_With_CORDIC is
 	signal cordic_z_input : signed(112 downto 0);
 	signal cordic_x_result : signed(99 downto 0);
 	signal cordic_y_result : signed(99 downto 0);
+	signal shared_cordic_x_result : signed(147 downto 0);
+	signal shared_cordic_y_result : signed(147 downto 0);
 	signal cordic_done : std_logic;
 begin
-	cordic : entity work.TG68K_FPU_Hyperbolic_CORDIC
+	cordic_x_result <= resize(shared_cordic_x_result, cordic_x_result'length);
+	cordic_y_result <= resize(shared_cordic_y_result, cordic_y_result'length);
+
+	cordic : entity work.TG68K_FPU_Circular_CORDIC
 		port map(
 			clk => clk,
 			nReset => nReset,
 			start => cordic_start,
 			vectoring => '0',
+			narrow_precision => '0',
+			hyperbolic => '1',
 			rotate_on_start => '1',
-			x_input => cordic_x_input,
-			y_input => cordic_y_input,
-			z_input => cordic_z_input,
+			x_input => resize(cordic_x_input, 148),
+			y_input => resize(cordic_y_input, 148),
+			z_input => resize(cordic_z_input, 148),
 			external_shifted_coordinate => (others => '0'),
 			shift_source_out => open,
 			shift_amount_out => open,
-			x_result => cordic_x_result,
-			y_result => cordic_y_result,
+			x_result => shared_cordic_x_result,
+			y_result => shared_cordic_y_result,
 			z_result => open,
 			busy => open,
 			done => cordic_done
@@ -131,24 +138,29 @@ architecture test of TG68K_FPU_Logarithm_With_CORDIC is
 	signal cordic_y_input : signed(99 downto 0);
 	signal cordic_z_input : signed(112 downto 0);
 	signal cordic_z_result : signed(112 downto 0);
+	signal shared_cordic_z_result : signed(147 downto 0);
 	signal cordic_done : std_logic;
 begin
-	cordic : entity work.TG68K_FPU_Hyperbolic_CORDIC
+	cordic_z_result <= resize(shared_cordic_z_result, cordic_z_result'length);
+
+	cordic : entity work.TG68K_FPU_Circular_CORDIC
 		port map(
 			clk => clk,
 			nReset => nReset,
 			start => cordic_start,
 			vectoring => '1',
+			narrow_precision => '0',
+			hyperbolic => '1',
 			rotate_on_start => '0',
-			x_input => cordic_x_input,
-			y_input => cordic_y_input,
-			z_input => cordic_z_input,
+			x_input => resize(cordic_x_input, 148),
+			y_input => resize(cordic_y_input, 148),
+			z_input => resize(cordic_z_input, 148),
 			external_shifted_coordinate => (others => '0'),
 			shift_source_out => open,
 			shift_amount_out => open,
 			x_result => open,
 			y_result => open,
-			z_result => cordic_z_result,
+			z_result => shared_cordic_z_result,
 			busy => open,
 			done => cordic_done
 		);
