@@ -34,6 +34,8 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	-- Segmented 192-bit powers retain over 100 guard bits beyond the
 	-- maximum 17-digit packed result.
 	constant POWER_PRECISION : natural := 192;
+	constant RETAINED_POWER_BITS : natural := 256;
+	constant SOURCE_PRODUCT_BITS : natural := RETAINED_POWER_BITS + 64;
 	constant LOG10_TWO_SCALED : integer := 1292913986;
 	constant TEN_TO_17 : unsigned(63 downto 0) :=
 		unsigned'(x"016345785D8A0000");
@@ -63,6 +65,15 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 			end if;
 		end loop;
 		return 64;
+	end function;
+
+	function or_reduce(value : unsigned) return std_logic is
+		variable reduced : std_logic := '0';
+	begin
+		for index in value'range loop
+			reduced := reduced or value(index);
+		end loop;
+		return reduced;
 	end function;
 
 	function bcd_digit(
@@ -148,13 +159,15 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal power_multiplicand : unsigned(191 downto 0) := (others => '0');
 	signal power_product : unsigned(384 downto 0) := (others => '0');
 	signal power_iteration : natural range 0 to 191 := 0;
-	signal source_product : unsigned(448 downto 0) := (others => '0');
+	signal source_product : unsigned(SOURCE_PRODUCT_BITS downto 0) :=
+		(others => '0');
 	signal source_iteration : natural range 0 to 63 := 0;
 	-- Keep the wide product stationary while serially extracting the scaled
-	-- low word and sticky bit; a bidirectional 448-bit shift mux is larger.
+	-- low word and sticky bit; a bidirectional 320-bit shift mux is larger.
 	signal scaled_integer_register : unsigned(63 downto 0) := (others => '0');
 	signal alignment_sticky : std_logic := '0';
-	signal alignment_shift : integer range -448 to 448 := 0;
+	signal alignment_shift : integer range -SOURCE_PRODUCT_BITS to
+		SOURCE_PRODUCT_BITS := 0;
 	signal alignment_iteration : natural range 0 to 447 := 0;
 	signal alignment_limit : natural range 63 to 447 := 63;
 	signal factor_value : unsigned(63 downto 0) := (others => '0');
@@ -278,12 +291,15 @@ begin
 		variable estimate : integer range -5000 to 5000;
 		variable power_accumulator_sum : unsigned(192 downto 0);
 		variable next_power_product : unsigned(384 downto 0);
-		variable source_accumulator_sum : unsigned(384 downto 0);
-		variable next_source_product : unsigned(448 downto 0);
+		variable source_accumulator_sum : unsigned(
+			RETAINED_POWER_BITS downto 0);
+		variable next_source_product : unsigned(SOURCE_PRODUCT_BITS downto 0);
 		variable shift_value : integer range -32768 to 32767;
+		variable retained_shift_value : integer range -32768 to 32767;
 		variable next_scaled_integer : unsigned(63 downto 0);
 		variable next_sticky : std_logic;
-		variable source_index : integer range -448 to 895;
+		variable source_index : integer range -SOURCE_PRODUCT_BITS to
+			2 * SOURCE_PRODUCT_BITS - 1;
 		variable scaled_integer : unsigned(63 downto 0);
 		variable scale_lsb_exponent : integer range -5017 to 4983;
 		variable scale_is_exact : boolean;
@@ -424,7 +440,8 @@ begin
 						power_product <= next_power_product;
 						if power_iteration = 191 then
 							source_product <= resize(
-								unsigned(source_latched(63 downto 0)), 449);
+								unsigned(source_latched(63 downto 0)),
+								SOURCE_PRODUCT_BITS + 1);
 							source_iteration <= 0;
 							state <= MULTIPLY_SOURCE;
 						else
@@ -432,10 +449,13 @@ begin
 						end if;
 
 					when MULTIPLY_SOURCE =>
-						source_accumulator_sum := source_product(448 downto 64);
+						source_accumulator_sum := source_product(
+							SOURCE_PRODUCT_BITS downto 64);
 						if source_product(0) = '1' then
 							source_accumulator_sum := source_accumulator_sum +
-								power_product;
+								resize(power_product(383 downto
+									384 - RETAINED_POWER_BITS),
+									RETAINED_POWER_BITS + 1);
 						end if;
 						next_source_product := shift_right(source_accumulator_sum &
 							source_product(63 downto 0), 1);
@@ -449,20 +469,23 @@ begin
 									integer(power_bit_sum) + 4 -
 									2 * POWER_PRECISION;
 							end if;
+							retained_shift_value := shift_value +
+								2 * POWER_PRECISION - RETAINED_POWER_BITS;
 							scaled_integer_register <= (others => '0');
-							alignment_sticky <= '0';
+							alignment_sticky <= or_reduce(power_product(
+								383 - RETAINED_POWER_BITS downto 0));
 							alignment_iteration <= 0;
 							if shift_value <= -448 then
-								alignment_shift <= -448;
+								alignment_shift <= -SOURCE_PRODUCT_BITS;
 								alignment_limit <= 447;
 							elsif shift_value < -64 then
-								alignment_shift <= shift_value;
+								alignment_shift <= retained_shift_value;
 								alignment_limit <= natural(-shift_value) - 1;
-							elsif shift_value > 448 then
-								alignment_shift <= 448;
+							elsif retained_shift_value > SOURCE_PRODUCT_BITS then
+								alignment_shift <= SOURCE_PRODUCT_BITS;
 								alignment_limit <= 63;
 							else
-								alignment_shift <= shift_value;
+								alignment_shift <= retained_shift_value;
 								alignment_limit <= 63;
 							end if;
 							state <= ALIGN_PRODUCT;
@@ -475,7 +498,8 @@ begin
 						if alignment_iteration <= 63 then
 							source_index := integer(alignment_iteration) -
 								alignment_shift;
-							if source_index >= 0 and source_index <= 447 then
+							if source_index >= 0 and source_index <
+									SOURCE_PRODUCT_BITS then
 								next_scaled_integer(alignment_iteration) :=
 									source_product(source_index);
 							else
