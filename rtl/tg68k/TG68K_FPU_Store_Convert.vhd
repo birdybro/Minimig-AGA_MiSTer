@@ -139,8 +139,8 @@ begin
 		variable shifted_significand : unsigned(63 downto 0);
 		variable result_exponent : integer range -65536 to 65535;
 		variable shift_count : natural range 0 to 63;
-		variable integer_magnitude : unsigned(64 downto 0);
-		variable integer_limit : unsigned(64 downto 0);
+		variable integer_magnitude : unsigned(32 downto 0);
+		variable integer_limit : unsigned(32 downto 0);
 		variable integer_bits : unsigned(31 downto 0);
 		variable source_significand : unsigned(63 downto 0);
 		variable shift_operand : unsigned(63 downto 0);
@@ -199,7 +199,7 @@ begin
 				source_class = FPU_CLASS_NORMAL then
 			shift_operand := source_significand;
 			result_exponent := to_integer(prepared_exponent);
-			if result_exponent >= 0 and result_exponent < 63 then
+			if result_exponent >= 0 and result_exponent < 32 then
 				shift_count := 63 - result_exponent;
 			end if;
 		end if;
@@ -297,10 +297,11 @@ begin
 						status(FPU_FPSR_OPERR_BIT - 8) := '1';
 					end if;
 				elsif source_class = FPU_CLASS_NORMAL then
-					if result_exponent >= 63 then
+					if result_exponent >= 32 then
 						integer_overflow := true;
 					elsif result_exponent >= 0 then
-						integer_magnitude := resize(shared_shift_result, 65);
+						integer_magnitude := resize(
+							shared_shift_result(31 downto 0), 33);
 						for index in 0 to 62 loop
 							if index < shift_count then
 								discarded := discarded or
@@ -351,21 +352,21 @@ begin
 					case destination_format is
 						when FPU_FORMAT_BYTE_INTEGER =>
 							if source(79) = '1' then
-								integer_limit := to_unsigned(128, 65);
+								integer_limit := to_unsigned(128, 33);
 							else
-								integer_limit := to_unsigned(127, 65);
+								integer_limit := to_unsigned(127, 33);
 							end if;
 						when FPU_FORMAT_WORD_INTEGER =>
 							if source(79) = '1' then
-								integer_limit := to_unsigned(32768, 65);
+								integer_limit := to_unsigned(32768, 33);
 							else
-								integer_limit := to_unsigned(32767, 65);
+								integer_limit := to_unsigned(32767, 33);
 							end if;
 						when others =>
 							if source(79) = '1' then
-								integer_limit := shift_left(to_unsigned(1, 65), 31);
+								integer_limit := shift_left(to_unsigned(1, 33), 31);
 							else
-								integer_limit := shift_left(to_unsigned(1, 65), 31) - 1;
+								integer_limit := shift_left(to_unsigned(1, 33), 31) - 1;
 							end if;
 					end case;
 
