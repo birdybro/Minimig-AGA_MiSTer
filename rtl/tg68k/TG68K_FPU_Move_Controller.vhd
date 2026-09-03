@@ -183,8 +183,6 @@ architecture rtl of TG68K_FPU_Move_Controller is
 	signal k_factor_latched : std_logic_vector(6 downto 0) := (others => '0');
 	signal source_latched : fpu_extended_t := (others => '0');
 	signal external_buffer : std_logic_vector(95 downto 0) := (others => '0');
-	signal rounded_external_latched : std_logic_vector(95 downto 0) :=
-		(others => '0');
 	signal result_latched : fpu_extended_t := (others => '0');
 	signal status_latched : std_logic_vector(7 downto 0) := (others => '0');
 	signal transfer_index : natural range 0 to 5 := 0;
@@ -225,8 +223,7 @@ begin
 		FPU_FORMAT_EXTENDED when others;
 	unpack_format <= precision_format when state = REGISTER_REPACK else
 		format_latched;
-	unpack_data <= rounded_external_latched when state = REGISTER_REPACK else
-		external_buffer;
+	unpack_data <= external_buffer;
 	conversion_source_format <= unpack_format;
 	conversion_source_data <= unpack_data;
 	store_format <= format_latched when
@@ -379,7 +376,6 @@ begin
 				k_factor_latched <= (others => '0');
 				source_latched <= (others => '0');
 				external_buffer <= (others => '0');
-				rounded_external_latched <= (others => '0');
 				result_latched <= (others => '0');
 				status_latched <= (others => '0');
 				transfer_index <= 0;
@@ -477,7 +473,7 @@ begin
 
 					when REGISTER_ROUND =>
 						if store_valid = '1' then
-							rounded_external_latched <= store_data;
+							external_buffer <= store_data;
 							status_latched <= converted_status;
 							state <= REGISTER_REPACK;
 						else
