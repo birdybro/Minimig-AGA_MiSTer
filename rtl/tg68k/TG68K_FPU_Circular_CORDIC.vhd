@@ -192,16 +192,18 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	signal active_direction : std_logic;
 	signal shift_source : cordic_value_t;
 	signal shifted_coordinate : cordic_value_t;
-	signal left_a : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal right_a : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal left_b : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal right_b : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal subtract_a : std_logic;
-	signal subtract_b : std_logic;
-	signal arithmetic_result_a : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal arithmetic_result_b : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal fitted_result_a : cordic_value_t;
-	signal fitted_result_b : cordic_value_t;
+	signal x_addend : cordic_value_t;
+	signal y_addend : cordic_value_t;
+	signal z_addend : cordic_value_t;
+	signal x_subtract : std_logic;
+	signal y_subtract : std_logic;
+	signal z_subtract : std_logic;
+	signal x_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal y_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal z_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal fitted_x_result : cordic_value_t;
+	signal fitted_y_result : cordic_value_t;
+	signal fitted_z_result : cordic_value_t;
 begin
 	active_vectoring <= vectoring when state = IDLE else vectoring_latched;
 	active_narrow <= narrow_precision when state = IDLE else narrow_latched;
@@ -241,69 +243,59 @@ begin
 	y_result <= resize(y_value, y_result'length);
 	z_result <= resize(z_value, z_result'length);
 
-	arithmetic_operands : process(state, start, rotate_on_start, active_vectoring,
-		active_x, active_y, active_z, active_angle, active_direction,
-		shifted_coordinate, x_value, y_value, z_value, vectoring_latched)
+	arithmetic_operands : process(active_vectoring, active_y, active_z,
+		active_angle, active_direction, shifted_coordinate)
 	begin
-		left_a <= (others => '0');
-		right_a <= (others => '0');
-		left_b <= (others => '0');
-		right_b <= (others => '0');
-		subtract_a <= '0';
-		subtract_b <= '0';
-		if state = ROTATE_XY or
-				(state = IDLE and start = '1' and rotate_on_start = '1') then
-			left_a <= unsigned(active_x);
-			if active_vectoring = '1' then
-				if active_y > 0 then
-					right_a <= unsigned(shifted_coordinate);
-				elsif active_y < 0 then
-					right_a <= unsigned(shifted_coordinate);
-					subtract_a <= '1';
-				end if;
+		x_addend <= shifted_coordinate;
+		y_addend <= shifted_coordinate;
+		z_addend <= active_angle;
+		x_subtract <= '0';
+		y_subtract <= '0';
+		z_subtract <= '0';
+		if active_vectoring = '1' then
+			if active_y = 0 then
+				x_addend <= (others => '0');
+				y_addend <= (others => '0');
+				z_addend <= (others => '0');
+			elsif active_y > 0 then
+				y_subtract <= '1';
 			else
-				right_a <= unsigned(shifted_coordinate);
-				if active_z >= 0 then
-					subtract_a <= '1';
-				end if;
+				x_subtract <= '1';
+				z_subtract <= '1';
 			end if;
-		elsif state = ROTATE_Z then
-			left_a <= unsigned(z_value);
-			if vectoring_latched = '0' or y_value /= 0 then
-				right_a <= unsigned(active_angle);
-			end if;
-			left_b <= unsigned(y_value);
-			if vectoring_latched = '1' then
-				subtract_a <= not active_direction;
-				if y_value /= 0 then
-					right_b <= unsigned(shifted_coordinate);
-					subtract_b <= active_direction;
-				end if;
+		else
+			if active_direction = '1' then
+				x_subtract <= '1';
+				z_subtract <= '1';
 			else
-				subtract_a <= active_direction;
-				right_b <= unsigned(shifted_coordinate);
-				subtract_b <= not active_direction;
+				y_subtract <= '1';
 			end if;
 		end if;
 	end process;
 
-	arithmetic_add_subtract : process(subtract_a, left_a, right_a,
-			subtract_b, left_b, right_b)
+	arithmetic_add_subtract : process(x_subtract, active_x, x_addend,
+			y_subtract, y_value, y_addend, z_subtract, z_value, z_addend)
 	begin
-		if subtract_a = '1' then
-			arithmetic_result_a <= left_a - right_a;
+		if x_subtract = '1' then
+			x_arithmetic_result <= unsigned(active_x) - unsigned(x_addend);
 		else
-			arithmetic_result_a <= left_a + right_a;
+			x_arithmetic_result <= unsigned(active_x) + unsigned(x_addend);
 		end if;
-		if subtract_b = '1' then
-			arithmetic_result_b <= left_b - right_b;
+		if y_subtract = '1' then
+			y_arithmetic_result <= unsigned(y_value) - unsigned(y_addend);
 		else
-			arithmetic_result_b <= left_b + right_b;
+			y_arithmetic_result <= unsigned(y_value) + unsigned(y_addend);
+		end if;
+		if z_subtract = '1' then
+			z_arithmetic_result <= unsigned(z_value) - unsigned(z_addend);
+		else
+			z_arithmetic_result <= unsigned(z_value) + unsigned(z_addend);
 		end if;
 	end process;
 
-	fitted_result_a <= fit_precision(signed(arithmetic_result_a), active_narrow);
-	fitted_result_b <= fit_precision(signed(arithmetic_result_b), active_narrow);
+	fitted_x_result <= fit_precision(signed(x_arithmetic_result), active_narrow);
+	fitted_y_result <= fit_precision(signed(y_arithmetic_result), active_narrow);
+	fitted_z_result <= fit_precision(signed(z_arithmetic_result), active_narrow);
 
 	cordic_sequence : process(clk)
 		variable next_tail : cordic_value_t;
@@ -335,7 +327,7 @@ begin
 							z_value <= active_z;
 							shift_angle <= (others => '0');
 							if rotate_on_start = '1' then
-								x_next <= fitted_result_a;
+								x_next <= fitted_x_result;
 								angle_address <= 1;
 								state <= ROTATE_Z;
 							else
@@ -344,7 +336,7 @@ begin
 						end if;
 
 					when ROTATE_XY =>
-						x_next <= fitted_result_a;
+						x_next <= fitted_x_result;
 						if iteration < 47 then
 							angle_address <= iteration + 1;
 						elsif iteration = 47 then
@@ -361,8 +353,8 @@ begin
 
 					when ROTATE_Z =>
 						x_value <= x_next;
-						z_value <= fitted_result_a;
-						y_value <= fitted_result_b;
+						z_value <= fitted_z_result;
+						y_value <= fitted_y_result;
 						if (narrow_latched = '1' and
 								iteration = NARROW_ITERATIONS) or
 								(narrow_latched = '0' and
