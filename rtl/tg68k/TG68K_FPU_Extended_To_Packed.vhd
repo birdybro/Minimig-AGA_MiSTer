@@ -158,7 +158,6 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal alignment_iteration : natural range 0 to 447 := 0;
 	signal alignment_limit : natural range 63 to 447 := 63;
 	signal factor_value : unsigned(63 downto 0) := (others => '0');
-	signal factor_quotient : unsigned(63 downto 0) := (others => '0');
 	signal factor_remainder : unsigned(2 downto 0) := (others => '0');
 	signal factor_bit_index : natural range 7 to 63 := 63;
 	signal factor_five_count : natural range 0 to 27 := 0;
@@ -205,13 +204,12 @@ begin
 	-- needed to recognize mathematically exact decimal conversions so that
 	-- approximation residue cannot spuriously set INEX2.
 	factor_five_sequence : process(clk)
-		variable next_quotient : unsigned(63 downto 0);
+		variable next_factor : unsigned(63 downto 0);
 		variable next_remainder : unsigned(3 downto 0);
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				factor_value <= (others => '0');
-				factor_quotient <= (others => '0');
 				factor_remainder <= (others => '0');
 				factor_bit_index <= 63;
 				factor_five_count <= 0;
@@ -226,7 +224,6 @@ begin
 				if start = '1' and factor_start_seen = '0' then
 					factor_start_seen <= '1';
 					factor_value <= unsigned(source(63 downto 0));
-					factor_quotient <= (others => '0');
 					factor_remainder <= (others => '0');
 					factor_bit_index <= 63;
 					factor_five_count <= 0;
@@ -240,20 +237,21 @@ begin
 						factor_active <= '1';
 					end if;
 				elsif factor_active = '1' then
-					next_quotient := factor_quotient;
+					next_factor := factor_value;
 					next_remainder := resize(factor_remainder, 4);
 					for offset in 0 to 7 loop
 						next_remainder := shift_left(next_remainder, 1);
 						next_remainder(0) := factor_value(factor_bit_index - offset);
 						if next_remainder >= 5 then
 							next_remainder := next_remainder - 5;
-							next_quotient(factor_bit_index - offset) := '1';
+							next_factor(factor_bit_index - offset) := '1';
+						else
+							next_factor(factor_bit_index - offset) := '0';
 						end if;
 					end loop;
 					if factor_bit_index = 7 then
 						if next_remainder = 0 and factor_five_count < 27 then
-							factor_value <= next_quotient;
-							factor_quotient <= (others => '0');
+							factor_value <= next_factor;
 							factor_remainder <= (others => '0');
 							factor_bit_index <= 63;
 							factor_five_count <= factor_five_count + 1;
@@ -262,7 +260,7 @@ begin
 							factor_done <= '1';
 						end if;
 					else
-						factor_quotient <= next_quotient;
+						factor_value <= next_factor;
 						factor_remainder <= next_remainder(2 downto 0);
 						factor_bit_index <= factor_bit_index - 8;
 					end if;
