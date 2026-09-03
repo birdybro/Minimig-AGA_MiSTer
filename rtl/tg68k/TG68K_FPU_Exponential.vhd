@@ -165,10 +165,9 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal tangent_iteration : natural range 0 to 64 := 0;
 	signal result_exponent : signed(16 downto 0) := (others => '0');
 	signal cordic_source_z : cordic_value_t := (others => '0');
-	signal arithmetic_left_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
-	signal arithmetic_right_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
-	signal arithmetic_subtract_a : std_logic;
-	signal arithmetic_result_a : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal series_arithmetic_result : unsigned(64 downto 0);
+	signal scale_arithmetic_result : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+	signal value_arithmetic_result : unsigned(CORDIC_WIDTH downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -206,90 +205,100 @@ begin
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
 
-	arithmetic_operands : process(state, series_product, series_multiplier,
-		series_multiplicand, cube_accumulator, scale_accumulator,
-		scale_magnitude_register, scale_index, log2_product,
-		subtraction_value, subtraction_one, cordic_x_result, cordic_y_result)
-		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+	series_arithmetic : process(state, series_product, series_multiplier,
+		series_multiplicand, cube_accumulator)
+		variable left_value : unsigned(64 downto 0);
+		variable right_value : unsigned(64 downto 0);
 	begin
-		arithmetic_left_a <= (others => '0');
-		arithmetic_right_a <= (others => '0');
-		arithmetic_subtract_a <= '0';
+		left_value := (others => '0');
+		right_value := (others => '0');
 		case state is
 			when SQUARE_SMALL_ARGUMENT =>
 				if INCLUDE_SERIES_ARITHMETIC then
-					arithmetic_left_a <= resize(series_product(128 downto 64),
-						ARITHMETIC_WIDTH);
+					left_value := series_product(128 downto 64);
 					if series_product(0) = '1' then
-						arithmetic_right_a <= resize(
-							series_multiplicand(63 downto 0), ARITHMETIC_WIDTH);
+						right_value := resize(series_multiplicand(63 downto 0),
+							right_value'length);
 					end if;
 				end if;
 			when CUBE_SMALL_ARGUMENT =>
 				if INCLUDE_SERIES_ARITHMETIC then
-					arithmetic_left_a <= resize(cube_accumulator, ARITHMETIC_WIDTH);
+					left_value := resize(cube_accumulator, left_value'length);
 					if series_multiplier(0) = '1' then
-						arithmetic_right_a <= resize(
-							series_multiplicand(15 downto 0), ARITHMETIC_WIDTH);
+						right_value := resize(series_multiplicand(15 downto 0),
+							right_value'length);
 					end if;
-				end if;
-			when SCALE_E_TO_BASE_TWO =>
-				arithmetic_left_a <= resize(scale_accumulator,
-					ARITHMETIC_WIDTH);
-				if scale_magnitude_register(scale_index) = '1' then
-					arithmetic_right_a <= resize(LOG2_E_FIXED,
-						ARITHMETIC_WIDTH);
-				end if;
-			when SCALE_TEN_TO_BASE_TWO =>
-				arithmetic_left_a <= resize(scale_accumulator,
-					ARITHMETIC_WIDTH);
-				if scale_magnitude_register(scale_index) = '1' then
-					arithmetic_right_a <= resize(LOG2_TEN_FIXED,
-						ARITHMETIC_WIDTH);
-				end if;
-			when MULTIPLY_LOG2 =>
-				arithmetic_left_a <= resize(log2_product(
-					2 * FRACTION_BITS downto FRACTION_BITS), ARITHMETIC_WIDTH);
-				if log2_product(0) = '1' then
-					arithmetic_right_a <= resize(LN2_FIXED,
-						ARITHMETIC_WIDTH);
-				end if;
-			when FORM_CORDIC_SUM | FORM_CORDIC_DIFFERENCE =>
-				arithmetic_left_a <= resize(unsigned(cordic_x_result),
-					ARITHMETIC_WIDTH);
-				arithmetic_right_a <= resize(unsigned(cordic_y_result),
-					ARITHMETIC_WIDTH);
-				if state = FORM_CORDIC_DIFFERENCE then
-					arithmetic_subtract_a <= '1';
-				end if;
-			when NORMALIZE_HYPERBOLIC_TANGENT =>
-				arithmetic_left_a <= resize(subtraction_value,
-					ARITHMETIC_WIDTH);
-				if subtraction_value >= subtraction_one then
-					arithmetic_right_a <= resize(subtraction_one,
-						ARITHMETIC_WIDTH);
-					arithmetic_subtract_a <= '1';
-				end if;
-			when DIVIDE_HYPERBOLIC_TANGENT =>
-				shifted_remainder := shift_left(subtraction_value, 1);
-				arithmetic_left_a <= resize(shifted_remainder,
-					ARITHMETIC_WIDTH);
-				if shifted_remainder >= subtraction_one then
-					arithmetic_right_a <= resize(subtraction_one,
-						ARITHMETIC_WIDTH);
-					arithmetic_subtract_a <= '1';
 				end if;
 			when others => null;
 		end case;
+		series_arithmetic_result <= left_value + right_value;
 	end process;
 
-	arithmetic_add_subtract : process(arithmetic_subtract_a,
-		arithmetic_left_a, arithmetic_right_a)
+	scale_arithmetic : process(state, scale_accumulator,
+		scale_magnitude_register, scale_index, log2_product)
+		variable left_value : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
+		variable right_value : unsigned(ARITHMETIC_WIDTH - 1 downto 0);
 	begin
-		if arithmetic_subtract_a = '1' then
-			arithmetic_result_a <= arithmetic_left_a - arithmetic_right_a;
+		left_value := (others => '0');
+		right_value := (others => '0');
+		case state is
+			when SCALE_E_TO_BASE_TWO =>
+				left_value := resize(scale_accumulator, left_value'length);
+				if scale_magnitude_register(scale_index) = '1' then
+					right_value := resize(LOG2_E_FIXED, right_value'length);
+				end if;
+			when SCALE_TEN_TO_BASE_TWO =>
+				left_value := resize(scale_accumulator, left_value'length);
+				if scale_magnitude_register(scale_index) = '1' then
+					right_value := resize(LOG2_TEN_FIXED, right_value'length);
+				end if;
+			when MULTIPLY_LOG2 =>
+				left_value := resize(log2_product(
+					2 * FRACTION_BITS downto FRACTION_BITS), left_value'length);
+				if log2_product(0) = '1' then
+					right_value := resize(LN2_FIXED, right_value'length);
+				end if;
+			when others => null;
+		end case;
+		scale_arithmetic_result <= left_value + right_value;
+	end process;
+
+	value_arithmetic : process(state, subtraction_value, subtraction_one,
+		cordic_x_result, cordic_y_result)
+		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
+		variable left_value : unsigned(CORDIC_WIDTH downto 0);
+		variable right_value : unsigned(CORDIC_WIDTH downto 0);
+		variable subtract_value : std_logic;
+	begin
+		left_value := (others => '0');
+		right_value := (others => '0');
+		subtract_value := '0';
+		case state is
+			when FORM_CORDIC_SUM | FORM_CORDIC_DIFFERENCE =>
+				left_value := resize(unsigned(cordic_x_result), left_value'length);
+				right_value := resize(unsigned(cordic_y_result), right_value'length);
+				if state = FORM_CORDIC_DIFFERENCE then
+					subtract_value := '1';
+				end if;
+			when NORMALIZE_HYPERBOLIC_TANGENT =>
+				left_value := subtraction_value;
+				if subtraction_value >= subtraction_one then
+					right_value := subtraction_one;
+					subtract_value := '1';
+				end if;
+			when DIVIDE_HYPERBOLIC_TANGENT =>
+				shifted_remainder := shift_left(subtraction_value, 1);
+				left_value := shifted_remainder;
+				if shifted_remainder >= subtraction_one then
+					right_value := subtraction_one;
+					subtract_value := '1';
+				end if;
+			when others => null;
+		end case;
+		if subtract_value = '1' then
+			value_arithmetic_result <= left_value - right_value;
 		else
-			arithmetic_result_a <= arithmetic_left_a + arithmetic_right_a;
+			value_arithmetic_result <= left_value + right_value;
 		end if;
 	end process;
 
@@ -1136,7 +1145,7 @@ begin
 					when SQUARE_SMALL_ARGUMENT =>
 						if INCLUDE_SERIES_ARITHMETIC then
 							next_square_product := shift_right(
-								arithmetic_result_a(64 downto 0) &
+								series_arithmetic_result &
 								series_product(63 downto 0), 1);
 							if series_index = 63 then
 								complete_series_square(
@@ -1151,7 +1160,7 @@ begin
 
 					when CUBE_SMALL_ARGUMENT =>
 						if INCLUDE_SERIES_ARITHMETIC then
-							next_cube := shift_right(arithmetic_result_a(16 downto 0) &
+							next_cube := shift_right(series_arithmetic_result(16 downto 0) &
 								series_multiplier, 1);
 							if series_index = 63 then
 								series_multiplicand <= resize(next_cube(79 downto 0),
@@ -1278,7 +1287,7 @@ begin
 						end if;
 
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
-						next_scale := shift_right(arithmetic_result_a(
+						next_scale := shift_right(scale_arithmetic_result(
 							FIXED_WIDTH + 2 downto 0), 1);
 						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
@@ -1296,7 +1305,7 @@ begin
 						end if;
 
 					when MULTIPLY_LOG2 =>
-						next_log2_product := shift_right(arithmetic_result_a(
+						next_log2_product := shift_right(scale_arithmetic_result(
 							FRACTION_BITS downto 0) & log2_product(
 								FRACTION_BITS - 1 downto 0), 1);
 						next_accumulator := next_log2_product(
@@ -1338,7 +1347,7 @@ begin
 						end if;
 
 					when FORM_CORDIC_SUM =>
-						cordic_sum := signed(arithmetic_result_a(
+						cordic_sum := signed(value_arithmetic_result(
 							CORDIC_WIDTH downto 0));
 						if hyperbolic_sine_latched = '1' or
 								hyperbolic_cosine_latched = '1' or
@@ -1351,7 +1360,7 @@ begin
 						end if;
 
 					when FORM_CORDIC_DIFFERENCE =>
-						subtraction_one <= arithmetic_result_a(
+						subtraction_one <= value_arithmetic_result(
 							CORDIC_WIDTH downto 0);
 						subtraction_sticky <= '0';
 						state <= COMPLETE_HYPERBOLIC;
@@ -1419,7 +1428,7 @@ begin
 
 					when NORMALIZE_HYPERBOLIC_TANGENT =>
 						if subtraction_value >= subtraction_one then
-							subtraction_value <= arithmetic_result_a(
+							subtraction_value <= value_arithmetic_result(
 								CORDIC_WIDTH downto 0);
 							tangent_quotient <= (0 => '1', others => '0');
 							tangent_iteration <= 0;
@@ -1434,7 +1443,7 @@ begin
 					when DIVIDE_HYPERBOLIC_TANGENT =>
 						tangent_shifted_remainder := shift_left(
 							subtraction_value, 1);
-						tangent_next_remainder := arithmetic_result_a(
+						tangent_next_remainder := value_arithmetic_result(
 							CORDIC_WIDTH downto 0);
 						tangent_next_quotient := shift_left(tangent_quotient, 1);
 						if tangent_shifted_remainder >= subtraction_one then
