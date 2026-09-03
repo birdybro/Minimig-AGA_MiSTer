@@ -132,8 +132,6 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		(others => '0');
 	signal normalized_tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
-	signal normalized_tangent_denominator : unsigned(CORDIC_WIDTH - 1 downto 0) :=
-		(others => '0');
 	signal tangent_numerator_highest : natural range 0 to CORDIC_WIDTH - 1 := 0;
 	signal tangent_quotient_exponent : integer range -65536 to 65535 := 0;
 	signal primary_fixed_value : cordic_value_t := (others => '0');
@@ -184,7 +182,7 @@ begin
 	base_exception_status <= base_status;
 
 	shared_operands : process(state, reciprocal_product,
-		normalized_tangent_numerator, normalized_tangent_denominator,
+		normalized_tangent_numerator,
 		tangent_remainder, tangent_divisor)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
@@ -201,14 +199,14 @@ begin
 				end if;
 			when START_TANGENT_DIVIDE =>
 				if normalized_tangent_numerator <
-						normalized_tangent_denominator then
+						tangent_divisor(CORDIC_WIDTH - 1 downto 0) then
 					shared_left_a <= shift_left(resize(
 						normalized_tangent_numerator, SHARED_WIDTH), 1);
 				else
 					shared_left_a <= resize(normalized_tangent_numerator,
 						SHARED_WIDTH);
 				end if;
-				shared_right_a <= resize(normalized_tangent_denominator,
+				shared_right_a <= resize(tangent_divisor,
 					SHARED_WIDTH);
 				shared_subtract_a <= '1';
 			when DIVIDE_TANGENT =>
@@ -320,7 +318,7 @@ begin
 					tangent_numerator_highest <= FRACTION_BITS - shift_count;
 					state <= LOAD_TANGENT_DENOMINATOR;
 				when NORMALIZE_TANGENT_DENOMINATOR =>
-					normalized_tangent_denominator <= value;
+					tangent_divisor <= resize(value, CORDIC_WIDTH + 1);
 					tangent_quotient_exponent <=
 						integer(tangent_numerator_highest) -
 						integer(FRACTION_BITS - shift_count);
@@ -377,7 +375,6 @@ begin
 				tangent_iteration <= 0;
 				tangent_denominator_latched <= (others => '0');
 				normalized_tangent_numerator <= (others => '0');
-				normalized_tangent_denominator <= (others => '0');
 				tangent_numerator_highest <= 0;
 				tangent_quotient_exponent <= 0;
 				primary_fixed_value <= (others => '0');
@@ -748,8 +745,6 @@ begin
 						end if;
 
 					when START_TANGENT_DIVIDE =>
-						tangent_divisor <= resize(normalized_tangent_denominator,
-							CORDIC_WIDTH + 1);
 						tangent_remainder <= shared_result_a(
 							CORDIC_WIDTH downto 0);
 						tangent_quotient <= (0 => '1', others => '0');
@@ -757,7 +752,7 @@ begin
 						intermediate_class <= FPU_CLASS_NORMAL;
 						quotient_exponent := tangent_quotient_exponent;
 						if normalized_tangent_numerator <
-								normalized_tangent_denominator then
+								tangent_divisor(CORDIC_WIDTH - 1 downto 0) then
 							quotient_exponent := quotient_exponent - 1;
 						end if;
 						intermediate_exponent <= to_signed(quotient_exponent, 17);
