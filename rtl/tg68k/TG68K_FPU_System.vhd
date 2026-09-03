@@ -82,7 +82,7 @@ architecture rtl of TG68K_FPU_System is
 	constant BUSY_UNIT_UNARY : std_logic_vector(2 downto 0) := "100";
 	constant BUSY_UNIT_BINARY : std_logic_vector(2 downto 0) := "101";
 	constant BUSY_UNIT_CONDITIONAL : std_logic_vector(2 downto 0) := "110";
-	constant BUSY_CONTEXT_UNIT_HIGH : natural := 1695;
+	constant BUSY_CONTEXT_UNIT_HIGH : natural := fpu_busy_context_t'high;
 	constant BUSY_CONTEXT_UNIT_LOW : natural := 1693;
 	constant BUSY_CONTEXT_OPCODE_HIGH : natural := 1692;
 	constant BUSY_CONTEXT_OPCODE_LOW : natural := 1677;
@@ -94,7 +94,8 @@ architecture rtl of TG68K_FPU_System is
 	constant BUSY_CONTEXT_OPERAND_HIGH : natural := 1627;
 	constant BUSY_CONTEXT_OPERAND_LOW : natural := 1548;
 	constant BUSY_CONTEXT_ADDRESS_HIGH : natural := 1547;
-	constant BUSY_CONTEXT_ADDRESS_LOW : natural := 1516;
+	constant BUSY_CONTEXT_ADDRESS_LOW : natural :=
+		fpu_busy_context_t'high - FPU_BUSY_CONTEXT_METADATA_BITS + 1;
 
 	function move_byte_count(
 		format_value : fpu_operand_format_t;

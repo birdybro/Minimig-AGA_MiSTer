@@ -92,6 +92,10 @@ package TG68K_FPU_Pack is
 	-- preservation between FSAVE and FRESTORE.
 	subtype fpu_busy_context_t is std_logic_vector(
 		FPU_STATE_FRAME_BUSY_SIZE_68882 * 8 - 1 downto 0);
+	-- Integrated restart metadata and per-unit continuation state occupy the
+	-- high and low ends of the otherwise opaque busy payload.
+	constant FPU_BUSY_CONTEXT_METADATA_BITS : natural := 180;
+	constant FPU_BUSY_CONTEXT_RESUME_BITS : natural := 198;
 	constant FPU_STATE_FRAME_BIU_IDLE : std_logic_vector(31 downto 0) :=
 		x"7C0EFFFF";
 	constant FPU_STATE_FRAME_BIU_EXCEPTION : std_logic_vector(31 downto 0) :=

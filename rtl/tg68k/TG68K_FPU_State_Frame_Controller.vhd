@@ -65,6 +65,10 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	constant BUSY_WORD_COUNT : natural :=
 		FPU_STATE_FRAME_BUSY_BYTES_68882 / 2;
 	constant BUSY_CONTEXT_WORD_COUNT : natural := BUSY_WORD_COUNT - 2;
+	constant RESTORE_HEADER_WORD_COUNT : natural :=
+		(FPU_BUSY_CONTEXT_METADATA_BITS + 15) / 16;
+	constant RESTORE_PAYLOAD_WORD_COUNT : natural :=
+		(FPU_BUSY_CONTEXT_RESUME_BITS + 15) / 16;
 	type busy_context_word_array_t is array (
 		0 to BUSY_CONTEXT_WORD_COUNT - 1) of std_logic_vector(15 downto 0);
 	type controller_state_t is (IDLE, SAVE_TRANSFER, RESTORE_TRANSFER,
@@ -94,8 +98,13 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	signal restore_null_latched : std_logic := '0';
 	signal restore_idle_latched : std_logic := '0';
 	signal restore_busy_latched : std_logic := '0';
-	signal restore_busy_context_words : busy_context_word_array_t :=
-		(others => (others => '0'));
+	-- Busy frames are implementation-private.  Only the metadata and resume
+	-- regions emitted by this core carry state; reserved words are still read
+	-- for bus timing and are reconstructed as zero.
+	signal restore_header : std_logic_vector(
+		RESTORE_HEADER_WORD_COUNT * 16 - 1 downto 0) := (others => '0');
+	signal restore_payload : std_logic_vector(
+		RESTORE_PAYLOAD_WORD_COUNT * 16 - 1 downto 0) := (others => '0');
 	signal format_error_latched : std_logic := '0';
 
 	function save_frame_word(
@@ -154,12 +163,15 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		return longword_index * 2 + (sequence_index mod 2);
 	end function;
 begin
-	restore_context_output : for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1
-	generate
-		restore_busy_context(restore_busy_context'high - index * 16 downto
-			restore_busy_context'high - index * 16 - 15) <=
-			restore_busy_context_words(index);
-	end generate;
+	restore_context_output : process(restore_header, restore_payload)
+		variable context_value : fpu_busy_context_t;
+	begin
+		context_value := (others => '0');
+		context_value(context_value'high downto
+			context_value'high - restore_header'length + 1) := restore_header;
+		context_value(restore_payload'range) := restore_payload;
+		restore_busy_context <= context_value;
+	end process;
 
 	outputs : process(state, family_latched, address_latched,
 		function_code_latched, pending_latched, command_latched,
@@ -252,7 +264,8 @@ begin
 				restore_null_latched <= '0';
 				restore_idle_latched <= '0';
 				restore_busy_latched <= '0';
-				restore_busy_context_words <= (others => (others => '0'));
+				restore_header <= (others => '0');
+				restore_payload <= (others => '0');
 				format_error_latched <= '0';
 			else
 				case state is
@@ -268,8 +281,9 @@ begin
 								busy_context_words(index) <= busy_context(
 									busy_context'high - index * 16 downto
 									busy_context'high - index * 16 - 15);
-								restore_busy_context_words(index) <= (others => '0');
 							end loop;
+							restore_header <= (others => '0');
+							restore_payload <= (others => '0');
 							transfer_index <= 0;
 							restore_command_latched <= (others => '0');
 							restore_exceptional_latched <= (others => '0');
@@ -320,8 +334,16 @@ begin
 						elsif memory_ready = '1' then
 							if word_count_latched = BUSY_WORD_COUNT and
 									transfer_index >= 2 then
-								restore_busy_context_words(transfer_index - 2) <=
-									memory_read_data;
+								if transfer_index < 2 + RESTORE_HEADER_WORD_COUNT then
+									restore_header <= restore_header(
+										restore_header'high - 16 downto 0) &
+										memory_read_data;
+								elsif transfer_index >=
+										BUSY_WORD_COUNT - RESTORE_PAYLOAD_WORD_COUNT then
+									restore_payload <= restore_payload(
+										restore_payload'high - 16 downto 0) &
+										memory_read_data;
+								end if;
 							end if;
 							case transfer_index is
 								when 0 => format_high_latched <= memory_read_data;
