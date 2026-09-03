@@ -13,6 +13,9 @@ architecture test of tb_tg68k_fpu_store_convert is
 	signal destination_data : std_logic_vector(95 downto 0);
 	signal conversion_valid : std_logic;
 	signal exception_status : std_logic_vector(7 downto 0);
+	signal external_destination_data : std_logic_vector(95 downto 0);
+	signal external_conversion_valid : std_logic;
+	signal external_exception_status : std_logic_vector(7 downto 0);
 begin
 	dut : entity work.TG68K_FPU_Store_Convert
 		port map(
@@ -22,6 +25,22 @@ begin
 			destination_data => destination_data,
 			conversion_valid => conversion_valid,
 			exception_status => exception_status,
+			round_input => open,
+			rounding_precision_out => open
+		);
+
+	external_round_dut : entity work.TG68K_FPU_Store_Convert
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
+		port map(
+			source => source,
+			destination_format => destination_format,
+			rounding_mode => rounding_mode,
+			external_rounded_result => source,
+			destination_data => external_destination_data,
+			conversion_valid => external_conversion_valid,
+			exception_status => external_exception_status,
 			round_input => open,
 			rounding_precision_out => open
 		);
@@ -45,6 +64,19 @@ begin
 				report "FPU store conversion data mismatch" severity failure;
 			assert exception_status = expected_status
 				report "FPU store conversion exception mismatch" severity failure;
+		end procedure;
+
+		procedure check_deep_underflow(
+			constant source_value : fpu_extended_t;
+			constant format_value : fpu_operand_format_t) is
+		begin
+			source <= source_value;
+			destination_format <= format_value;
+			wait for 1 ns;
+			assert external_conversion_valid = '1' and
+				external_destination_data = x"000000000000000000000000" and
+				external_exception_status = x"00"
+				report "FPU store saturated shift mismatch" severity failure;
 		end procedure;
 	begin
 		check_store(x"3FFF8000000000000000", FPU_FORMAT_SINGLE,
@@ -118,6 +150,11 @@ begin
 			FPU_ROUND_NEAREST, x"0000000000000000C1234567", x"20");
 		check_store(x"7FFF8123456789ABCDEF", FPU_FORMAT_WORD_INTEGER,
 			FPU_ROUND_NEAREST, x"00000000000000000000C123", x"40");
+
+		check_deep_underflow(x"3F428000000000000000", FPU_FORMAT_SINGLE);
+		check_deep_underflow(x"3F418000000000000000", FPU_FORMAT_SINGLE);
+		check_deep_underflow(x"3BC28000000000000000", FPU_FORMAT_DOUBLE);
+		check_deep_underflow(x"3BC18000000000000000", FPU_FORMAT_DOUBLE);
 
 		check_store(x"00000000000000000000", FPU_FORMAT_PACKED,
 			FPU_ROUND_NEAREST, (others => '0'), x"00", '0');

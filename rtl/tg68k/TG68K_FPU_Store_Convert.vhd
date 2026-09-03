@@ -138,7 +138,7 @@ begin
 		variable result_significand : unsigned(63 downto 0);
 		variable shifted_significand : unsigned(63 downto 0);
 		variable result_exponent : integer range -65536 to 65535;
-		variable shift_count : natural range 0 to 65535;
+		variable shift_count : natural range 0 to 63;
 		variable integer_magnitude : unsigned(64 downto 0);
 		variable integer_limit : unsigned(64 downto 0);
 		variable integer_bits : unsigned(31 downto 0);
@@ -180,10 +180,18 @@ begin
 				rounded_result(78 downto 64))) - FPU_EXTENDED_EXPONENT_BIAS;
 			if destination_format = FPU_FORMAT_SINGLE and
 					result_exponent < -126 then
-				shift_count := -126 - result_exponent;
+				if result_exponent <= -189 then
+					shift_count := 63;
+				else
+					shift_count := -126 - result_exponent;
+				end if;
 			elsif destination_format = FPU_FORMAT_DOUBLE and
 					result_exponent < -1022 then
-				shift_count := -1022 - result_exponent;
+				if result_exponent <= -1085 then
+					shift_count := 63;
+				else
+					shift_count := -1022 - result_exponent;
+				end if;
 			end if;
 		elsif (destination_format = FPU_FORMAT_BYTE_INTEGER or
 				destination_format = FPU_FORMAT_WORD_INTEGER or
