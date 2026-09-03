@@ -139,12 +139,12 @@ begin
 		variable shifted_significand : unsigned(63 downto 0);
 		variable result_exponent : integer range -65536 to 65535;
 		variable shift_count : natural range 0 to 63;
+		variable integer_shift_count : natural range 0 to 31;
 		variable integer_magnitude : unsigned(32 downto 0);
 		variable integer_limit : unsigned(32 downto 0);
 		variable integer_bits : unsigned(31 downto 0);
 		variable source_significand : unsigned(63 downto 0);
-		variable shift_operand : unsigned(63 downto 0);
-		variable shared_shift_result : unsigned(63 downto 0);
+		variable integer_shift_result : unsigned(31 downto 0);
 		variable nan_significand : unsigned(63 downto 0);
 		variable discarded : std_logic;
 		variable guard : std_logic;
@@ -160,11 +160,12 @@ begin
 		shifted_significand := (others => '0');
 		result_exponent := 0;
 		shift_count := 0;
+		integer_shift_count := 0;
 		integer_magnitude := (others => '0');
 		integer_limit := (others => '0');
 		integer_bits := (others => '0');
 		source_significand := prepared_significand(66 downto 3);
-		shift_operand := (others => '0');
+		integer_shift_result := (others => '0');
 		nan_significand := unsigned(source(63 downto 0));
 		discarded := '0';
 		guard := '0';
@@ -175,7 +176,6 @@ begin
 		if (destination_format = FPU_FORMAT_SINGLE or
 				destination_format = FPU_FORMAT_DOUBLE) and
 				result_class = FPU_CLASS_NORMAL then
-			shift_operand := result_significand;
 			result_exponent := to_integer(unsigned(
 				rounded_result(78 downto 64))) - FPU_EXTENDED_EXPONENT_BIAS;
 			if destination_format = FPU_FORMAT_SINGLE and
@@ -197,13 +197,15 @@ begin
 				destination_format = FPU_FORMAT_WORD_INTEGER or
 				destination_format = FPU_FORMAT_LONG_INTEGER) and
 				source_class = FPU_CLASS_NORMAL then
-			shift_operand := source_significand;
 			result_exponent := to_integer(prepared_exponent);
 			if result_exponent >= 0 and result_exponent < 32 then
 				shift_count := 63 - result_exponent;
+				integer_shift_count := 31 - result_exponent;
 			end if;
 		end if;
-		shared_shift_result := shift_right(shift_operand, shift_count);
+		shifted_significand := shift_right(result_significand, shift_count);
+		integer_shift_result := shift_right(
+			source_significand(63 downto 32), integer_shift_count);
 
 		case destination_format is
 			when FPU_FORMAT_SINGLE | FPU_FORMAT_DOUBLE |
@@ -242,7 +244,6 @@ begin
 									output_data(22 downto 0) := std_logic_vector(
 										result_significand(62 downto 40));
 								else
-									shifted_significand := shared_shift_result;
 									output_data(22 downto 0) := std_logic_vector(
 										shifted_significand(62 downto 40));
 								end if;
@@ -264,7 +265,6 @@ begin
 									output_data(51 downto 0) := std_logic_vector(
 										result_significand(62 downto 11));
 								else
-									shifted_significand := shared_shift_result;
 									output_data(51 downto 0) := std_logic_vector(
 										shifted_significand(62 downto 11));
 								end if;
@@ -301,7 +301,7 @@ begin
 						integer_overflow := true;
 					elsif result_exponent >= 0 then
 						integer_magnitude := resize(
-							shared_shift_result(31 downto 0), 33);
+							integer_shift_result, 33);
 						for index in 0 to 62 loop
 							if index < shift_count then
 								discarded := discarded or
