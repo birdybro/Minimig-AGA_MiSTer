@@ -151,7 +151,6 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal rom_index : unsigned(6 downto 0);
 	signal rom_multiplier : unsigned(191 downto 0);
 	signal rom_power_bits : unsigned(13 downto 0);
-	signal chunk_multiplier : unsigned(191 downto 0) := (others => '0');
 	signal chunk_power_bits : unsigned(13 downto 0) := (others => '0');
 	signal power_bit_sum : natural range 0 to 23200 := 0;
 
@@ -361,7 +360,6 @@ begin
 				decimal_exponent <= 0;
 				displayed_digits <= 17;
 				finding_exponent <= '1';
-				chunk_multiplier <= (others => '0');
 				chunk_power_bits <= (others => '0');
 				power_bit_sum <= 0;
 				power_multiplicand <= (others => '0');
@@ -441,12 +439,11 @@ begin
 					when READ_CHUNK => state <= CAPTURE_CHUNK;
 
 					when CAPTURE_CHUNK =>
-						chunk_multiplier <= rom_multiplier;
+						power_multiplicand <= rom_multiplier;
 						chunk_power_bits <= rom_power_bits;
 						state <= CAPTURE_RESIDUAL;
 
 					when CAPTURE_RESIDUAL =>
-						power_multiplicand <= chunk_multiplier;
 						power_product <= resize(rom_multiplier, 385);
 						power_iteration <= 0;
 						power_bit_sum <= to_integer(chunk_power_bits) +
