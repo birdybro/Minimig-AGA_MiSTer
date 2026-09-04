@@ -740,13 +740,21 @@ begin
 							normalization_chunk := leading_zero_count(
 								normalization_value(FRACTION_BITS downto
 									FRACTION_BITS - NORMALIZATION_SHIFT_CHUNK + 1));
-							next_normalization_value := shift_left(
-								normalization_value, normalization_chunk);
 							next_normalization_shift :=
 								normalization_shift_count + normalization_chunk;
-							normalization_value <= next_normalization_value;
-							normalization_shift_count <= next_normalization_shift;
-							if next_normalization_value(FRACTION_BITS) = '1' then
+							if normalization_chunk = NORMALIZATION_SHIFT_CHUNK then
+								next_normalization_value := shift_left(
+									normalization_value, NORMALIZATION_SHIFT_CHUNK);
+								if next_normalization_value(FRACTION_BITS) = '1' then
+									finish_normalization(next_normalization_value,
+										next_normalization_shift);
+								else
+									normalization_value <= next_normalization_value;
+									normalization_shift_count <= next_normalization_shift;
+								end if;
+							else
+								next_normalization_value := shift_left(
+									normalization_value, normalization_chunk);
 								finish_normalization(next_normalization_value,
 									next_normalization_shift);
 							end if;
