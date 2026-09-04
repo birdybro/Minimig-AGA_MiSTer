@@ -42,7 +42,6 @@ entity TG68K_FPU_Logarithm is
 		series_cube_divide : out std_logic;
 		series_divide_by_six : out std_logic;
 		series_arithmetic_source : out unsigned(63 downto 0);
-		series_square_high : out unsigned(15 downto 0);
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -197,7 +196,6 @@ begin
 	series_cube_divide <= '1' when state = CUBE_SMALL_ARGUMENT else '0';
 	series_divide_by_six <= '0';
 	series_arithmetic_source <= series_source_significand;
-	series_square_high <= square_high_register;
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;

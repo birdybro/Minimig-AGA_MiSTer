@@ -21,7 +21,6 @@ entity TG68K_FPU_Series_Arithmetic is
 		cube_divide : in std_logic;
 		divide_by_six : in std_logic;
 		source_significand : in unsigned(63 downto 0);
-		square_high : in unsigned(15 downto 0);
 		product_left : out unsigned(63 downto 0);
 		product_right : out unsigned(63 downto 0);
 		product_result : in unsigned(127 downto 0);
@@ -48,7 +47,9 @@ begin
 	busy <= '0' when state = IDLE else '1';
 	done <= completion;
 	product_left <= source_significand;
-	product_right <= resize(square_high, 64) when cube_divide = '1' else
+	-- Cube requests follow a completed square and consume its retained high word.
+	product_right <= resize(product(127 downto 112), 64)
+		when cube_divide = '1' else
 		source_significand;
 	square_result <= product;
 	cube_quotient <= quotient;

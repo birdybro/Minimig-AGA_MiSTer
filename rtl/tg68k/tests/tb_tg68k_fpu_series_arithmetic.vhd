@@ -15,7 +15,6 @@ architecture test of tb_tg68k_fpu_series_arithmetic is
 	signal cube_divide : std_logic := '0';
 	signal divide_by_six : std_logic := '0';
 	signal source_significand : unsigned(63 downto 0) := (others => '0');
-	signal square_high : unsigned(15 downto 0) := (others => '0');
 	signal product_left : unsigned(63 downto 0);
 	signal product_right : unsigned(63 downto 0);
 	signal product_result : unsigned(127 downto 0);
@@ -36,7 +35,6 @@ begin
 			cube_divide => cube_divide,
 			divide_by_six => divide_by_six,
 			source_significand => source_significand,
-			square_high => square_high,
 			product_left => product_left,
 			product_right => product_right,
 			product_result => product_result,
@@ -96,8 +94,17 @@ begin
 			release_held_request;
 
 			for divisor_index in 0 to 1 loop
+				if divisor_index /= 0 then
+					cube_divide <= '0';
+					start <= '1';
+					wait until rising_edge(clk);
+					wait_for_result(64);
+					assert square_result = expected_square
+						report "series repeated square result mismatch"
+						severity failure;
+					release_held_request;
+				end if;
 				source_significand <= lfsr;
-				square_high <= expected_square(127 downto 112);
 				cube_divide <= '1';
 				if divisor_index = 0 then
 					divide_by_six <= '0';

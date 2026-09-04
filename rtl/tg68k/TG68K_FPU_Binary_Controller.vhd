@@ -235,17 +235,14 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_series_cube : std_logic;
 	signal exponential_series_divide_by_six : std_logic;
 	signal exponential_series_source : unsigned(63 downto 0);
-	signal exponential_series_square_high : unsigned(15 downto 0);
 	signal logarithm_series_start : std_logic;
 	signal logarithm_series_cube : std_logic;
 	signal logarithm_series_divide_by_six : std_logic;
 	signal logarithm_series_source : unsigned(63 downto 0);
-	signal logarithm_series_square_high : unsigned(15 downto 0);
 	signal shared_series_start : std_logic;
 	signal shared_series_cube : std_logic;
 	signal shared_series_divide_by_six : std_logic;
 	signal shared_series_source : unsigned(63 downto 0);
-	signal shared_series_square_high : unsigned(15 downto 0);
 	signal shared_series_square_result : unsigned(127 downto 0);
 	signal shared_series_cube_quotient : unsigned(79 downto 0);
 	signal shared_series_cube_remainder : natural range 0 to 5;
@@ -688,9 +685,6 @@ begin
 		exponential_latched = '1' else logarithm_series_divide_by_six;
 	shared_series_source <= exponential_series_source when
 		exponential_latched = '1' else logarithm_series_source;
-	shared_series_square_high <= exponential_series_square_high when
-		exponential_latched = '1' else logarithm_series_square_high;
-
 	series_arithmetic : entity work.TG68K_FPU_Series_Arithmetic
 		port map(
 			clk => clk,
@@ -699,7 +693,6 @@ begin
 			cube_divide => shared_series_cube,
 			divide_by_six => shared_series_divide_by_six,
 			source_significand => shared_series_source,
-			square_high => shared_series_square_high,
 			product_left => shared_product_left,
 			product_right => shared_product_right,
 			product_result => shared_product_result,
@@ -742,7 +735,6 @@ begin
 			series_cube_divide => exponential_series_cube,
 			series_divide_by_six => exponential_series_divide_by_six,
 			series_arithmetic_source => exponential_series_source,
-			series_square_high => exponential_series_square_high,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -784,7 +776,6 @@ begin
 			series_cube_divide => logarithm_series_cube,
 			series_divide_by_six => logarithm_series_divide_by_six,
 			series_arithmetic_source => logarithm_series_source,
-			series_square_high => logarithm_series_square_high,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
