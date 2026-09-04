@@ -413,6 +413,15 @@ begin
 			report "register FLOGNP1 controller mismatch" severity failure;
 
 		clear_observations;
+		run_register_operation(x"3FE58000000000000000",
+			x"7FFFFFFFFFFFFFFFFFFF");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"3FE4FFFFFFE000000555" and
+			status_write_count = 1 and observed_status = x"02" and
+			observed_cc = "0000" and trace_count = 0
+			report "shared-series FLOGNP1 correction mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_LOGN;
 		run_register_operation(x"40008000000000000000",
 			x"7FFFFFFFFFFFFFFFFFFF");

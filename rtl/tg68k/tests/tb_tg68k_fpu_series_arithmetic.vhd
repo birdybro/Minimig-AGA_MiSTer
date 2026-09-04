@@ -18,8 +18,11 @@ architecture test of tb_tg68k_fpu_series_arithmetic is
 	signal product_left : unsigned(63 downto 0);
 	signal product_right : unsigned(63 downto 0);
 	signal product_result : unsigned(127 downto 0);
+	signal result_shift_count : natural range 0 to 2 := 0;
+	signal result_shift_cube : std_logic := '0';
 	signal square_result : unsigned(127 downto 0);
 	signal cube_quotient : unsigned(79 downto 0);
+	signal result_low_pair : unsigned(1 downto 0);
 	signal cube_remainder : natural range 0 to 5;
 	signal busy : std_logic;
 	signal done : std_logic;
@@ -38,8 +41,11 @@ begin
 			product_left => product_left,
 			product_right => product_right,
 			product_result => product_result,
+			result_shift_count => result_shift_count,
+			result_shift_cube => result_shift_cube,
 			square_result => square_result,
 			cube_quotient => cube_quotient,
+			result_low_pair => result_low_pair,
 			cube_remainder => cube_remainder,
 			busy => busy,
 			done => done
@@ -49,8 +55,10 @@ begin
 		variable lfsr : unsigned(63 downto 0) := x"D4E12C77A53B908F";
 		variable feedback : std_logic;
 		variable expected_square : unsigned(127 downto 0);
+		variable expected_shifted_square : unsigned(127 downto 0);
 		variable expected_cube : unsigned(79 downto 0);
 		variable expected_quotient : unsigned(79 downto 0);
+		variable expected_shifted_quotient : unsigned(79 downto 0);
 		variable expected_remainder : natural range 0 to 5;
 		variable cycles : natural;
 
@@ -85,6 +93,7 @@ begin
 		for vector_index in 0 to 31 loop
 			source_significand <= lfsr;
 			cube_divide <= '0';
+			result_shift_cube <= '0';
 			start <= '1';
 			wait until rising_edge(clk);
 			expected_square := lfsr * lfsr;
@@ -92,20 +101,20 @@ begin
 			assert square_result = expected_square
 				report "series square result mismatch" severity failure;
 			release_held_request;
+			assert result_low_pair = expected_square(1 downto 0)
+				report "series square low pair mismatch" severity failure;
+			result_shift_count <= 2;
+			wait until rising_edge(clk);
+			result_shift_count <= 0;
+			wait for 1 ns;
+			expected_shifted_square := shift_right(expected_square, 2);
+			assert square_result = expected_shifted_square
+				report "series square shift mismatch" severity failure;
 
 			for divisor_index in 0 to 1 loop
-				if divisor_index /= 0 then
-					cube_divide <= '0';
-					start <= '1';
-					wait until rising_edge(clk);
-					wait_for_result(64);
-					assert square_result = expected_square
-						report "series repeated square result mismatch"
-						severity failure;
-					release_held_request;
-				end if;
 				source_significand <= lfsr;
 				cube_divide <= '1';
+				result_shift_cube <= '1';
 				if divisor_index = 0 then
 					divide_by_six <= '0';
 				else
@@ -126,6 +135,15 @@ begin
 					cube_remainder = expected_remainder
 					report "series cube/divide result mismatch" severity failure;
 				release_held_request;
+				assert result_low_pair = expected_quotient(1 downto 0)
+					report "series cube low pair mismatch" severity failure;
+				result_shift_count <= 1;
+				wait until rising_edge(clk);
+				result_shift_count <= 0;
+				wait for 1 ns;
+				expected_shifted_quotient := shift_right(expected_quotient, 1);
+				assert cube_quotient = expected_shifted_quotient
+					report "series cube shift mismatch" severity failure;
 			end loop;
 
 			feedback := lfsr(63) xor lfsr(62) xor lfsr(60) xor lfsr(59);

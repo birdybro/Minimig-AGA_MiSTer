@@ -24,9 +24,12 @@ entity TG68K_FPU_Series_Arithmetic is
 		product_left : out unsigned(63 downto 0);
 		product_right : out unsigned(63 downto 0);
 		product_result : in unsigned(127 downto 0);
+		result_shift_count : in natural range 0 to 2 := 0;
+		result_shift_cube : in std_logic := '0';
 
 		square_result : out unsigned(127 downto 0);
 		cube_quotient : out unsigned(79 downto 0);
+		result_low_pair : out unsigned(1 downto 0);
 		cube_remainder : out natural range 0 to 5;
 		busy : out std_logic;
 		done : out std_logic
@@ -38,7 +41,7 @@ architecture rtl of TG68K_FPU_Series_Arithmetic is
 
 	signal state : arithmetic_state_t := IDLE;
 	signal product : unsigned(127 downto 0) := (others => '0');
-	signal quotient : unsigned(79 downto 0) := (others => '0');
+	signal square_high : unsigned(15 downto 0) := (others => '0');
 	signal remainder : natural range 0 to 5 := 0;
 	signal divisor : natural range 3 to 6 := 3;
 	signal iteration : natural range 0 to 79 := 0;
@@ -47,12 +50,11 @@ begin
 	busy <= '0' when state = IDLE else '1';
 	done <= completion;
 	product_left <= source_significand;
-	-- Cube requests follow a completed square and consume its retained high word.
-	product_right <= resize(product(127 downto 112), 64)
-		when cube_divide = '1' else
+	product_right <= resize(square_high, 64) when cube_divide = '1' else
 		source_significand;
 	square_result <= product;
-	cube_quotient <= quotient;
+	cube_quotient <= product(79 downto 0);
+	result_low_pair <= product(1 downto 0);
 	cube_remainder <= remainder;
 
 	arithmetic_sequence : process(clk)
@@ -64,7 +66,7 @@ begin
 			if nReset = '0' then
 				state <= IDLE;
 				product <= (others => '0');
-				quotient <= (others => '0');
+				square_high <= (others => '0');
 				remainder <= 0;
 				divisor <= 3;
 				iteration <= 0;
@@ -82,7 +84,22 @@ begin
 						end if;
 						state <= CUBE;
 					else
+						square_high <= product_result(127 downto 112);
 						state <= SQUARE;
+					end if;
+				elsif result_shift_count = 1 then
+					if result_shift_cube = '1' then
+						product(79 downto 0) <= shift_right(
+							product(79 downto 0), 1);
+					else
+						product <= shift_right(product, 1);
+					end if;
+				elsif result_shift_count = 2 then
+					if result_shift_cube = '1' then
+						product(79 downto 0) <= shift_right(
+							product(79 downto 0), 2);
+					else
+						product <= shift_right(product, 2);
 					end if;
 				end if;
 			else
@@ -97,7 +114,6 @@ begin
 
 					when CUBE =>
 						if iteration = 63 then
-							quotient <= (others => '0');
 							remainder <= 0;
 							iteration <= 0;
 							state <= DIVIDE_CUBE;
@@ -110,19 +126,21 @@ begin
 						if product(79 - iteration) = '1' then
 							division_trial := division_trial + 1;
 						end if;
-						next_quotient := quotient;
+						-- The dividend bit is consumed before its position becomes
+						-- the corresponding quotient bit.
+						next_quotient := product(79 downto 0);
 						if division_trial >= divisor then
 							next_quotient(79 - iteration) := '1';
 							division_trial := division_trial - divisor;
+						else
+							next_quotient(79 - iteration) := '0';
 						end if;
+						product(79 downto 0) <= next_quotient;
+						remainder <= division_trial;
 						if iteration = 79 then
-							quotient <= next_quotient;
-							remainder <= division_trial;
 							completion <= '1';
 							state <= IDLE;
 						else
-							quotient <= next_quotient;
-							remainder <= division_trial;
 							iteration <= iteration + 1;
 						end if;
 

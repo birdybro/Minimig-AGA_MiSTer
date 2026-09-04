@@ -42,6 +42,8 @@ entity TG68K_FPU_Logarithm is
 		series_cube_divide : out std_logic;
 		series_divide_by_six : out std_logic;
 		series_arithmetic_source : out unsigned(63 downto 0);
+		series_result_shift_count : out natural range 0 to 2;
+		series_result_shift_cube : out std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -196,6 +198,9 @@ begin
 	series_cube_divide <= '1' when state = CUBE_SMALL_ARGUMENT else '0';
 	series_divide_by_six <= '0';
 	series_arithmetic_source <= series_source_significand;
+	series_result_shift_count <= 1 when not INCLUDE_SERIES_ARITHMETIC and
+		(state = ALIGN_SQUARE_TERM or state = ALIGN_CUBE_TERM) else 0;
+	series_result_shift_cube <= '1' when state = ALIGN_CUBE_TERM else '0';
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -468,9 +473,11 @@ begin
 		procedure complete_series_square(
 				constant square_value : in unsigned(127 downto 0)) is
 		begin
-			series_product <= '0' & square_value;
-			square_high_register <= square_value(
-				127 downto CUBE_SQUARE_LOW_BIT);
+			if INCLUDE_SERIES_ARITHMETIC then
+				series_product <= '0' & square_value;
+				square_high_register <= square_value(
+					127 downto CUBE_SQUARE_LOW_BIT);
+			end if;
 			if inverse_hyperbolic_tangent_latched = '1' then
 				series_multiplier <= series_source_significand;
 				series_multiplicand <= resize(square_value(
@@ -487,8 +494,10 @@ begin
 		procedure complete_series_cube(
 				constant quotient_value : in unsigned(79 downto 0)) is
 		begin
-			cube_accumulator <= '0' & quotient_value(79 downto 64);
-			series_multiplier <= quotient_value(63 downto 0);
+			if INCLUDE_SERIES_ARITHMETIC then
+				cube_accumulator <= '0' & quotient_value(79 downto 64);
+				series_multiplier <= quotient_value(63 downto 0);
+			end if;
 			cube_shift_count <= -2 * to_integer(series_exponent) - 6;
 			series_index <= 0;
 			state <= ALIGN_CUBE_TERM;
@@ -868,9 +877,13 @@ begin
 						end if;
 
 					when ALIGN_SQUARE_TERM =>
-						next_square := shift_right(
-							series_product(127 downto 0), 1);
-						series_product <= '0' & next_square;
+						if INCLUDE_SERIES_ARITHMETIC then
+							next_square := shift_right(
+								series_product(127 downto 0), 1);
+							series_product <= '0' & next_square;
+						else
+							next_square := shift_right(series_square_result, 1);
+						end if;
 						if correction_shift_count = 1 then
 							series_correction := resize(next_square, SERIES_WIDTH);
 							series_correction_register <= series_correction;
@@ -943,10 +956,15 @@ begin
 						end if;
 
 					when ALIGN_CUBE_TERM =>
-						next_cube := shift_right(cube_accumulator &
-							series_multiplier, 1);
-						cube_accumulator <= next_cube(80 downto 64);
-						series_multiplier <= next_cube(63 downto 0);
+						if INCLUDE_SERIES_ARITHMETIC then
+							next_cube := shift_right(cube_accumulator &
+								series_multiplier, 1);
+							cube_accumulator <= next_cube(80 downto 64);
+							series_multiplier <= next_cube(63 downto 0);
+						else
+							next_cube := shift_right(
+								'0' & series_cube_quotient, 1);
+						end if;
 						if cube_shift_count = 1 then
 							series_base := shift_left(resize(
 								series_source_significand, SERIES_WIDTH),

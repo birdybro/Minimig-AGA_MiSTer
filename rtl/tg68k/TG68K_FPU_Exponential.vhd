@@ -42,10 +42,13 @@ entity TG68K_FPU_Exponential is
 		series_square_result : in unsigned(127 downto 0) := (others => '0');
 		series_cube_quotient : in unsigned(79 downto 0) := (others => '0');
 		series_cube_remainder : in natural range 0 to 5 := 0;
+		series_result_low_pair : in unsigned(1 downto 0) := (others => '0');
 		series_arithmetic_start : out std_logic;
 		series_cube_divide : out std_logic;
 		series_divide_by_six : out std_logic;
 		series_arithmetic_source : out unsigned(63 downto 0);
+		series_result_shift_count : out natural range 0 to 2;
+		series_result_shift_cube : out std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -205,6 +208,13 @@ begin
 	series_cube_divide <= '1' when state = CUBE_SMALL_ARGUMENT else '0';
 	series_divide_by_six <= not hyperbolic_tangent_latched;
 	series_arithmetic_source <= series_source_significand;
+	series_result_shift_count <= 2 when not INCLUDE_SERIES_ARITHMETIC and
+		(state = APPLY_SERIES_SQUARE or state = APPLY_SERIES_CUBE) and
+		series_alignment_remaining = 0 and series_term_bits_remaining >= 2 else
+		1 when not INCLUDE_SERIES_ARITHMETIC and
+		(state = APPLY_SERIES_SQUARE or state = APPLY_SERIES_CUBE) and
+		series_term_bits_remaining > 0 and series_alignment_remaining <= 1 else 0;
+	series_result_shift_cube <= '1' when state = APPLY_SERIES_CUBE else '0';
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -757,7 +767,9 @@ begin
 				intermediate_significand <= cosh_increment_value;
 				state <= COMPLETE;
 			else
-				series_term_product <= '0' & square_value;
+				if INCLUDE_SERIES_ARITHMETIC then
+					series_term_product <= '0' & square_value;
+				end if;
 				series_shift_value := to_integer(series_exponent) + 68;
 				if to_integer(series_exponent) < SERIES_CUBIC_MIN_EXPONENT then
 					load_series_base(SERIES_BASE_UNADJUSTED);
@@ -803,8 +815,10 @@ begin
 		begin
 			alignment_shift := 2 * to_integer(series_exponent) +
 				CUBE_ALIGNMENT_BASE;
-			series_term_product <= resize(quotient_value,
-				series_term_product'length);
+			if INCLUDE_SERIES_ARITHMETIC then
+				series_term_product <= resize(quotient_value,
+					series_term_product'length);
+			end if;
 			series_serial_bits_remaining <= SERIES_WIDTH + 1;
 			series_term_bits_remaining <= 80;
 			series_alignment_remaining <= alignment_shift;
@@ -1235,17 +1249,29 @@ begin
 						elsif serial_alignment = 1 then
 							serial_alignment := 0;
 							if serial_term_bits > 0 then
-								serial_term_pair(1) := serial_product(0);
-								serial_product := shift_right(serial_product, 1);
+								if INCLUDE_SERIES_ARITHMETIC then
+									serial_term_pair(1) := serial_product(0);
+									serial_product := shift_right(serial_product, 1);
+								else
+									serial_term_pair(1) := series_result_low_pair(0);
+								end if;
 								serial_term_bits := serial_term_bits - 1;
 							end if;
 						elsif serial_term_bits = 1 then
-							serial_term_pair(0) := serial_product(0);
-							serial_product := shift_right(serial_product, 1);
+							if INCLUDE_SERIES_ARITHMETIC then
+								serial_term_pair(0) := serial_product(0);
+								serial_product := shift_right(serial_product, 1);
+							else
+								serial_term_pair(0) := series_result_low_pair(0);
+							end if;
 							serial_term_bits := 0;
 						elsif serial_term_bits >= 2 then
-							serial_term_pair := serial_product(1 downto 0);
-							serial_product := shift_right(serial_product, 2);
+							if INCLUDE_SERIES_ARITHMETIC then
+								serial_term_pair := serial_product(1 downto 0);
+								serial_product := shift_right(serial_product, 2);
+							else
+								serial_term_pair := series_result_low_pair;
+							end if;
 							serial_term_bits := serial_term_bits - 2;
 						end if;
 						serial_total := to_integer(serial_accumulator(1 downto 0));
@@ -1278,7 +1304,9 @@ begin
 						serial_accumulator(SERIES_WIDTH downto
 							SERIES_WIDTH - 1) := to_unsigned(serial_result, 2);
 						series_accumulator <= serial_accumulator;
-						series_term_product <= serial_product;
+						if INCLUDE_SERIES_ARITHMETIC then
+							series_term_product <= serial_product;
+						end if;
 						series_alignment_remaining <= serial_alignment;
 						series_term_bits_remaining <= serial_term_bits;
 						series_carry_borrow <= serial_next_carry_borrow;

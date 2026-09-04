@@ -235,16 +235,23 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal exponential_series_cube : std_logic;
 	signal exponential_series_divide_by_six : std_logic;
 	signal exponential_series_source : unsigned(63 downto 0);
+	signal exponential_series_shift_count : natural range 0 to 2;
+	signal exponential_series_shift_cube : std_logic;
 	signal logarithm_series_start : std_logic;
 	signal logarithm_series_cube : std_logic;
 	signal logarithm_series_divide_by_six : std_logic;
 	signal logarithm_series_source : unsigned(63 downto 0);
+	signal logarithm_series_shift_count : natural range 0 to 2;
+	signal logarithm_series_shift_cube : std_logic;
 	signal shared_series_start : std_logic;
 	signal shared_series_cube : std_logic;
 	signal shared_series_divide_by_six : std_logic;
 	signal shared_series_source : unsigned(63 downto 0);
+	signal shared_series_shift_count : natural range 0 to 2;
+	signal shared_series_shift_cube : std_logic;
 	signal shared_series_square_result : unsigned(127 downto 0);
 	signal shared_series_cube_quotient : unsigned(79 downto 0);
+	signal shared_series_result_low_pair : unsigned(1 downto 0);
 	signal shared_series_cube_remainder : natural range 0 to 5;
 	signal shared_series_done : std_logic;
 	signal exponential_cordic_start : std_logic;
@@ -685,6 +692,10 @@ begin
 		exponential_latched = '1' else logarithm_series_divide_by_six;
 	shared_series_source <= exponential_series_source when
 		exponential_latched = '1' else logarithm_series_source;
+	shared_series_shift_count <= exponential_series_shift_count when
+		exponential_latched = '1' else logarithm_series_shift_count;
+	shared_series_shift_cube <= exponential_series_shift_cube when
+		exponential_latched = '1' else logarithm_series_shift_cube;
 	series_arithmetic : entity work.TG68K_FPU_Series_Arithmetic
 		port map(
 			clk => clk,
@@ -696,8 +707,11 @@ begin
 			product_left => shared_product_left,
 			product_right => shared_product_right,
 			product_result => shared_product_result,
+			result_shift_count => shared_series_shift_count,
+			result_shift_cube => shared_series_shift_cube,
 			square_result => shared_series_square_result,
 			cube_quotient => shared_series_cube_quotient,
+			result_low_pair => shared_series_result_low_pair,
 			cube_remainder => shared_series_cube_remainder,
 			busy => open,
 			done => shared_series_done
@@ -731,10 +745,13 @@ begin
 			series_square_result => shared_series_square_result,
 			series_cube_quotient => shared_series_cube_quotient,
 			series_cube_remainder => shared_series_cube_remainder,
+			series_result_low_pair => shared_series_result_low_pair,
 			series_arithmetic_start => exponential_series_start,
 			series_cube_divide => exponential_series_cube,
 			series_divide_by_six => exponential_series_divide_by_six,
 			series_arithmetic_source => exponential_series_source,
+			series_result_shift_count => exponential_series_shift_count,
+			series_result_shift_cube => exponential_series_shift_cube,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -776,6 +793,8 @@ begin
 			series_cube_divide => logarithm_series_cube,
 			series_divide_by_six => logarithm_series_divide_by_six,
 			series_arithmetic_source => logarithm_series_source,
+			series_result_shift_count => logarithm_series_shift_count,
+			series_result_shift_cube => logarithm_series_shift_cube,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
