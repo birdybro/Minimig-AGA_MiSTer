@@ -162,10 +162,10 @@ architecture rtl of TG68K_FPU_Packed_To_Extended is
 
 	-- A 125-bit normalized power bounds the table approximation below the
 	-- retained 65-bit quotient for every 58-bit packed mantissa.
-	signal multiplicand : unsigned(PRODUCT_WIDTH - 1 downto 0) :=
+	-- The product holds accumulator|mantissa and shifts around the power.
+	signal multiplicand : unsigned(127 downto 0) :=
 		(others => '0');
-	signal multiplier : unsigned(57 downto 0) := (others => '0');
-	signal product : unsigned(PRODUCT_WIDTH - 1 downto 0) :=
+	signal product : unsigned(PRODUCT_WIDTH downto 0) :=
 		(others => '0');
 	signal multiply_iteration : natural range 0 to 57 := 0;
 	signal binary_exponent : integer range -8192 to 8191 := 0;
@@ -203,7 +203,8 @@ begin
 		variable high_position : natural range 0 to 57;
 		variable aligned_mantissa : unsigned(63 downto 0);
 		variable exact_power : integer range -8192 to 8191;
-		variable next_product : unsigned(PRODUCT_WIDTH - 1 downto 0);
+		variable next_product : unsigned(PRODUCT_WIDTH downto 0);
+		variable multiply_accumulator : unsigned(128 downto 0);
 		variable next_divisibility_product : converter_word_t;
 		variable binary_mantissa : unsigned(65 downto 0);
 		variable retained_mantissa : unsigned(63 downto 0);
@@ -228,7 +229,6 @@ begin
 				mantissa_accumulator <= (others => '0');
 				digit_index <= 0;
 				multiplicand <= (others => '0');
-				multiplier <= (others => '0');
 				product <= (others => '0');
 				multiply_iteration <= 0;
 				binary_exponent <= 0;
@@ -292,9 +292,10 @@ begin
 							high_position := highest_set_bit(next_mantissa);
 							aligned_mantissa := shift_left(next_mantissa,
 								63 - high_position);
-							multiplier <= aligned_mantissa(63 downto 6);
-							multiplicand <= resize(power_multiplier, PRODUCT_WIDTH);
-							product <= (others => '0');
+							multiplicand <= power_multiplier;
+							next_product := (others => '0');
+							next_product(57 downto 0) := aligned_mantissa(63 downto 6);
+							product <= next_product;
 							multiply_iteration <= 0;
 							divisibility_product <= (others => '0');
 							if decimal_scale >= 0 then
@@ -329,18 +330,19 @@ begin
 						end if;
 
 					when MULTIPLY_POWER =>
-						next_product := product;
-						if multiplier(0) = '1' then
-							next_product := next_product + multiplicand;
+						multiply_accumulator := product(PRODUCT_WIDTH downto 58);
+						if product(0) = '1' then
+							multiply_accumulator := multiply_accumulator +
+								resize(multiplicand, multiply_accumulator'length);
 						end if;
+						next_product := shift_right(multiply_accumulator &
+							product(57 downto 0), 1);
 						product <= next_product;
-						multiplicand <= shift_left(multiplicand, 1);
-						multiplier <= shift_right(multiplier, 1);
 
 						next_divisibility_product := divisibility_product;
 						-- Normalization only multiplies the packed mantissa by a
 						-- power of two, so it does not change divisibility by 5^n.
-						if multiplier(0) = '1' then
+						if product(0) = '1' then
 							next_divisibility_product := next_divisibility_product +
 								divisibility_multiplicand;
 						end if;
