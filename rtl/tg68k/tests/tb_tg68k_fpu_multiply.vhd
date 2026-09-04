@@ -1,5 +1,6 @@
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -13,6 +14,10 @@ architecture test of tb_tg68k_fpu_multiply is
 		FPU_PRECISION_EXTENDED;
 	signal rounding_mode : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
 	signal single_precision_operation : std_logic := '0';
+	signal shared_product_request : std_logic := '0';
+	signal shared_product_left : unsigned(63 downto 0) := (others => '0');
+	signal shared_product_right : unsigned(63 downto 0) := (others => '0');
+	signal shared_product_result : unsigned(127 downto 0);
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
@@ -24,6 +29,10 @@ begin
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
 			single_precision_operation => single_precision_operation,
+			shared_product_request => shared_product_request,
+			shared_product_left => shared_product_left,
+			shared_product_right => shared_product_right,
+			shared_product_result => shared_product_result,
 			result => result,
 			condition_codes => condition_codes,
 			exception_status => exception_status,
@@ -138,6 +147,19 @@ begin
 		destination <= x"3FFF8000000000000000";
 		check(x"FFFFC000000000000123", "1001", x"00",
 			"FMUL source NaN propagation mismatch");
+
+		shared_product_left <= x"FEDCBA9876543210";
+		shared_product_right <= x"0123456789ABCDEF";
+		shared_product_request <= '1';
+		wait for 1 ns;
+		assert shared_product_result =
+			unsigned'(x"FEDCBA9876543210") * unsigned'(x"0123456789ABCDEF")
+			report "shared raw multiplier result mismatch" severity failure;
+		shared_product_request <= '0';
+		source <= x"40008000000000000000";
+		destination <= x"3FFFC000000000000000";
+		check(x"4000C000000000000000", "0000", x"00",
+			"FMUL result did not recover after shared product");
 
 		report "PASS: MC68882 FMUL arithmetic datapath" severity note;
 		stop;

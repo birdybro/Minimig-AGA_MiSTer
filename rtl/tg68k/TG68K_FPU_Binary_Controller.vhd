@@ -176,6 +176,9 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal add_subtract_compare_codes : std_logic_vector(3 downto 0);
 	signal multiply_round_input : fpu_round_input_t;
 	signal multiply_base_status : std_logic_vector(7 downto 0);
+	signal shared_product_left : unsigned(63 downto 0);
+	signal shared_product_right : unsigned(63 downto 0);
+	signal shared_product_result : unsigned(127 downto 0);
 	signal divide_start : std_logic;
 	signal divide_done : std_logic;
 	signal divide_round_input : fpu_round_input_t;
@@ -386,6 +389,10 @@ begin
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			single_precision_operation => single_precision_latched,
+			shared_product_request => shared_series_start,
+			shared_product_left => shared_product_left,
+			shared_product_right => shared_product_right,
+			shared_product_result => shared_product_result,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -508,6 +515,9 @@ begin
 			divide_by_six => shared_series_divide_by_six,
 			source_significand => shared_series_source,
 			square_high => shared_series_square_high,
+			product_left => shared_product_left,
+			product_right => shared_product_right,
+			product_result => shared_product_result,
 			square_result => shared_series_square_result,
 			cube_quotient => shared_series_cube_quotient,
 			cube_remainder => shared_series_cube_remainder,

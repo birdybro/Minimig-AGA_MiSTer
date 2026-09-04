@@ -22,6 +22,9 @@ entity TG68K_FPU_Series_Arithmetic is
 		divide_by_six : in std_logic;
 		source_significand : in unsigned(63 downto 0);
 		square_high : in unsigned(15 downto 0);
+		product_left : out unsigned(63 downto 0);
+		product_right : out unsigned(63 downto 0);
+		product_result : in unsigned(127 downto 0);
 
 		square_result : out unsigned(127 downto 0);
 		cube_quotient : out unsigned(79 downto 0);
@@ -35,8 +38,7 @@ architecture rtl of TG68K_FPU_Series_Arithmetic is
 	type arithmetic_state_t is (IDLE, SQUARE, CUBE, DIVIDE_CUBE);
 
 	signal state : arithmetic_state_t := IDLE;
-	signal product : unsigned(128 downto 0) := (others => '0');
-	signal multiplicand : unsigned(63 downto 0) := (others => '0');
+	signal product : unsigned(127 downto 0) := (others => '0');
 	signal quotient : unsigned(79 downto 0) := (others => '0');
 	signal remainder : natural range 0 to 5 := 0;
 	signal divisor : natural range 3 to 6 := 3;
@@ -45,15 +47,14 @@ architecture rtl of TG68K_FPU_Series_Arithmetic is
 begin
 	busy <= '0' when state = IDLE else '1';
 	done <= completion;
-	square_result <= product(127 downto 0);
+	product_left <= source_significand;
+	product_right <= resize(square_high, 64) when cube_divide = '1' else
+		source_significand;
+	square_result <= product;
 	cube_quotient <= quotient;
 	cube_remainder <= remainder;
 
 	arithmetic_sequence : process(clk)
-		variable square_sum : unsigned(64 downto 0);
-		variable next_square : unsigned(128 downto 0);
-		variable cube_sum : unsigned(16 downto 0);
-		variable next_cube : unsigned(80 downto 0);
 		variable next_quotient : unsigned(79 downto 0);
 		variable division_trial : natural range 0 to 11;
 	begin
@@ -62,7 +63,6 @@ begin
 			if nReset = '0' then
 				state <= IDLE;
 				product <= (others => '0');
-				multiplicand <= (others => '0');
 				quotient <= (others => '0');
 				remainder <= 0;
 				divisor <= 3;
@@ -70,9 +70,10 @@ begin
 			elsif state = IDLE then
 				if start = '1' and completion = '0' then
 					iteration <= 0;
-					product <= resize(source_significand, product'length);
+					-- The shared DSP result is captured immediately; these states
+					-- retain the original square/cube completion latency.
+					product <= product_result;
 					if cube_divide = '1' then
-						multiplicand <= resize(square_high, multiplicand'length);
 						if divide_by_six = '1' then
 							divisor <= 6;
 						else
@@ -80,44 +81,26 @@ begin
 						end if;
 						state <= CUBE;
 					else
-						multiplicand <= source_significand;
 						state <= SQUARE;
 					end if;
 				end if;
 			else
 				case state is
 					when SQUARE =>
-						square_sum := product(128 downto 64);
-						if product(0) = '1' then
-							square_sum := square_sum + resize(multiplicand,
-								square_sum'length);
-						end if;
-						next_square := shift_right(square_sum &
-							product(63 downto 0), 1);
 						if iteration = 63 then
-							product <= next_square;
 							completion <= '1';
 							state <= IDLE;
 						else
-							product <= next_square;
 							iteration <= iteration + 1;
 						end if;
 
 					when CUBE =>
-						cube_sum := product(80 downto 64);
-						if product(0) = '1' then
-							cube_sum := cube_sum + resize(multiplicand(15 downto 0),
-								cube_sum'length);
-						end if;
-						next_cube := shift_right(cube_sum & product(63 downto 0), 1);
 						if iteration = 63 then
-							product <= resize(next_cube, product'length);
 							quotient <= (others => '0');
 							remainder <= 0;
 							iteration <= 0;
 							state <= DIVIDE_CUBE;
 						else
-							product <= resize(next_cube, product'length);
 							iteration <= iteration + 1;
 						end if;
 

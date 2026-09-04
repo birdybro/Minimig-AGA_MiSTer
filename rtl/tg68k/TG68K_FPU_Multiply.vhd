@@ -24,6 +24,10 @@ entity TG68K_FPU_Multiply is
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 		single_precision_operation : in std_logic := '0';
+		shared_product_request : in std_logic := '0';
+		shared_product_left : in unsigned(63 downto 0) := (others => '0');
+		shared_product_right : in unsigned(63 downto 0) := (others => '0');
+		shared_product_result : out unsigned(127 downto 0);
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -74,7 +78,8 @@ begin
 	base_exception_status <= "0" & signaling_nan_detected &
 		operand_error_detected & "00000";
 
-	calculate : process(source, destination, single_precision_operation)
+	calculate : process(source, destination, single_precision_operation,
+			shared_product_request, shared_product_left, shared_product_right)
 		variable source_class : fpu_data_class_t;
 		variable destination_class : fpu_data_class_t;
 		variable source_exponent : integer range -65536 to 65535;
@@ -86,6 +91,8 @@ begin
 		variable selected_nan : fpu_extended_t;
 		variable source_shift : natural range 0 to 63;
 		variable destination_shift : natural range 0 to 63;
+		variable product_left : unsigned(63 downto 0);
+		variable product_right : unsigned(63 downto 0);
 	begin
 		source_class := fpu_classify(source);
 		destination_class := fpu_classify(destination);
@@ -119,7 +126,14 @@ begin
 		intermediate_special <= (others => '0');
 		signaling_nan_detected <= '0';
 		operand_error_detected <= '0';
-		product := (others => '0');
+		product_left := source_significand;
+		product_right := destination_significand;
+		if shared_product_request = '1' then
+			product_left := shared_product_left;
+			product_right := shared_product_right;
+		end if;
+		product := product_left * product_right;
+		shared_product_result <= product;
 		product_exponent := source_exponent + destination_exponent;
 		selected_nan := FPU_RESET_NAN;
 
@@ -158,7 +172,6 @@ begin
 				destination_class = FPU_CLASS_ZERO then
 			intermediate_class <= FPU_CLASS_ZERO;
 		else
-			product := source_significand * destination_significand;
 			if product(127) = '1' then
 				product_exponent := product_exponent + 1;
 				intermediate_significand(66 downto 3) <= product(127 downto 64);

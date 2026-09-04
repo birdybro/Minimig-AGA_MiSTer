@@ -16,6 +16,9 @@ architecture test of tb_tg68k_fpu_series_arithmetic is
 	signal divide_by_six : std_logic := '0';
 	signal source_significand : unsigned(63 downto 0) := (others => '0');
 	signal square_high : unsigned(15 downto 0) := (others => '0');
+	signal product_left : unsigned(63 downto 0);
+	signal product_right : unsigned(63 downto 0);
+	signal product_result : unsigned(127 downto 0);
 	signal square_result : unsigned(127 downto 0);
 	signal cube_quotient : unsigned(79 downto 0);
 	signal cube_remainder : natural range 0 to 5;
@@ -23,6 +26,7 @@ architecture test of tb_tg68k_fpu_series_arithmetic is
 	signal done : std_logic;
 begin
 	clk <= not clk after CLOCK_PERIOD / 2;
+	product_result <= product_left * product_right;
 
 	dut : entity work.TG68K_FPU_Series_Arithmetic
 		port map(
@@ -33,6 +37,9 @@ begin
 			divide_by_six => divide_by_six,
 			source_significand => source_significand,
 			square_high => square_high,
+			product_left => product_left,
+			product_right => product_right,
+			product_result => product_result,
 			square_result => square_result,
 			cube_quotient => cube_quotient,
 			cube_remainder => cube_remainder,
