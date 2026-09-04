@@ -165,6 +165,10 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal subtraction_exponent : signed(16 downto 0) := (others => '0');
 	signal subtraction_shift_count : natural range 0 to CORDIC_WIDTH := 0;
 	signal subtraction_sticky : std_logic := '0';
+	signal tangent_remainder : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
+	signal tangent_divisor : unsigned(CORDIC_WIDTH downto 0) :=
+		(others => '0');
 	signal tangent_quotient : unsigned(65 downto 0) := (others => '0');
 	signal tangent_iteration : natural range 0 to 64 := 0;
 	signal result_exponent : signed(16 downto 0) := (others => '0');
@@ -268,7 +272,7 @@ begin
 	end process;
 
 	value_arithmetic : process(state, subtraction_value, subtraction_one,
-		cordic_x_result, cordic_y_result)
+		tangent_remainder, tangent_divisor, cordic_x_result, cordic_y_result)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable left_value : unsigned(CORDIC_WIDTH downto 0);
 		variable right_value : unsigned(CORDIC_WIDTH downto 0);
@@ -285,16 +289,16 @@ begin
 					subtract_value := '1';
 				end if;
 			when NORMALIZE_HYPERBOLIC_TANGENT =>
-				left_value := subtraction_value;
-				if subtraction_value >= subtraction_one then
-					right_value := subtraction_one;
+				left_value := tangent_remainder;
+				if tangent_remainder >= tangent_divisor then
+					right_value := tangent_divisor;
 					subtract_value := '1';
 				end if;
 			when DIVIDE_HYPERBOLIC_TANGENT =>
-				shifted_remainder := shift_left(subtraction_value, 1);
+				shifted_remainder := shift_left(tangent_remainder, 1);
 				left_value := shifted_remainder;
-				if shifted_remainder >= subtraction_one then
-					right_value := subtraction_one;
+				if shifted_remainder >= tangent_divisor then
+					right_value := tangent_divisor;
 					subtract_value := '1';
 				end if;
 			when others => null;
@@ -457,8 +461,8 @@ begin
 				constant denominator : in unsigned(CORDIC_WIDTH downto 0);
 				constant prior_sticky : in std_logic) is
 		begin
-			subtraction_value <= numerator;
-			subtraction_one <= denominator;
+			tangent_remainder <= numerator;
+			tangent_divisor <= denominator;
 			subtraction_exponent <= (others => '0');
 			subtraction_sticky <= prior_sticky;
 			intermediate_sign <= source_sign_latched;
@@ -889,6 +893,8 @@ begin
 				subtraction_exponent <= (others => '0');
 				subtraction_shift_count <= 0;
 				subtraction_sticky <= '0';
+				tangent_remainder <= (others => '0');
+				tangent_divisor <= (others => '0');
 				tangent_quotient <= (others => '0');
 				tangent_iteration <= 0;
 				result_exponent <= (others => '0');
@@ -1431,8 +1437,8 @@ begin
 						end if;
 
 					when NORMALIZE_HYPERBOLIC_TANGENT =>
-						if subtraction_value >= subtraction_one then
-							subtraction_value <= value_arithmetic_result(
+						if tangent_remainder >= tangent_divisor then
+							tangent_remainder <= value_arithmetic_result(
 								CORDIC_WIDTH downto 0);
 							tangent_quotient <= (0 => '1', others => '0');
 							tangent_iteration <= 0;
@@ -1440,22 +1446,22 @@ begin
 							intermediate_exponent <= subtraction_exponent;
 							state <= DIVIDE_HYPERBOLIC_TANGENT;
 						else
-							subtraction_value <= shift_left(subtraction_value, 1);
+							tangent_remainder <= shift_left(tangent_remainder, 1);
 							subtraction_exponent <= subtraction_exponent - 1;
 						end if;
 
 					when DIVIDE_HYPERBOLIC_TANGENT =>
 						tangent_shifted_remainder := shift_left(
-							subtraction_value, 1);
+							tangent_remainder, 1);
 						tangent_next_remainder := value_arithmetic_result(
 							CORDIC_WIDTH downto 0);
 						tangent_next_quotient := shift_left(tangent_quotient, 1);
-						if tangent_shifted_remainder >= subtraction_one then
+						if tangent_shifted_remainder >= tangent_divisor then
 							tangent_next_quotient(0) := '1';
 						else
 							tangent_next_quotient(0) := '0';
 						end if;
-						subtraction_value <= tangent_next_remainder;
+						tangent_remainder <= tangent_next_remainder;
 						tangent_quotient <= tangent_next_quotient;
 						if tangent_iteration = 64 then
 							intermediate_significand(66 downto 3) <=
