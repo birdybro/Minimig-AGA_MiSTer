@@ -1,5 +1,6 @@
 library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -23,6 +24,17 @@ architecture test of tb_tg68k_fpu_remainder is
 	signal quotient : std_logic_vector(7 downto 0);
 	signal busy : std_logic;
 	signal done : std_logic;
+	signal digit_start : std_logic;
+	signal digit_initial_mode : fpu_divide_initial_t;
+	signal digit_divisor : unsigned(64 downto 0);
+	signal digit_dividend : unsigned(64 downto 0);
+	signal digit_forced_subtrahend : unsigned(64 downto 0);
+	signal digit_iterations : natural range 0 to 65535;
+	signal digit_nearest_adjust : std_logic;
+	signal digit_remainder : unsigned(64 downto 0);
+	signal digit_quotient : unsigned(65 downto 0);
+	signal digit_sign_invert : std_logic;
+	signal digit_done : std_logic;
 begin
 	clk <= not clk after CLK_PERIOD / 2;
 
@@ -36,6 +48,17 @@ begin
 			destination => destination,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			reduction_start => digit_start,
+			reduction_initial_mode => digit_initial_mode,
+			reduction_divisor => digit_divisor,
+			reduction_dividend => digit_dividend,
+			reduction_forced_subtrahend => digit_forced_subtrahend,
+			reduction_iterations => digit_iterations,
+			reduction_nearest_adjust => digit_nearest_adjust,
+			reduction_remainder => digit_remainder,
+			reduction_quotient => digit_quotient,
+			reduction_sign_invert => digit_sign_invert,
+			reduction_done => digit_done,
 			result => result,
 			condition_codes => condition_codes,
 			exception_status => exception_status,
@@ -44,6 +67,26 @@ begin
 			done => done,
 			round_input => open,
 			base_exception_status => open
+		);
+
+	digit_engine : entity work.TG68K_FPU_Divide_Engine
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => digit_start,
+			initial_mode => digit_initial_mode,
+			divisor => digit_divisor,
+			dividend => digit_dividend,
+			forced_subtrahend => digit_forced_subtrahend,
+			iterations => digit_iterations,
+			nearest_adjust => digit_nearest_adjust,
+			divisor_result => open,
+			remainder_result => digit_remainder,
+			quotient_result => digit_quotient,
+			exponent_decrement => open,
+			sign_invert => digit_sign_invert,
+			busy => open,
+			done => digit_done
 		);
 
 	stimulus : process

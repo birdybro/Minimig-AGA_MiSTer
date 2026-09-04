@@ -27,6 +27,17 @@ entity TG68K_FPU_Remainder is
 		destination : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		reduction_start : out std_logic;
+		reduction_initial_mode : out fpu_divide_initial_t;
+		reduction_divisor : out unsigned(64 downto 0);
+		reduction_dividend : out unsigned(64 downto 0);
+		reduction_forced_subtrahend : out unsigned(64 downto 0);
+		reduction_iterations : out natural range 0 to 65535;
+		reduction_nearest_adjust : out std_logic;
+		reduction_remainder : in unsigned(64 downto 0);
+		reduction_quotient : in unsigned(65 downto 0);
+		reduction_sign_invert : in std_logic;
+		reduction_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -40,7 +51,7 @@ entity TG68K_FPU_Remainder is
 end entity;
 
 architecture rtl of TG68K_FPU_Remainder is
-	type remainder_state_t is (IDLE, REDUCE, FINALIZE, COMPLETE);
+	type remainder_state_t is (IDLE, REDUCE, COMPLETE);
 
 	function highest_set_bit(value : unsigned) return natural is
 	begin
@@ -53,14 +64,19 @@ architecture rtl of TG68K_FPU_Remainder is
 	end function;
 
 	signal state : remainder_state_t := IDLE;
-	signal divisor_register : unsigned(63 downto 0) := (others => '0');
-	signal remainder_register : unsigned(63 downto 0) := (others => '0');
-	signal quotient_register : unsigned(6 downto 0) := (others => '0');
-	signal reduction_count : natural range 0 to 65535 := 0;
-	signal remainder_exponent : integer range -65536 to 65535 := 0;
+	signal prepared_initial_mode : fpu_divide_initial_t := FPU_DIVIDE_BYPASS;
+	signal prepared_divisor : unsigned(64 downto 0) := (others => '0');
+	signal prepared_dividend : unsigned(64 downto 0) := (others => '0');
+	signal prepared_forced_subtrahend : unsigned(64 downto 0) :=
+		(others => '0');
+	signal prepared_iterations : natural range 0 to 65535 := 0;
+	signal prepared_nearest_adjust : std_logic := '0';
+	signal prepared_exponent : signed(16 downto 0) := (others => '0');
+	signal prepared_sign : std_logic := '0';
+	signal reduction_operand_valid : std_logic := '0';
+	signal remainder_exponent : signed(16 downto 0) := (others => '0');
 	signal destination_sign : std_logic := '0';
 	signal quotient_sign : std_logic := '0';
-	signal nearest_adjust : std_logic := '0';
 	signal quotient_result : std_logic_vector(7 downto 0) := (others => '0');
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
@@ -79,6 +95,14 @@ begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
 	quotient <= quotient_result;
+	reduction_start <= '1' when state = IDLE and start = '1' and
+		reduction_operand_valid = '1' else '0';
+	reduction_initial_mode <= prepared_initial_mode;
+	reduction_divisor <= prepared_divisor;
+	reduction_dividend <= prepared_dividend;
+	reduction_forced_subtrahend <= prepared_forced_subtrahend;
+	reduction_iterations <= prepared_iterations;
+	reduction_nearest_adjust <= prepared_nearest_adjust;
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -128,7 +152,7 @@ begin
 		exception_status <= status;
 	end process;
 
-	remainder_sequence : process(clk)
+	prepare_reduction : process(source, destination, ieee_remainder)
 		variable source_class : fpu_data_class_t;
 		variable destination_class : fpu_data_class_t;
 		variable source_exponent : integer range -65536 to 65535;
@@ -138,25 +162,76 @@ begin
 		variable destination_significand : unsigned(63 downto 0);
 		variable source_shift : natural range 0 to 63;
 		variable destination_shift : natural range 0 to 63;
+	begin
+		source_class := fpu_classify(source);
+		destination_class := fpu_classify(destination);
+		source_exponent := fpu_unbiased_exponent(source);
+		destination_exponent := fpu_unbiased_exponent(destination);
+		source_significand := unsigned(source(63 downto 0));
+		destination_significand := unsigned(destination(63 downto 0));
+		source_shift := 0;
+		destination_shift := 0;
+		if source_class = FPU_CLASS_NORMAL and source_significand /= 0 then
+			source_shift := 63 - highest_set_bit(source_significand);
+			source_significand := shift_left(source_significand, source_shift);
+			source_exponent := source_exponent - source_shift;
+		end if;
+		if destination_class = FPU_CLASS_NORMAL and
+				destination_significand /= 0 then
+			destination_shift := 63 - highest_set_bit(destination_significand);
+			destination_significand := shift_left(destination_significand,
+				destination_shift);
+			destination_exponent := destination_exponent - destination_shift;
+		end if;
+
+		prepared_initial_mode <= FPU_DIVIDE_BYPASS;
+		prepared_divisor <= resize(source_significand, 65);
+		prepared_dividend <= resize(destination_significand, 65);
+		prepared_forced_subtrahend <= resize(destination_significand, 65);
+		prepared_iterations <= 0;
+		prepared_nearest_adjust <= '0';
+		prepared_exponent <= to_signed(destination_exponent, 17);
+		prepared_sign <= destination(79);
+		exponent_difference := destination_exponent - source_exponent;
+		if exponent_difference < 0 then
+			if ieee_remainder = '1' and exponent_difference = -1 and
+					destination_significand > source_significand then
+				prepared_initial_mode <= FPU_DIVIDE_SUBTRACT;
+				prepared_dividend <=
+					shift_left(resize(source_significand, 65), 1);
+				prepared_sign <= not destination(79);
+			end if;
+		else
+			prepared_initial_mode <= FPU_DIVIDE_REDUCTION;
+			prepared_iterations <= exponent_difference;
+			prepared_nearest_adjust <= ieee_remainder;
+			prepared_exponent <= to_signed(source_exponent, 17);
+		end if;
+		if source_class = FPU_CLASS_NORMAL and source_significand /= 0 and
+				destination_class = FPU_CLASS_NORMAL and
+				destination_significand /= 0 then
+			reduction_operand_valid <= '1';
+		else
+			reduction_operand_valid <= '0';
+		end if;
+	end process;
+
+	remainder_sequence : process(clk)
+		variable source_class : fpu_data_class_t;
+		variable destination_class : fpu_data_class_t;
+		variable source_significand : unsigned(63 downto 0);
+		variable destination_significand : unsigned(63 downto 0);
 		variable selected_nan : fpu_extended_t;
-		variable shifted_remainder : unsigned(64 downto 0);
-		variable reduced_remainder : unsigned(64 downto 0);
 		variable final_remainder : unsigned(63 downto 0);
-		variable final_quotient : unsigned(6 downto 0);
 		variable final_sign : std_logic;
 		variable final_shift : natural range 0 to 63;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
-				divisor_register <= (others => '0');
-				remainder_register <= (others => '0');
-				quotient_register <= (others => '0');
-				reduction_count <= 0;
-				remainder_exponent <= 0;
+				remainder_exponent <= (others => '0');
 				destination_sign <= '0';
 				quotient_sign <= '0';
-				nearest_adjust <= '0';
 				quotient_result <= (others => '0');
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
@@ -171,32 +246,9 @@ begin
 						if start = '1' then
 							source_class := fpu_classify(source);
 							destination_class := fpu_classify(destination);
-							source_exponent := fpu_unbiased_exponent(source);
-							destination_exponent :=
-								fpu_unbiased_exponent(destination);
 							source_significand := unsigned(source(63 downto 0));
 							destination_significand :=
 								unsigned(destination(63 downto 0));
-							source_shift := 0;
-							destination_shift := 0;
-							if source_class = FPU_CLASS_NORMAL and
-									source_significand /= 0 then
-								source_shift :=
-									63 - highest_set_bit(source_significand);
-								source_significand :=
-									shift_left(source_significand, source_shift);
-								source_exponent := source_exponent - source_shift;
-							end if;
-							if destination_class = FPU_CLASS_NORMAL and
-									destination_significand /= 0 then
-								destination_shift :=
-									63 - highest_set_bit(destination_significand);
-								destination_significand :=
-									shift_left(destination_significand,
-										destination_shift);
-								destination_exponent :=
-									destination_exponent - destination_shift;
-							end if;
 
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= destination(79);
@@ -207,10 +259,8 @@ begin
 							operand_error_detected <= '0';
 							destination_sign <= destination(79);
 							quotient_sign <= source(79) xor destination(79);
-							quotient_register <= (others => '0');
 							quotient_result <= (source(79) xor destination(79)) &
 								"0000000";
-							nearest_adjust <= '0';
 							selected_nan := FPU_RESET_NAN;
 							if source_class = FPU_CLASS_SIGNALING_NAN or
 									destination_class = FPU_CLASS_SIGNALING_NAN then
@@ -248,103 +298,40 @@ begin
 							elsif source_class = FPU_CLASS_INFINITY then
 								intermediate_class <= FPU_CLASS_NORMAL;
 								intermediate_exponent <=
-									to_signed(destination_exponent, 17);
+									prepared_exponent;
 								intermediate_significand(66 downto 3) <=
-									destination_significand;
+									prepared_dividend(63 downto 0);
 								state <= COMPLETE;
 							else
-								divisor_register <= source_significand;
-								exponent_difference :=
-									destination_exponent - source_exponent;
-								if exponent_difference < 0 then
-									remainder_exponent <= destination_exponent;
-									if ieee_remainder = '1' and
-											exponent_difference = -1 and
-											destination_significand > source_significand then
-										quotient_register <= to_unsigned(1, 7);
-										reduced_remainder :=
-											shift_left(resize(source_significand, 65), 1) -
-											resize(destination_significand, 65);
-										remainder_register <=
-											reduced_remainder(63 downto 0);
-										destination_sign <= not destination(79);
-									else
-										remainder_register <= destination_significand;
-									end if;
-									state <= FINALIZE;
-								else
-									remainder_exponent <= source_exponent;
-									if destination_significand >= source_significand then
-										remainder_register <=
-											destination_significand - source_significand;
-										quotient_register <= to_unsigned(1, 7);
-									else
-										remainder_register <= destination_significand;
-									end if;
-									nearest_adjust <= ieee_remainder;
-									if exponent_difference = 0 then
-										state <= FINALIZE;
-									else
-										reduction_count <= exponent_difference;
-										state <= REDUCE;
-									end if;
-								end if;
+								remainder_exponent <= prepared_exponent;
+								destination_sign <= prepared_sign;
+								state <= REDUCE;
 							end if;
 						end if;
 
 					when REDUCE =>
-						shifted_remainder :=
-							shift_left(resize(remainder_register, 65), 1);
-						quotient_register <= shift_left(quotient_register, 1);
-						if shifted_remainder >= resize(divisor_register, 65) then
-							reduced_remainder := shifted_remainder -
-								resize(divisor_register, 65);
-							remainder_register <= reduced_remainder(63 downto 0);
-							quotient_register(0) <= '1';
-						else
-							remainder_register <= shifted_remainder(63 downto 0);
-							quotient_register(0) <= '0';
-						end if;
-						if reduction_count = 1 then
-							state <= FINALIZE;
-						else
-							reduction_count <= reduction_count - 1;
-						end if;
-
-					when FINALIZE =>
-						final_remainder := remainder_register;
-						final_quotient := quotient_register;
-						final_sign := destination_sign;
-						if nearest_adjust = '1' then
-							shifted_remainder :=
-								shift_left(resize(remainder_register, 65), 1);
-							if shifted_remainder > resize(divisor_register, 65) or
-									(shifted_remainder = resize(divisor_register, 65) and
-									quotient_register(0) = '1') then
-								final_remainder :=
-									divisor_register - remainder_register;
-								final_quotient := quotient_register + 1;
-								final_sign := not destination_sign;
+						if reduction_done = '1' then
+							final_remainder := reduction_remainder(63 downto 0);
+							final_sign := destination_sign xor reduction_sign_invert;
+							quotient_result <= quotient_sign &
+								std_logic_vector(reduction_quotient(6 downto 0));
+							intermediate_sign <= final_sign;
+							intermediate_special <= (others => '0');
+							intermediate_significand <= (others => '0');
+							if final_remainder = 0 then
+								intermediate_class <= FPU_CLASS_ZERO;
+								intermediate_sign <= destination_sign;
+								intermediate_exponent <= (others => '0');
+							else
+								final_shift := 63 - highest_set_bit(final_remainder);
+								intermediate_class <= FPU_CLASS_NORMAL;
+								intermediate_exponent <= remainder_exponent -
+									to_signed(final_shift, 17);
+								intermediate_significand(66 downto 3) <=
+									shift_left(final_remainder, final_shift);
 							end if;
+							state <= COMPLETE;
 						end if;
-						quotient_result <= quotient_sign &
-							std_logic_vector(final_quotient);
-						intermediate_sign <= final_sign;
-						intermediate_special <= (others => '0');
-						intermediate_significand <= (others => '0');
-						if final_remainder = 0 then
-							intermediate_class <= FPU_CLASS_ZERO;
-							intermediate_sign <= destination_sign;
-							intermediate_exponent <= (others => '0');
-						else
-							final_shift := 63 - highest_set_bit(final_remainder);
-							intermediate_class <= FPU_CLASS_NORMAL;
-							intermediate_exponent <= to_signed(
-								remainder_exponent - final_shift, 17);
-							intermediate_significand(66 downto 3) <=
-								shift_left(final_remainder, final_shift);
-						end if;
-						state <= COMPLETE;
 
 					when COMPLETE => state <= IDLE;
 				end case;

@@ -65,6 +65,7 @@ def emit_testbench() -> None:
     vectors = make_vectors()
     print("""library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -123,6 +124,13 @@ architecture test of tb_tg68k_fpu_single_differential is
     signal divide_done : std_logic;
     signal divide_cc : std_logic_vector(3 downto 0);
     signal divide_status : std_logic_vector(7 downto 0);
+    signal digit_start : std_logic;
+    signal digit_divisor : unsigned(64 downto 0);
+    signal digit_dividend : unsigned(64 downto 0);
+    signal digit_remainder : unsigned(64 downto 0);
+    signal digit_quotient : unsigned(65 downto 0);
+    signal digit_exponent_decrement : std_logic;
+    signal digit_done : std_logic;
 begin
     clk <= not clk after CLK_PERIOD / 2;
 
@@ -174,6 +182,13 @@ begin
             rounding_precision => ignored_precision,
             rounding_mode => mode_value,
             single_precision_operation => '1',
+            divide_start => digit_start,
+            divide_divisor => digit_divisor,
+            divide_dividend => digit_dividend,
+            divide_remainder => digit_remainder,
+            divide_quotient => digit_quotient,
+            divide_exponent_decrement => digit_exponent_decrement,
+            divide_done => digit_done,
             result => open,
             condition_codes => open,
             exception_status => open,
@@ -181,6 +196,26 @@ begin
             done => divide_done,
             round_input => divide_round_input,
             base_exception_status => divide_base_status
+        );
+
+    digit_engine : entity work.TG68K_FPU_Divide_Engine
+        port map(
+            clk => clk,
+            nReset => nReset,
+            start => digit_start,
+            initial_mode => FPU_DIVIDE_FRACTION,
+            divisor => digit_divisor,
+            dividend => digit_dividend,
+            forced_subtrahend => (others => '0'),
+            iterations => 65,
+            nearest_adjust => '0',
+            divisor_result => open,
+            remainder_result => digit_remainder,
+            quotient_result => digit_quotient,
+            exponent_decrement => digit_exponent_decrement,
+            sign_invert => open,
+            busy => open,
+            done => digit_done
         );
 
     divide_round : entity work.TG68K_FPU_Round

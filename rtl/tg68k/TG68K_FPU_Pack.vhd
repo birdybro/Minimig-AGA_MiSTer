@@ -31,6 +31,8 @@ package TG68K_FPU_Pack is
 		FPU_EXP_BASE_TEN);
 	type fpu_logarithm_base_t is (FPU_LOG_BASE_E, FPU_LOG_BASE_TWO,
 		FPU_LOG_BASE_TEN);
+	type fpu_divide_initial_t is (FPU_DIVIDE_FRACTION,
+		FPU_DIVIDE_REDUCTION, FPU_DIVIDE_SUBTRACT, FPU_DIVIDE_BYPASS);
 	type fpu_data_class_t is (FPU_CLASS_ZERO, FPU_CLASS_NORMAL,
 		FPU_CLASS_INFINITY, FPU_CLASS_QUIET_NAN, FPU_CLASS_SIGNALING_NAN);
 	type fpu_round_input_t is record

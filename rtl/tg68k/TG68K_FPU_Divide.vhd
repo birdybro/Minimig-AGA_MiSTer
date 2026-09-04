@@ -27,6 +27,13 @@ entity TG68K_FPU_Divide is
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
 		single_precision_operation : in std_logic := '0';
+		divide_start : out std_logic;
+		divide_divisor : out unsigned(64 downto 0);
+		divide_dividend : out unsigned(64 downto 0);
+		divide_remainder : in unsigned(64 downto 0);
+		divide_quotient : in unsigned(65 downto 0);
+		divide_exponent_decrement : in std_logic;
+		divide_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -39,7 +46,6 @@ entity TG68K_FPU_Divide is
 end entity;
 
 architecture rtl of TG68K_FPU_Divide is
-	constant QUOTIENT_FRACTION_BITS : natural := 65;
 	type divider_state_t is (IDLE, DIVIDE, COMPLETE);
 
 	function highest_set_bit(value : unsigned) return natural is
@@ -53,10 +59,10 @@ architecture rtl of TG68K_FPU_Divide is
 	end function;
 
 	signal state : divider_state_t := IDLE;
-	signal divisor_register : unsigned(64 downto 0) := (others => '0');
-	signal remainder_register : unsigned(64 downto 0) := (others => '0');
-	signal quotient_register : unsigned(65 downto 0) := (others => '0');
-	signal iteration_count : natural range 0 to QUOTIENT_FRACTION_BITS - 1 := 0;
+	signal prepared_divisor : unsigned(64 downto 0) := (others => '0');
+	signal prepared_dividend : unsigned(64 downto 0) := (others => '0');
+	signal prepared_exponent : signed(16 downto 0) := (others => '0');
+	signal divide_operand_valid : std_logic := '0';
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -74,6 +80,10 @@ architecture rtl of TG68K_FPU_Divide is
 begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
+	divide_start <= '1' when state = IDLE and start = '1' and
+		divide_operand_valid = '1' else '0';
+	divide_divisor <= prepared_divisor;
+	divide_dividend <= prepared_dividend;
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -129,28 +139,61 @@ begin
 		exception_status <= status;
 	end process;
 
-	divider_sequence : process(clk)
+	prepare_division : process(source, destination, single_precision_operation)
 		variable source_class : fpu_data_class_t;
 		variable destination_class : fpu_data_class_t;
 		variable source_exponent : integer range -65536 to 65535;
 		variable destination_exponent : integer range -65536 to 65535;
-		variable quotient_exponent : integer range -65536 to 65535;
 		variable source_significand : unsigned(63 downto 0);
 		variable destination_significand : unsigned(63 downto 0);
 		variable source_shift : natural range 0 to 63;
 		variable destination_shift : natural range 0 to 63;
+	begin
+		source_class := fpu_classify(source);
+		destination_class := fpu_classify(destination);
+		source_exponent := fpu_unbiased_exponent(source);
+		destination_exponent := fpu_unbiased_exponent(destination);
+		source_significand := unsigned(source(63 downto 0));
+		destination_significand := unsigned(destination(63 downto 0));
+		source_shift := 0;
+		destination_shift := 0;
+		if source_class = FPU_CLASS_NORMAL and source_significand /= 0 then
+			source_shift := 63 - highest_set_bit(source_significand);
+			source_significand := shift_left(source_significand, source_shift);
+			source_exponent := source_exponent - source_shift;
+		end if;
+		if destination_class = FPU_CLASS_NORMAL and
+				destination_significand /= 0 then
+			destination_shift := 63 - highest_set_bit(destination_significand);
+			destination_significand := shift_left(destination_significand,
+				destination_shift);
+			destination_exponent := destination_exponent - destination_shift;
+		end if;
+		if single_precision_operation = '1' then
+			source_significand(39 downto 0) := (others => '0');
+			destination_significand(39 downto 0) := (others => '0');
+		end if;
+		prepared_divisor <= resize(source_significand, 65);
+		prepared_dividend <= resize(destination_significand, 65);
+		prepared_exponent <= to_signed(
+			destination_exponent - source_exponent, 17);
+		if source_class = FPU_CLASS_NORMAL and source_significand /= 0 and
+				destination_class = FPU_CLASS_NORMAL and
+				destination_significand /= 0 then
+			divide_operand_valid <= '1';
+		else
+			divide_operand_valid <= '0';
+		end if;
+	end process;
+
+	divider_sequence : process(clk)
+		variable source_class : fpu_data_class_t;
+		variable destination_class : fpu_data_class_t;
 		variable selected_nan : fpu_extended_t;
-		variable shifted_remainder : unsigned(64 downto 0);
-		variable next_remainder : unsigned(64 downto 0);
-		variable next_quotient : unsigned(65 downto 0);
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
-				divisor_register <= (others => '0');
-				remainder_register <= (others => '0');
-				quotient_register <= (others => '0');
-				iteration_count <= 0;
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -165,36 +208,6 @@ begin
 						if start = '1' then
 							source_class := fpu_classify(source);
 							destination_class := fpu_classify(destination);
-							source_exponent := fpu_unbiased_exponent(source);
-							destination_exponent :=
-								fpu_unbiased_exponent(destination);
-							source_significand := unsigned(source(63 downto 0));
-							destination_significand :=
-								unsigned(destination(63 downto 0));
-							source_shift := 0;
-							destination_shift := 0;
-							if source_class = FPU_CLASS_NORMAL and
-									source_significand /= 0 then
-								source_shift := 63 - highest_set_bit(source_significand);
-								source_significand := shift_left(source_significand,
-									source_shift);
-								source_exponent := source_exponent - source_shift;
-							end if;
-							if destination_class = FPU_CLASS_NORMAL and
-									destination_significand /= 0 then
-								destination_shift :=
-									63 - highest_set_bit(destination_significand);
-								destination_significand :=
-									shift_left(destination_significand,
-										destination_shift);
-								destination_exponent :=
-									destination_exponent - destination_shift;
-							end if;
-							if single_precision_operation = '1' then
-								source_significand(39 downto 0) := (others => '0');
-								destination_significand(39 downto 0) :=
-									(others => '0');
-							end if;
 
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= source(79) xor destination(79);
@@ -249,53 +262,27 @@ begin
 								intermediate_class <= FPU_CLASS_INFINITY;
 								state <= COMPLETE;
 							else
-								quotient_exponent :=
-									destination_exponent - source_exponent;
-								divisor_register <= resize(source_significand, 65);
-								if destination_significand < source_significand then
-									remainder_register <=
-										shift_left(resize(destination_significand, 65), 1) -
-										resize(source_significand, 65);
-									quotient_exponent := quotient_exponent - 1;
-								else
-									remainder_register <=
-										resize(destination_significand, 65) -
-										resize(source_significand, 65);
-								end if;
-								quotient_register <= (0 => '1', others => '0');
-								iteration_count <= 0;
 								intermediate_class <= FPU_CLASS_NORMAL;
-								intermediate_exponent <=
-									to_signed(quotient_exponent, 17);
 								state <= DIVIDE;
 							end if;
 						end if;
 
 					when DIVIDE =>
-						shifted_remainder := shift_left(remainder_register, 1);
-						next_quotient := shift_left(quotient_register, 1);
-						if shifted_remainder >= divisor_register then
-							next_remainder := shifted_remainder - divisor_register;
-							next_quotient(0) := '1';
-						else
-							next_remainder := shifted_remainder;
-							next_quotient(0) := '0';
-						end if;
-						remainder_register <= next_remainder;
-						quotient_register <= next_quotient;
-						if iteration_count = QUOTIENT_FRACTION_BITS - 1 then
+						if divide_done = '1' then
+							intermediate_exponent <= prepared_exponent;
+							if divide_exponent_decrement = '1' then
+								intermediate_exponent <= prepared_exponent - 1;
+							end if;
 							intermediate_significand(66 downto 3) <=
-								next_quotient(65 downto 2);
-							intermediate_significand(2) <= next_quotient(1);
-							intermediate_significand(1) <= next_quotient(0);
-							if next_remainder /= 0 then
+								divide_quotient(65 downto 2);
+							intermediate_significand(2) <= divide_quotient(1);
+							intermediate_significand(1) <= divide_quotient(0);
+							if divide_remainder /= 0 then
 								intermediate_significand(0) <= '1';
 							else
 								intermediate_significand(0) <= '0';
 							end if;
 							state <= COMPLETE;
-						else
-							iteration_count <= iteration_count + 1;
 						end if;
 
 					when COMPLETE => state <= IDLE;

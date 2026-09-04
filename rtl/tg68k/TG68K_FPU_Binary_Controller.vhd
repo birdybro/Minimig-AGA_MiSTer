@@ -181,6 +181,9 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal shared_product_result : unsigned(127 downto 0);
 	signal divide_start : std_logic;
 	signal divide_done : std_logic;
+	signal divide_digit_start : std_logic;
+	signal divide_digit_divisor : unsigned(64 downto 0);
+	signal divide_digit_dividend : unsigned(64 downto 0);
 	signal divide_round_input : fpu_round_input_t;
 	signal divide_base_status : std_logic_vector(7 downto 0);
 	signal square_root_start : std_logic;
@@ -198,9 +201,28 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal scale_base_status : std_logic_vector(7 downto 0);
 	signal remainder_start : std_logic;
 	signal remainder_done : std_logic;
+	signal remainder_digit_start : std_logic;
+	signal remainder_digit_initial_mode : fpu_divide_initial_t;
+	signal remainder_digit_divisor : unsigned(64 downto 0);
+	signal remainder_digit_dividend : unsigned(64 downto 0);
+	signal remainder_digit_forced_subtrahend : unsigned(64 downto 0);
+	signal remainder_digit_iterations : natural range 0 to 65535;
+	signal remainder_digit_nearest_adjust : std_logic;
 	signal remainder_round_input : fpu_round_input_t;
 	signal remainder_base_status : std_logic_vector(7 downto 0);
 	signal remainder_quotient : std_logic_vector(7 downto 0);
+	signal shared_divide_start : std_logic;
+	signal shared_divide_initial_mode : fpu_divide_initial_t;
+	signal shared_divide_divisor : unsigned(64 downto 0);
+	signal shared_divide_dividend : unsigned(64 downto 0);
+	signal shared_divide_forced_subtrahend : unsigned(64 downto 0);
+	signal shared_divide_iterations : natural range 0 to 65535;
+	signal shared_divide_nearest_adjust : std_logic;
+	signal shared_divide_remainder : unsigned(64 downto 0);
+	signal shared_divide_quotient : unsigned(65 downto 0);
+	signal shared_divide_exponent_decrement : std_logic;
+	signal shared_divide_sign_invert : std_logic;
+	signal shared_divide_done : std_logic;
 	signal exponential_start : std_logic;
 	signal exponential_done : std_logic;
 	signal exponential_round_input : fpu_round_input_t;
@@ -503,6 +525,14 @@ begin
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
 			single_precision_operation => single_precision_latched,
+			divide_start => divide_digit_start,
+			divide_divisor => divide_digit_divisor,
+			divide_dividend => divide_digit_dividend,
+			divide_remainder => shared_divide_remainder,
+			divide_quotient => shared_divide_quotient,
+			divide_exponent_decrement =>
+				shared_divide_exponent_decrement,
+			divide_done => shared_divide_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -510,6 +540,40 @@ begin
 			done => divide_done,
 			round_input => divide_round_input,
 			base_exception_status => divide_base_status
+		);
+
+	shared_divide_start <= divide_digit_start or remainder_digit_start;
+	shared_divide_initial_mode <= remainder_digit_initial_mode when
+		remainder_digit_start = '1' else FPU_DIVIDE_FRACTION;
+	shared_divide_divisor <= remainder_digit_divisor when
+		remainder_digit_start = '1' else divide_digit_divisor;
+	shared_divide_dividend <= remainder_digit_dividend when
+		remainder_digit_start = '1' else divide_digit_dividend;
+	shared_divide_forced_subtrahend <= remainder_digit_forced_subtrahend when
+		remainder_digit_start = '1' else (others => '0');
+	shared_divide_iterations <= remainder_digit_iterations when
+		remainder_digit_start = '1' else 65;
+	shared_divide_nearest_adjust <= remainder_digit_nearest_adjust when
+		remainder_digit_start = '1' else '0';
+
+	shared_divider : entity work.TG68K_FPU_Divide_Engine
+		port map(
+			clk => clk,
+			nReset => nReset,
+			start => shared_divide_start,
+			initial_mode => shared_divide_initial_mode,
+			divisor => shared_divide_divisor,
+			dividend => shared_divide_dividend,
+			forced_subtrahend => shared_divide_forced_subtrahend,
+			iterations => shared_divide_iterations,
+			nearest_adjust => shared_divide_nearest_adjust,
+			divisor_result => open,
+			remainder_result => shared_divide_remainder,
+			quotient_result => shared_divide_quotient,
+			exponent_decrement => shared_divide_exponent_decrement,
+			sign_invert => shared_divide_sign_invert,
+			busy => open,
+			done => shared_divide_done
 		);
 
 	square_root_start <= '1' when state = EXECUTE and
@@ -570,6 +634,18 @@ begin
 			destination => destination_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			reduction_start => remainder_digit_start,
+			reduction_initial_mode => remainder_digit_initial_mode,
+			reduction_divisor => remainder_digit_divisor,
+			reduction_dividend => remainder_digit_dividend,
+			reduction_forced_subtrahend =>
+				remainder_digit_forced_subtrahend,
+			reduction_iterations => remainder_digit_iterations,
+			reduction_nearest_adjust => remainder_digit_nearest_adjust,
+			reduction_remainder => shared_divide_remainder,
+			reduction_quotient => shared_divide_quotient,
+			reduction_sign_invert => shared_divide_sign_invert,
+			reduction_done => shared_divide_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
