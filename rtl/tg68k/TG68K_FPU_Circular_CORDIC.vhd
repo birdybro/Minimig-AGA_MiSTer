@@ -55,6 +55,7 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	type narrow_angle_rom_t is array(0 to 63) of signed(NARROW_WIDTH - 1 downto 0);
 	type hyperbolic_angle_rom_t is array(0 to 31) of
 		signed(HYPERBOLIC_XY_WIDTH - 1 downto 0);
+	type angle_rom_t is array(0 to 255) of cordic_value_t;
 	constant WIDE_ANGLE_ZERO : cordic_value_t :=
 		signed'(x"08000000000000000000000000000000000");
 	constant NARROW_ANGLE_ZERO : signed(NARROW_WIDTH - 1 downto 0) :=
@@ -63,7 +64,7 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		HYPERBOLIC_XY_WIDTH - 1 downto 0) :=
 		signed'(x"08C9F53D5681854BB520CC6AB");
 
-	signal wide_angle_rom : wide_angle_rom_t := (
+	constant WIDE_ANGLE_TABLE : wide_angle_rom_t := (
 		0 => signed'(x"0800000000000000000000000000000000000"),
 		1 => signed'(x"04B90147677CC21995A23DB6B8D4656BF2816"),
 		2 => signed'(x"027ECE16D7B8E7A377D0FCF2824878347837D"),
@@ -114,7 +115,7 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		47 => signed'(x"000000000000145F306DC9C882A53F84EAFA2"),
 		48 to 63 => (others => '0')
 	);
-	signal narrow_angle_rom : narrow_angle_rom_t := (
+	constant NARROW_ANGLE_TABLE : narrow_angle_rom_t := (
 		0 => signed'(x"0C90FDAA22168C234C4C6628B80DC"),
 		1 => signed'(x"076B19C1586ED3DA2B7F222F65E1D"),
 		2 => signed'(x"03EB6EBF25901BAC55B71E7BD7DE9"),
@@ -165,7 +166,7 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		47 => signed'(x"00000000000020000000000000000"),
 		48 to 63 => (others => '0')
 	);
-	signal hyperbolic_angle_rom : hyperbolic_angle_rom_t := (
+	constant HYPERBOLIC_ANGLE_TABLE : hyperbolic_angle_rom_t := (
 		0 => (others => '0'),
 		1 => signed'(x"08C9F53D5681854BB520CC6AB"),
 		2 => signed'(x"04162BBEA0451469C9DAF0BE1"),
@@ -199,10 +200,26 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 		30 => signed'(x"0000000040000000000000015"),
 		31 => signed'(x"0000000020000000000000003")
 	);
+	function build_angle_rom return angle_rom_t is
+		variable values : angle_rom_t := (others => (others => '0'));
+	begin
+		for index in WIDE_ANGLE_TABLE'range loop
+			values(index) := WIDE_ANGLE_TABLE(index)(147 downto 8);
+		end loop;
+		for index in NARROW_ANGLE_TABLE'range loop
+			values(64 + index) := resize(NARROW_ANGLE_TABLE(index),
+				CORDIC_WIDTH);
+		end loop;
+		for index in HYPERBOLIC_ANGLE_TABLE'range loop
+			values(128 + index) := resize(HYPERBOLIC_ANGLE_TABLE(index),
+				CORDIC_WIDTH);
+		end loop;
+		return values;
+	end function;
+
+	signal angle_rom : angle_rom_t := build_angle_rom;
 	attribute ramstyle : string;
-	attribute ramstyle of wide_angle_rom : signal is "M10K";
-	attribute ramstyle of narrow_angle_rom : signal is "M10K";
-	attribute ramstyle of hyperbolic_angle_rom : signal is "M10K";
+	attribute ramstyle of angle_rom : signal is "M10K";
 
 	function fit_precision(
 			value : signed;
@@ -240,11 +257,8 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	signal iteration : natural range 0 to WIDE_ITERATIONS := 0;
 	signal angle_address : natural range 0 to 47 := 0;
 	signal hyperbolic_angle_address : natural range 1 to 31 := 1;
-	signal wide_angle_data : cordic_value_t := (others => '0');
-	signal narrow_angle_data : signed(NARROW_WIDTH - 1 downto 0) :=
-		(others => '0');
-	signal hyperbolic_angle_data : signed(
-		HYPERBOLIC_XY_WIDTH - 1 downto 0) := (others => '0');
+	signal angle_rom_address : natural range 0 to 159;
+	signal angle_data : cordic_value_t := (others => '0');
 	signal shift_angle : cordic_value_t := (others => '0');
 	signal repeat_iteration : std_logic := '0';
 	signal active_vectoring : std_logic;
@@ -285,17 +299,18 @@ begin
 	active_z <= fit_hyperbolic_z(z_input, vectoring) when
 		state = IDLE and hyperbolic = '1' else
 		fit_precision(z_input, narrow_precision) when state = IDLE else z_value;
+	angle_rom_address <= 128 + hyperbolic_angle_address when
+		active_hyperbolic = '1' else
+		64 + angle_address when active_narrow = '1' else angle_address;
 	active_angle <= resize(HYPERBOLIC_ANGLE_ONE, CORDIC_WIDTH) when
 		state = IDLE and hyperbolic = '1' else
 		resize(NARROW_ANGLE_ZERO, CORDIC_WIDTH) when
 		state = IDLE and narrow_precision = '1' else
 		WIDE_ANGLE_ZERO when state = IDLE else
-		resize(hyperbolic_angle_data, CORDIC_WIDTH) when
+		angle_data when
 		active_hyperbolic = '1' and iteration <= 31 else
 		shift_angle when active_hyperbolic = '1' else
-		resize(narrow_angle_data, CORDIC_WIDTH) when
-		active_narrow = '1' and iteration <= 47 else
-		wide_angle_data when iteration <= 47 else shift_angle;
+		angle_data when iteration <= 47 else shift_angle;
 	active_direction <= '1' when
 		(active_vectoring = '1' and active_hyperbolic = '1' and
 			active_y >= 0) or
@@ -424,10 +439,7 @@ begin
 		variable next_tail : cordic_value_t;
 	begin
 		if rising_edge(clk) then
-			wide_angle_data <= wide_angle_rom(angle_address)(147 downto 8);
-			narrow_angle_data <= narrow_angle_rom(angle_address);
-			hyperbolic_angle_data <=
-				hyperbolic_angle_rom(hyperbolic_angle_address);
+			angle_data <= angle_rom(angle_rom_address);
 			if nReset = '0' then
 				state <= IDLE;
 				vectoring_latched <= '0';
