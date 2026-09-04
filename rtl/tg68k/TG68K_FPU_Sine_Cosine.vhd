@@ -52,6 +52,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant CORDIC_WIDTH : natural := FRACTION_BITS + 4;
 	constant RECIPROCAL_BITS : natural := 192;
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
+	constant RANGE_RESULT_BITS : natural := FRACTION_BITS + 2;
 	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
 	constant NORMALIZATION_SHIFT_CHUNK : natural := 9;
@@ -113,9 +114,14 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal simultaneous_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
-	-- The combined accumulator|multiplier shifts right around the stationary
-	-- reciprocal, avoiding a second 256-bit range-reduction shifter.
+	-- Keep alignment feedback out of the combined accumulator|multiplier mux;
+	-- the completed product transfers once into the direction-partitioned banks.
 	signal reciprocal_product : unsigned(PRODUCT_WIDTH downto 0) :=
+		(others => '0');
+	signal range_product_low : unsigned(RANGE_RESULT_BITS - 1 downto 0) :=
+		(others => '0');
+	signal range_product_high : unsigned(
+		PRODUCT_WIDTH - RANGE_RESULT_BITS - 1 downto 0) :=
 		(others => '0');
 	signal reciprocal_iteration : natural range 0 to 63 := 0;
 	signal range_shift_chunks : natural range 0 to
@@ -333,7 +339,6 @@ begin
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
 		variable next_reciprocal_product : unsigned(PRODUCT_WIDTH downto 0);
-		variable aligned_product : unsigned(PRODUCT_WIDTH - 1 downto 0);
 		variable shift_position : integer range -16128 to 294;
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable reduced_angle : cordic_value_t;
@@ -510,6 +515,10 @@ begin
 							reciprocal_product(63 downto 0), 1);
 						reciprocal_product <= next_reciprocal_product;
 						if reciprocal_iteration = 63 then
+							range_product_low <= next_reciprocal_product(
+								RANGE_RESULT_BITS - 1 downto 0);
+							range_product_high <= next_reciprocal_product(
+								PRODUCT_WIDTH - 1 downto RANGE_RESULT_BITS);
 							shift_position := 255 - source_exponent_latched;
 							if shift_position >= FRACTION_BITS then
 								range_shift_amount := shift_position - FRACTION_BITS;
@@ -519,7 +528,7 @@ begin
 								range_shift_left <= '1';
 							else
 								range_shift_amount := 0;
-								reciprocal_product <= (others => '0');
+								range_product_low <= (others => '0');
 							end if;
 							range_shift_chunks <=
 								range_shift_amount / RANGE_SHIFT_CHUNK;
@@ -538,14 +547,16 @@ begin
 
 					when ALIGN_RANGE =>
 						if range_shift_left = '1' then
-							aligned_product := shift_left(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), RANGE_SHIFT_CHUNK);
+							range_product_low <= shift_left(range_product_low,
+								RANGE_SHIFT_CHUNK);
 						else
-							aligned_product := shift_right(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), RANGE_SHIFT_CHUNK);
+							range_product_low <= range_product_high(
+								RANGE_SHIFT_CHUNK - 1 downto 0) &
+								range_product_low(RANGE_RESULT_BITS - 1 downto
+								RANGE_SHIFT_CHUNK);
+							range_product_high <= shift_right(range_product_high,
+								RANGE_SHIFT_CHUNK);
 						end if;
-						reciprocal_product <= resize(aligned_product,
-							PRODUCT_WIDTH + 1);
 						if range_shift_chunks = 1 then
 							range_shift_chunks <= 0;
 							if range_shift_tail = 0 then
@@ -559,14 +570,12 @@ begin
 
 					when ALIGN_RANGE_TAIL =>
 						if range_shift_left = '1' then
-							aligned_product := shift_left(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), 1);
+							range_product_low <= shift_left(range_product_low, 1);
 						else
-							aligned_product := shift_right(reciprocal_product(
-								PRODUCT_WIDTH - 1 downto 0), 1);
+							range_product_low <= range_product_high(0) &
+								range_product_low(RANGE_RESULT_BITS - 1 downto 1);
+							range_product_high <= shift_right(range_product_high, 1);
 						end if;
-						reciprocal_product <= resize(aligned_product,
-							PRODUCT_WIDTH + 1);
 						if range_shift_tail = 1 then
 							range_shift_tail <= 0;
 							state <= REDUCE_RANGE;
@@ -577,10 +586,9 @@ begin
 					when REDUCE_RANGE =>
 						-- The aligned product is x*(2/pi) in Q136.  Rounding it to
 						-- the nearest integer selects both the quadrant and residual.
-						aligned_product := reciprocal_product(
-							PRODUCT_WIDTH - 1 downto 0);
-						fraction_value := aligned_product(FRACTION_BITS - 1 downto 0);
-						quadrant_sum := resize(aligned_product(
+						fraction_value := range_product_low(
+							FRACTION_BITS - 1 downto 0);
+						quadrant_sum := resize(range_product_low(
 							FRACTION_BITS + 1 downto FRACTION_BITS), 3);
 						reduced_angle := (others => '0');
 						reduced_angle(FRACTION_BITS - 1 downto 0) :=
