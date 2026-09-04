@@ -281,6 +281,18 @@ begin
 		end if;
 	end process;
 
+	base_scale_accumulator_update : process(clk)
+	begin
+		if rising_edge(clk) then
+			if nReset = '0' or state /= SCALE_LOGARITHM_BASE then
+				base_scale_accumulator <= (others => '0');
+			else
+				base_scale_accumulator <= shift_right(arithmetic_result_a(
+					RESULT_WIDTH downto 0), 1);
+			end if;
+		end if;
+	end process;
+
 	with_rounding : if INCLUDE_ROUNDING_STAGE generate
 		round_result : entity work.TG68K_FPU_Round
 			port map(
@@ -342,7 +354,6 @@ begin
 					base_scale_sign <= '0';
 				end if;
 				base_scale_multiplier <= shift_left(magnitude, 1);
-				base_scale_accumulator <= (others => '0');
 				base_scale_index <= 0;
 				scaling_series <= '0';
 				scaling_natural_log <= '1';
@@ -367,7 +378,6 @@ begin
 					begin_fixed_result(fixed_exponent);
 				else
 					base_scale_multiplier <= shift_left(unsigned(fractional_log), 1);
-					base_scale_accumulator <= (others => '0');
 					base_scale_index <= 0;
 					scaling_series <= '0';
 					scaling_natural_log <= '0';
@@ -448,7 +458,6 @@ begin
 			if logarithm_base_latched /= FPU_LOG_BASE_E then
 				base_scale_multiplier <= shift_left(resize(series_result,
 					RESULT_WIDTH), 1);
-				base_scale_accumulator <= (others => '0');
 				base_scale_index <= 0;
 				scaling_series <= '1';
 				scaling_natural_log <= '0';
@@ -564,7 +573,6 @@ begin
 				ln2_product <= (others => '0');
 				ln2_index <= 0;
 				base_scale_multiplier <= (others => '0');
-				base_scale_accumulator <= (others => '0');
 				base_scale_index <= 0;
 				scaling_series <= '0';
 				scaling_natural_log <= '0';
@@ -1063,7 +1071,6 @@ begin
 					when SCALE_LOGARITHM_BASE =>
 						next_base_scale := shift_right(arithmetic_result_a(
 							RESULT_WIDTH downto 0), 1);
-						base_scale_accumulator <= next_base_scale;
 						if base_scale_index = RESULT_WIDTH - 1 then
 							if scaling_series = '1' then
 								scaled_series := resize(next_base_scale,
