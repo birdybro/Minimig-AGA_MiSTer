@@ -264,8 +264,7 @@ architecture rtl of TG68K_FPU_Circular_CORDIC is
 	signal x_subtract : std_logic;
 	signal y_subtract : std_logic;
 	signal z_subtract : std_logic;
-	signal x_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
-	signal y_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
+	signal xy_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
 	signal z_arithmetic_result : unsigned(CORDIC_WIDTH - 1 downto 0);
 	signal fitted_x_result : cordic_value_t;
 	signal fitted_y_result : cordic_value_t;
@@ -384,17 +383,25 @@ begin
 	end process;
 
 	arithmetic_add_subtract : process(x_subtract, active_x, x_addend,
-			y_subtract, y_value, y_addend, z_subtract, z_value, z_addend)
+			y_subtract, y_value, y_addend, z_subtract, z_value, z_addend,
+			state)
+		variable xy_left : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable xy_right : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable xy_subtract : std_logic;
 	begin
-		if x_subtract = '1' then
-			x_arithmetic_result <= unsigned(active_x) - unsigned(x_addend);
+		if state = ROTATE_Z then
+			xy_left := unsigned(y_value);
+			xy_right := unsigned(y_addend);
+			xy_subtract := y_subtract;
 		else
-			x_arithmetic_result <= unsigned(active_x) + unsigned(x_addend);
+			xy_left := unsigned(active_x);
+			xy_right := unsigned(x_addend);
+			xy_subtract := x_subtract;
 		end if;
-		if y_subtract = '1' then
-			y_arithmetic_result <= unsigned(y_value) - unsigned(y_addend);
+		if xy_subtract = '1' then
+			xy_arithmetic_result <= xy_left - xy_right;
 		else
-			y_arithmetic_result <= unsigned(y_value) + unsigned(y_addend);
+			xy_arithmetic_result <= xy_left + xy_right;
 		end if;
 		if z_subtract = '1' then
 			z_arithmetic_result <= unsigned(z_value) - unsigned(z_addend);
@@ -403,12 +410,12 @@ begin
 		end if;
 	end process;
 
-	fitted_x_result <= fit_hyperbolic_xy(signed(x_arithmetic_result)) when
+	fitted_x_result <= fit_hyperbolic_xy(signed(xy_arithmetic_result)) when
 		active_hyperbolic = '1' else
-		fit_precision(signed(x_arithmetic_result), active_narrow);
-	fitted_y_result <= fit_hyperbolic_xy(signed(y_arithmetic_result)) when
+		fit_precision(signed(xy_arithmetic_result), active_narrow);
+	fitted_y_result <= fit_hyperbolic_xy(signed(xy_arithmetic_result)) when
 		active_hyperbolic = '1' else
-		fit_precision(signed(y_arithmetic_result), active_narrow);
+		fit_precision(signed(xy_arithmetic_result), active_narrow);
 	fitted_z_result <= fit_hyperbolic_z(signed(z_arithmetic_result),
 		active_vectoring) when active_hyperbolic = '1' else
 		fit_precision(signed(z_arithmetic_result), active_narrow);
