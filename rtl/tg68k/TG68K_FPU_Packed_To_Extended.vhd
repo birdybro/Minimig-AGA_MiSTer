@@ -172,7 +172,6 @@ architecture rtl of TG68K_FPU_Packed_To_Extended is
 
 	signal trailing_exact : std_logic := '0';
 	signal divisibility_multiplicand : converter_word_t := (others => '0');
-	signal divisibility_multiplier : unsigned(57 downto 0) := (others => '0');
 	signal divisibility_product : converter_word_t := (others => '0');
 
 	signal result_latched : fpu_extended_t := (others => '0');
@@ -235,7 +234,6 @@ begin
 				binary_exponent <= 0;
 				trailing_exact <= '0';
 				divisibility_multiplicand <= (others => '0');
-				divisibility_multiplier <= (others => '0');
 				divisibility_product <= (others => '0');
 				result_latched <= (others => '0');
 				status_latched <= (others => '0');
@@ -314,17 +312,14 @@ begin
 									trailing_exact <= '0';
 								end if;
 								divisibility_multiplicand <= (others => '0');
-								divisibility_multiplier <= (others => '0');
 							else
 								binary_exponent <= integer(high_position) +
 									decimal_scale - to_integer(power_bits) - 64;
 								if -decimal_scale <= 24 then
 									divisibility_multiplicand <=
 										power_of_five_inverse(natural(-decimal_scale));
-									divisibility_multiplier <= next_mantissa(57 downto 0);
 								else
 									divisibility_multiplicand <= (others => '0');
-									divisibility_multiplier <= (others => '0');
 								end if;
 								trailing_exact <= '0';
 							end if;
@@ -343,15 +338,15 @@ begin
 						multiplier <= shift_right(multiplier, 1);
 
 						next_divisibility_product := divisibility_product;
-						if divisibility_multiplier(0) = '1' then
+						-- Normalization only multiplies the packed mantissa by a
+						-- power of two, so it does not change divisibility by 5^n.
+						if multiplier(0) = '1' then
 							next_divisibility_product := next_divisibility_product +
 								divisibility_multiplicand;
 						end if;
 						divisibility_product <= next_divisibility_product;
 						divisibility_multiplicand <=
 							shift_left(divisibility_multiplicand, 1);
-						divisibility_multiplier <=
-							shift_right(divisibility_multiplier, 1);
 
 						if multiply_iteration = 57 then
 							state <= PREPARE_RESULT;
