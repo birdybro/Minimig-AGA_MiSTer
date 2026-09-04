@@ -290,19 +290,102 @@ begin
 	add_subtract_start <= '1' when state = EXECUTE and
 		add_subtract_latched = '1' else '0';
 	divide_start <= '1' when state = EXECUTE and divide_latched = '1' else '0';
-	selected_round_input <= divide_round_input when divide_latched = '1' else
-		square_root_round_input when square_root_latched = '1' else
-		remainder_round_input when remainder_latched = '1' else
-		exponential_round_input when exponential_latched = '1' else
-		logarithm_round_input when logarithm_latched = '1' else
-		arc_tangent_round_input when arc_tangent_latched = '1' else
-		sine_cosine_secondary_round_input when
-			state = WAIT_SINE_COSINE_SECONDARY else
-		sine_cosine_round_input when sine_cosine_latched = '1' else
-		integer_round_input when integer_latched = '1' else
-		scale_round_input when scale_latched = '1' else
-		multiply_round_input when multiply_latched = '1' else
-		add_subtract_round_input;
+	round_input_selection : process(divide_round_input,
+		square_root_round_input, remainder_round_input,
+		exponential_round_input, logarithm_round_input,
+		arc_tangent_round_input, sine_cosine_round_input,
+		sine_cosine_secondary_round_input, integer_round_input,
+		scale_round_input, multiply_round_input, add_subtract_round_input,
+		divide_latched, square_root_latched, remainder_latched,
+		exponential_latched, logarithm_latched, arc_tangent_latched,
+		sine_cosine_latched, integer_latched, scale_latched,
+		multiply_latched, add_subtract_latched, state, source_latched,
+		destination_latched)
+		variable selected : fpu_round_input_t;
+		variable special_value : fpu_extended_t;
+		variable source_class : fpu_data_class_t;
+		variable destination_class : fpu_data_class_t;
+		variable uses_destination : boolean;
+	begin
+		selected.data_class := add_subtract_round_input.data_class;
+		selected.sign := add_subtract_round_input.sign;
+		selected.exponent := add_subtract_round_input.exponent;
+		selected.significand := add_subtract_round_input.significand;
+		if divide_latched = '1' then
+			selected.data_class := divide_round_input.data_class;
+			selected.sign := divide_round_input.sign;
+			selected.exponent := divide_round_input.exponent;
+			selected.significand := divide_round_input.significand;
+		elsif square_root_latched = '1' then
+			selected.data_class := square_root_round_input.data_class;
+			selected.sign := square_root_round_input.sign;
+			selected.exponent := square_root_round_input.exponent;
+			selected.significand := square_root_round_input.significand;
+		elsif remainder_latched = '1' then
+			selected.data_class := remainder_round_input.data_class;
+			selected.sign := remainder_round_input.sign;
+			selected.exponent := remainder_round_input.exponent;
+			selected.significand := remainder_round_input.significand;
+		elsif exponential_latched = '1' then
+			selected.data_class := exponential_round_input.data_class;
+			selected.sign := exponential_round_input.sign;
+			selected.exponent := exponential_round_input.exponent;
+			selected.significand := exponential_round_input.significand;
+		elsif logarithm_latched = '1' then
+			selected.data_class := logarithm_round_input.data_class;
+			selected.sign := logarithm_round_input.sign;
+			selected.exponent := logarithm_round_input.exponent;
+			selected.significand := logarithm_round_input.significand;
+		elsif arc_tangent_latched = '1' then
+			selected.data_class := arc_tangent_round_input.data_class;
+			selected.sign := arc_tangent_round_input.sign;
+			selected.exponent := arc_tangent_round_input.exponent;
+			selected.significand := arc_tangent_round_input.significand;
+		elsif state = WAIT_SINE_COSINE_SECONDARY then
+			selected.data_class := sine_cosine_secondary_round_input.data_class;
+			selected.sign := sine_cosine_secondary_round_input.sign;
+			selected.exponent := sine_cosine_secondary_round_input.exponent;
+			selected.significand := sine_cosine_secondary_round_input.significand;
+		elsif sine_cosine_latched = '1' then
+			selected.data_class := sine_cosine_round_input.data_class;
+			selected.sign := sine_cosine_round_input.sign;
+			selected.exponent := sine_cosine_round_input.exponent;
+			selected.significand := sine_cosine_round_input.significand;
+		elsif integer_latched = '1' then
+			selected.data_class := integer_round_input.data_class;
+			selected.sign := integer_round_input.sign;
+			selected.exponent := integer_round_input.exponent;
+			selected.significand := integer_round_input.significand;
+		elsif scale_latched = '1' then
+			selected.data_class := scale_round_input.data_class;
+			selected.sign := scale_round_input.sign;
+			selected.exponent := scale_round_input.exponent;
+			selected.significand := scale_round_input.significand;
+		elsif multiply_latched = '1' then
+			selected.data_class := multiply_round_input.data_class;
+			selected.sign := multiply_round_input.sign;
+			selected.exponent := multiply_round_input.exponent;
+			selected.significand := multiply_round_input.significand;
+		end if;
+
+		source_class := fpu_classify(source_latched);
+		destination_class := fpu_classify(destination_latched);
+		uses_destination := add_subtract_latched = '1' or
+			multiply_latched = '1' or divide_latched = '1' or
+			remainder_latched = '1' or scale_latched = '1';
+		special_value := FPU_RESET_NAN;
+		if uses_destination and
+				(destination_class = FPU_CLASS_QUIET_NAN or
+				destination_class = FPU_CLASS_SIGNALING_NAN) then
+			special_value := destination_latched;
+		elsif source_class = FPU_CLASS_QUIET_NAN or
+				source_class = FPU_CLASS_SIGNALING_NAN then
+			special_value := source_latched;
+		end if;
+		special_value(62) := '1';
+		selected.special := special_value;
+		selected_round_input <= selected;
+	end process;
 	selected_base_status <= divide_base_status when divide_latched = '1' else
 		square_root_base_status when square_root_latched = '1' else
 		remainder_base_status when remainder_latched = '1' else

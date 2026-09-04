@@ -291,6 +291,36 @@ begin
 			report "register FADD controller mismatch" severity failure;
 
 		clear_observations;
+		operation <= FPU_OP_ADD;
+		run_register_operation(x"7FFFC123456789ABCDEF",
+			x"FFFFD23456789ABCDEF0");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"FFFFD23456789ABCDEF0" and
+			observed_status = x"00" and observed_cc = "1001"
+			report "binary destination NaN precedence mismatch: data=" &
+				to_hstring(observed_fp_data) & " status=" &
+				to_hstring(observed_status) & " cc=" &
+				to_hstring(observed_cc) severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SQRT;
+		run_register_operation(x"7FFFC123456789ABCDEF",
+			x"FFFFD23456789ABCDEF0");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"7FFFC123456789ABCDEF" and
+			observed_status = x"00" and observed_cc = "0001"
+			report "unary source NaN propagation mismatch" severity failure;
+
+		clear_observations;
+		operation <= FPU_OP_SQRT;
+		run_register_operation(x"BFFF8000000000000000",
+			x"FFFFD23456789ABCDEF0");
+		assert fp_write_count = 1 and
+			observed_fp_data = x"7FFFFFFFFFFFFFFFFFFF" and
+			observed_status = x"20" and observed_cc = "0001"
+			report "invalid-operation canonical NaN mismatch" severity failure;
+
+		clear_observations;
 		operation <= FPU_OP_MUL;
 		run_register_operation(x"3FFFC000000000000000",
 			x"40008000000000000000");
