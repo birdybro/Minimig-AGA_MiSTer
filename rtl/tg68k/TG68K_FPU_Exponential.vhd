@@ -142,8 +142,11 @@ architecture rtl of TG68K_FPU_Exponential is
 	-- These registers form accumulator|multiplier pairs for the square and
 	-- cube; the cube pair is then reused as the 80-bit quotient.
 	signal series_multiplier : unsigned(63 downto 0) := (others => '0');
-	signal series_multiplicand : unsigned(127 downto 0) := (others => '0');
+	signal square_multiplicand : unsigned(63 downto 0) := (others => '0');
+	signal cube_multiplicand : unsigned(15 downto 0) := (others => '0');
+	signal cube_dividend : unsigned(79 downto 0) := (others => '0');
 	signal series_product : unsigned(128 downto 0) := (others => '0');
+	signal series_term_product : unsigned(128 downto 0) := (others => '0');
 	signal series_index : natural range 0 to 79 := 0;
 	signal cube_accumulator : unsigned(16 downto 0) := (others => '0');
 	signal cube_remainder : natural range 0 to 5 := 0;
@@ -214,7 +217,7 @@ begin
 	base_exception_status <= base_status;
 
 	series_arithmetic : process(state, series_product, series_multiplier,
-		series_multiplicand, cube_accumulator)
+		square_multiplicand, cube_multiplicand, cube_accumulator)
 		variable left_value : unsigned(64 downto 0);
 		variable right_value : unsigned(64 downto 0);
 	begin
@@ -225,7 +228,7 @@ begin
 				if INCLUDE_SERIES_ARITHMETIC then
 					left_value := series_product(128 downto 64);
 					if series_product(0) = '1' then
-						right_value := resize(series_multiplicand(63 downto 0),
+						right_value := resize(square_multiplicand,
 							right_value'length);
 					end if;
 				end if;
@@ -233,7 +236,7 @@ begin
 				if INCLUDE_SERIES_ARITHMETIC then
 					left_value := resize(cube_accumulator, left_value'length);
 					if series_multiplier(0) = '1' then
-						right_value := resize(series_multiplicand(15 downto 0),
+						right_value := resize(cube_multiplicand,
 							right_value'length);
 					end if;
 				end if;
@@ -720,7 +723,6 @@ begin
 			variable cosh_increment_value : fpu_significand_grs_t;
 			variable series_shift_value : natural range 1 to 42;
 		begin
-			series_product <= '0' & square_value;
 			if hyperbolic_cosine_latched = '1' then
 				cosh_increment_value := (others => '0');
 				-- Align x^2/2 to GRS bit 66. Higher-order terms are
@@ -757,6 +759,7 @@ begin
 				intermediate_significand <= cosh_increment_value;
 				state <= COMPLETE;
 			else
+				series_term_product <= '0' & square_value;
 				series_shift_value := to_integer(series_exponent) + 68;
 				if to_integer(series_exponent) < SERIES_CUBIC_MIN_EXPONENT then
 					load_series_base(SERIES_BASE_UNADJUSTED);
@@ -769,8 +772,8 @@ begin
 				else
 					-- The discarded square bits are below sticky throughout
 					-- the bounded cubic range.
-					series_multiplicand <= resize(square_value(
-						127 downto CUBE_SQUARE_LOW_BIT), 128);
+					cube_multiplicand <= square_value(
+						127 downto CUBE_SQUARE_LOW_BIT);
 					if hyperbolic_sine_latched = '1' or
 							hyperbolic_tangent_latched = '1' then
 						load_series_base(SERIES_BASE_UNADJUSTED);
@@ -802,7 +805,8 @@ begin
 		begin
 			alignment_shift := 2 * to_integer(series_exponent) +
 				CUBE_ALIGNMENT_BASE;
-			series_product <= resize(quotient_value, series_product'length);
+			series_term_product <= resize(quotient_value,
+				series_term_product'length);
 			series_serial_bits_remaining <= SERIES_WIDTH + 1;
 			series_term_bits_remaining <= 80;
 			series_alignment_remaining <= alignment_shift;
@@ -877,8 +881,11 @@ begin
 				series_source_significand <= (others => '0');
 				series_exponent <= (others => '0');
 				series_multiplier <= (others => '0');
-				series_multiplicand <= (others => '0');
+				square_multiplicand <= (others => '0');
+				cube_multiplicand <= (others => '0');
+				cube_dividend <= (others => '0');
 				series_product <= (others => '0');
+				series_term_product <= (others => '0');
 				series_index <= 0;
 				cube_accumulator <= (others => '0');
 				cube_remainder <= 0;
@@ -1004,7 +1011,7 @@ begin
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
-										series_multiplicand <= resize(source_significand, 128);
+										square_multiplicand <= source_significand;
 										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
@@ -1021,7 +1028,7 @@ begin
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
-										series_multiplicand <= resize(source_significand, 128);
+										square_multiplicand <= source_significand;
 										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
@@ -1064,7 +1071,7 @@ begin
 										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
-										series_multiplicand <= resize(source_significand, 128);
+										square_multiplicand <= source_significand;
 										series_product <= resize(source_significand, 129);
 										series_index <= 0;
 										state <= SQUARE_SMALL_ARGUMENT;
@@ -1173,8 +1180,7 @@ begin
 							next_cube := shift_right(series_arithmetic_result(16 downto 0) &
 								series_multiplier, 1);
 							if series_index = 63 then
-								series_multiplicand <= resize(next_cube(79 downto 0),
-									128);
+								cube_dividend <= next_cube(79 downto 0);
 								cube_accumulator <= (others => '0');
 								series_multiplier <= (others => '0');
 								cube_remainder <= 0;
@@ -1198,7 +1204,7 @@ begin
 								cube_divisor := 6;
 							end if;
 							division_trial := cube_remainder * 2;
-							if series_multiplicand(79 - series_index) = '1' then
+							if cube_dividend(79 - series_index) = '1' then
 								division_trial := division_trial + 1;
 							end if;
 							next_cube_quotient := cube_accumulator(15 downto 0) &
@@ -1222,7 +1228,7 @@ begin
 						-- The zero-extended even-width accumulator rotates two result
 						-- bits per cycle; the architectural series value is the low slice.
 						serial_accumulator := series_accumulator;
-						serial_product := series_product;
+						serial_product := series_term_product;
 						serial_alignment := series_alignment_remaining;
 						serial_term_bits := series_term_bits_remaining;
 						serial_term_pair := (others => '0');
@@ -1274,7 +1280,7 @@ begin
 						serial_accumulator(SERIES_WIDTH downto
 							SERIES_WIDTH - 1) := to_unsigned(serial_result, 2);
 						series_accumulator <= serial_accumulator;
-						series_product <= serial_product;
+						series_term_product <= serial_product;
 						series_alignment_remaining <= serial_alignment;
 						series_term_bits_remaining <= serial_term_bits;
 						series_carry_borrow <= serial_next_carry_borrow;
