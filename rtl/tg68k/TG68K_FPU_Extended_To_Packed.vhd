@@ -32,9 +32,12 @@ end entity;
 
 architecture rtl of TG68K_FPU_Extended_To_Packed is
 	-- Segmented 192-bit powers retain over 100 guard bits beyond the
-	-- maximum 17-digit packed result.
+	-- maximum 17-digit packed result.  Keep an additional guard limb so
+	-- exact-decimal correction is stable at the ROM-precision boundary.
 	constant POWER_PRECISION : natural := 192;
-	constant RETAINED_POWER_BITS : natural := 256;
+	constant POWER_PRODUCT_GUARD_BITS : natural := 16;
+	constant RETAINED_POWER_BITS : natural := POWER_PRECISION +
+		POWER_PRODUCT_GUARD_BITS;
 	constant SOURCE_PRODUCT_BITS : natural := RETAINED_POWER_BITS + 64;
 	constant MULTIPLY_ARITHMETIC_BITS : natural := RETAINED_POWER_BITS + 1;
 	constant LOG10_TWO_SCALED : integer := 1292913986;
