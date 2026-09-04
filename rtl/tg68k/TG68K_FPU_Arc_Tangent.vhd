@@ -33,6 +33,10 @@ entity TG68K_FPU_Arc_Tangent is
 		cordic_z_input : out signed(147 downto 0);
 		cordic_z_result : in signed(147 downto 0);
 		cordic_done : in std_logic;
+		root_start : out std_logic;
+		root_radicand : out unsigned(225 downto 0);
+		root_result : in unsigned(112 downto 0);
+		root_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -51,7 +55,7 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	constant ARC_SINE_TINY_EXPONENT : integer := -33;
 	type arc_tangent_state_t is (IDLE, ALIGN_SOURCE,
 		MULTIPLY_ARC_SINE_SOURCE,
-		SQUARE_ROOT_ARC_SINE_COMPLEMENT, LOAD_CORDIC_ANGLE,
+		WAIT_SQUARE_ROOT_ARC_SINE_COMPLEMENT, LOAD_CORDIC_ANGLE,
 		WAIT_CORDIC,
 		NORMALIZE_RESULT, COMPLETE);
 	type source_alignment_target_t is
@@ -62,6 +66,9 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 		unsigned'(x"1921FB54442D18469898CC51701B8");
 	constant PI_FIXED : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		shift_left(PI_BY_TWO_FIXED, 1);
+	constant UNIT_SQUARE : unsigned(2 * FRACTION_BITS + 1 downto 0) :=
+		shift_left(to_unsigned(1, 2 * FRACTION_BITS + 2),
+			2 * FRACTION_BITS);
 
 	function highest_set_bit(value : unsigned) return natural is
 	begin
@@ -100,12 +107,7 @@ architecture rtl of TG68K_FPU_Arc_Tangent is
 	signal square_product : unsigned(2 * FRACTION_BITS + 2 downto 0) :=
 		(others => '0');
 	signal square_iteration : natural range 0 to FRACTION_BITS := 0;
-	signal root_radicand : unsigned(2 * FRACTION_BITS + 1 downto 0) :=
-		(others => '0');
-	signal root_remainder : unsigned(FRACTION_BITS + 2 downto 0) :=
-		(others => '0');
-	signal root_value : unsigned(FRACTION_BITS downto 0) := (others => '0');
-	signal root_iteration : natural range 0 to FRACTION_BITS := 0;
+	signal next_square_product : unsigned(2 * FRACTION_BITS + 2 downto 0);
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
 	signal intermediate_exponent : signed(16 downto 0) := (others => '0');
@@ -123,6 +125,10 @@ begin
 	cordic_x_input <= resize(cordic_source_x, 148);
 	cordic_y_input <= resize(cordic_source_y, 148);
 	cordic_z_input <= (others => '0');
+	root_start <= '1' when state = MULTIPLY_ARC_SINE_SOURCE and
+		square_iteration = FRACTION_BITS else '0';
+	root_radicand <= UNIT_SQUARE -
+		next_square_product(2 * FRACTION_BITS + 1 downto 0);
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -169,6 +175,19 @@ begin
 		exception_status <= status;
 	end process;
 
+	square_step : process(square_product, square_multiplicand)
+		variable accumulator_sum : unsigned(FRACTION_BITS + 1 downto 0);
+	begin
+		accumulator_sum := square_product(
+			2 * FRACTION_BITS + 2 downto FRACTION_BITS + 1);
+		if square_product(0) = '1' then
+			accumulator_sum := accumulator_sum +
+				resize(square_multiplicand, accumulator_sum'length);
+		end if;
+		next_square_product <= shift_right(accumulator_sum &
+			square_product(FRACTION_BITS downto 0), 1);
+	end process;
+
 	arc_tangent_sequence : process(clk)
 		procedure begin_fixed_angle(
 				constant angle : in unsigned(CORDIC_WIDTH - 1 downto 0);
@@ -193,13 +212,6 @@ begin
 		variable mantissa_value : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
-		variable square_accumulator_sum : unsigned(FRACTION_BITS + 1 downto 0);
-		variable next_square_product : unsigned(2 * FRACTION_BITS + 2 downto 0);
-		variable unit_square : unsigned(2 * FRACTION_BITS + 1 downto 0);
-		variable shifted_remainder : unsigned(FRACTION_BITS + 2 downto 0);
-		variable trial_divisor : unsigned(FRACTION_BITS + 2 downto 0);
-		variable next_remainder : unsigned(FRACTION_BITS + 2 downto 0);
-		variable next_root : unsigned(FRACTION_BITS downto 0);
 		variable final_significand : fpu_significand_grs_t;
 		variable next_normalization : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable next_exponent : signed(16 downto 0);
@@ -220,10 +232,6 @@ begin
 				square_multiplicand <= (others => '0');
 				square_product <= (others => '0');
 				square_iteration <= 0;
-				root_radicand <= (others => '0');
-				root_remainder <= (others => '0');
-				root_value <= (others => '0');
-				root_iteration <= 0;
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -411,53 +419,20 @@ begin
 					when MULTIPLY_ARC_SINE_SOURCE =>
 						-- asin(x) = atan2(x, sqrt(1-x*x)); keep both CORDIC
 						-- operands in Q112 until the single architectural rounding.
-						square_accumulator_sum := square_product(
-							2 * FRACTION_BITS + 2 downto FRACTION_BITS + 1);
-						if square_product(0) = '1' then
-							square_accumulator_sum := square_accumulator_sum +
-								resize(square_multiplicand, FRACTION_BITS + 2);
-						end if;
-						next_square_product := shift_right(square_accumulator_sum &
-							square_product(FRACTION_BITS downto 0), 1);
 						square_product <= next_square_product;
 						if square_iteration = FRACTION_BITS then
-							unit_square := (others => '0');
-							unit_square(2 * FRACTION_BITS) := '1';
-							root_radicand <= unit_square -
-								next_square_product(2 * FRACTION_BITS + 1 downto 0);
-							root_remainder <= (others => '0');
-							root_value <= (others => '0');
-							root_iteration <= 0;
-							state <= SQUARE_ROOT_ARC_SINE_COMPLEMENT;
+							state <= WAIT_SQUARE_ROOT_ARC_SINE_COMPLEMENT;
 						else
 							square_iteration <= square_iteration + 1;
 						end if;
 
-					when SQUARE_ROOT_ARC_SINE_COMPLEMENT =>
-						shifted_remainder := shift_left(root_remainder, 2);
-						shifted_remainder(1 downto 0) := root_radicand(
-							2 * FRACTION_BITS + 1 downto 2 * FRACTION_BITS);
-						trial_divisor := shift_left(resize(root_value,
-							FRACTION_BITS + 3), 2);
-						trial_divisor(0) := '1';
-						next_root := shift_left(root_value, 1);
-						if shifted_remainder >= trial_divisor then
-							next_remainder := shifted_remainder - trial_divisor;
-							next_root(0) := '1';
-						else
-							next_remainder := shifted_remainder;
-							next_root(0) := '0';
-						end if;
-						root_radicand <= shift_left(root_radicand, 2);
-						root_remainder <= next_remainder;
-						root_value <= next_root;
-						if root_iteration = FRACTION_BITS then
-							cordic_source_x <= signed(resize(next_root, CORDIC_WIDTH));
+					when WAIT_SQUARE_ROOT_ARC_SINE_COMPLEMENT =>
+						if root_done = '1' then
+							cordic_source_x <= signed(resize(root_result,
+								CORDIC_WIDTH));
 							cordic_source_y <= signed(resize(square_multiplicand,
 								CORDIC_WIDTH));
 							state <= LOAD_CORDIC_ANGLE;
-						else
-							root_iteration <= root_iteration + 1;
 						end if;
 
 					when LOAD_CORDIC_ANGLE =>

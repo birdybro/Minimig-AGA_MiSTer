@@ -28,7 +28,8 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU_Extract.vhd \
 	../TG68K_FPU_Unary_Controller.vhd \
 	../TG68K_FPU_Add_Subtract.vhd ../TG68K_FPU_Multiply.vhd \
-	../TG68K_FPU_Divide.vhd ../TG68K_FPU_Square_Root.vhd \
+	../TG68K_FPU_Divide.vhd ../TG68K_FPU_Square_Root_Engine.vhd \
+	../TG68K_FPU_Square_Root.vhd \
 	../TG68K_FPU_Hyperbolic_CORDIC.vhd \
 	../TG68K_FPU_Series_Arithmetic.vhd \
 	../TG68K_FPU_Exponential.vhd ../TG68K_FPU_Logarithm.vhd \

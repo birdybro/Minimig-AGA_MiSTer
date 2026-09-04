@@ -25,6 +25,11 @@ entity TG68K_FPU_Square_Root is
 		source : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		root_start : out std_logic;
+		root_radicand : out unsigned(65 downto 0);
+		root_result : in unsigned(65 downto 0);
+		root_remainder_nonzero : in std_logic;
+		root_done : in std_logic;
 
 		result : out fpu_extended_t;
 		condition_codes : out std_logic_vector(3 downto 0);
@@ -37,8 +42,7 @@ entity TG68K_FPU_Square_Root is
 end entity;
 
 architecture rtl of TG68K_FPU_Square_Root is
-	constant ROOT_BIT_COUNT : natural := 66;
-	type square_root_state_t is (IDLE, CALCULATE, COMPLETE);
+	type square_root_state_t is (IDLE, WAIT_ROOT, COMPLETE);
 
 	function highest_set_bit(value : unsigned) return natural is
 	begin
@@ -51,10 +55,9 @@ architecture rtl of TG68K_FPU_Square_Root is
 	end function;
 
 	signal state : square_root_state_t := IDLE;
-	signal radicand_register : unsigned(65 downto 0) := (others => '0');
-	signal remainder_register : unsigned(68 downto 0) := (others => '0');
-	signal root_register : unsigned(65 downto 0) := (others => '0');
-	signal iteration_count : natural range 0 to ROOT_BIT_COUNT - 1 := 0;
+	signal prepared_radicand : unsigned(65 downto 0) := (others => '0');
+	signal prepared_exponent : signed(16 downto 0) := (others => '0');
+	signal root_operand_valid : std_logic := '0';
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -69,6 +72,9 @@ architecture rtl of TG68K_FPU_Square_Root is
 begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
+	root_start <= '1' when state = IDLE and start = '1' and
+		root_operand_valid = '1' else '0';
+	root_radicand <= prepared_radicand;
 	round_input.data_class <= intermediate_class;
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
@@ -113,26 +119,51 @@ begin
 		exception_status <= status;
 	end process;
 
-	square_root_sequence : process(clk)
+	prepare_root : process(source)
 		variable source_class : fpu_data_class_t;
 		variable source_exponent : integer range -65536 to 65535;
 		variable result_exponent : integer range -65536 to 65535;
 		variable source_significand : unsigned(63 downto 0);
 		variable normalization_shift : natural range 0 to 63;
-		variable selected_nan : fpu_extended_t;
 		variable initial_radicand : unsigned(65 downto 0);
-		variable shifted_remainder : unsigned(68 downto 0);
-		variable trial_divisor : unsigned(68 downto 0);
-		variable next_remainder : unsigned(68 downto 0);
-		variable next_root : unsigned(65 downto 0);
+	begin
+		source_class := fpu_classify(source);
+		source_exponent := fpu_unbiased_exponent(source);
+		source_significand := unsigned(source(63 downto 0));
+		normalization_shift := 0;
+		initial_radicand := (others => '0');
+		result_exponent := 0;
+		root_operand_valid <= '0';
+		if source_class /= FPU_CLASS_QUIET_NAN and
+				source_class /= FPU_CLASS_SIGNALING_NAN and
+				source_class /= FPU_CLASS_ZERO and
+				source_class /= FPU_CLASS_INFINITY and
+				source_significand /= 0 and source(79) = '0' then
+			normalization_shift := 63 - highest_set_bit(source_significand);
+			source_significand := shift_left(source_significand,
+				normalization_shift);
+			source_exponent := source_exponent - normalization_shift;
+			if source_exponent mod 2 = 0 then
+				initial_radicand := '0' & source_significand & '0';
+				result_exponent := source_exponent / 2;
+			else
+				initial_radicand := source_significand & "00";
+				result_exponent := (source_exponent - 1) / 2;
+			end if;
+			root_operand_valid <= '1';
+		end if;
+		prepared_radicand <= initial_radicand;
+		prepared_exponent <= to_signed(result_exponent, 17);
+	end process;
+
+	square_root_sequence : process(clk)
+		variable source_class : fpu_data_class_t;
+		variable source_significand : unsigned(63 downto 0);
+		variable selected_nan : fpu_extended_t;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				state <= IDLE;
-				radicand_register <= (others => '0');
-				remainder_register <= (others => '0');
-				root_register <= (others => '0');
-				iteration_count <= 0;
 				intermediate_class <= FPU_CLASS_ZERO;
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
@@ -145,17 +176,10 @@ begin
 					when IDLE =>
 						if start = '1' then
 							source_class := fpu_classify(source);
-							source_exponent := fpu_unbiased_exponent(source);
 							source_significand := unsigned(source(63 downto 0));
-							normalization_shift := 0;
 							selected_nan := source;
 							selected_nan(62) := '1';
-							initial_radicand := (others => '0');
 
-							radicand_register <= (others => '0');
-							remainder_register <= (others => '0');
-							root_register <= (others => '0');
-							iteration_count <= 0;
 							intermediate_class <= FPU_CLASS_ZERO;
 							intermediate_sign <= '0';
 							intermediate_exponent <= (others => '0');
@@ -187,57 +211,21 @@ begin
 								intermediate_class <= FPU_CLASS_INFINITY;
 								state <= COMPLETE;
 							else
-								normalization_shift :=
-									63 - highest_set_bit(source_significand);
-								source_significand := shift_left(source_significand,
-									normalization_shift);
-								source_exponent := source_exponent -
-									normalization_shift;
-								if source_exponent mod 2 = 0 then
-									initial_radicand := '0' & source_significand & '0';
-									result_exponent := source_exponent / 2;
-								else
-									initial_radicand := source_significand & "00";
-									result_exponent := (source_exponent - 1) / 2;
-								end if;
-								radicand_register <= initial_radicand;
 								intermediate_class <= FPU_CLASS_NORMAL;
-								intermediate_exponent <=
-									to_signed(result_exponent, 17);
-								state <= CALCULATE;
+								intermediate_exponent <= prepared_exponent;
+								state <= WAIT_ROOT;
 							end if;
 						end if;
 
-					when CALCULATE =>
-						shifted_remainder := shift_left(remainder_register, 2);
-						shifted_remainder(1 downto 0) :=
-							radicand_register(65 downto 64);
-						trial_divisor := shift_left(resize(root_register, 69), 2);
-						trial_divisor(0) := '1';
-						next_root := shift_left(root_register, 1);
-						if shifted_remainder >= trial_divisor then
-							next_remainder := shifted_remainder - trial_divisor;
-							next_root(0) := '1';
-						else
-							next_remainder := shifted_remainder;
-							next_root(0) := '0';
-						end if;
-						radicand_register <= shift_left(radicand_register, 2);
-						remainder_register <= next_remainder;
-						root_register <= next_root;
-						if iteration_count = ROOT_BIT_COUNT - 1 then
+					when WAIT_ROOT =>
+						if root_done = '1' then
 							intermediate_significand(66 downto 3) <=
-								next_root(65 downto 2);
-							intermediate_significand(2) <= next_root(1);
-							intermediate_significand(1) <= next_root(0);
-							if next_remainder /= 0 then
-								intermediate_significand(0) <= '1';
-							else
-								intermediate_significand(0) <= '0';
-							end if;
+								root_result(65 downto 2);
+							intermediate_significand(2) <= root_result(1);
+							intermediate_significand(1) <= root_result(0);
+							intermediate_significand(0) <=
+								root_remainder_nonzero;
 							state <= COMPLETE;
-						else
-							iteration_count <= iteration_count + 1;
 						end if;
 
 					when COMPLETE => state <= IDLE;

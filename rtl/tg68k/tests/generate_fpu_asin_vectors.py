@@ -135,6 +135,10 @@ architecture test of tb_tg68k_fpu_asin_differential is
     signal cordic_z_input : signed(147 downto 0);
     signal cordic_z_result : signed(147 downto 0);
     signal cordic_done : std_logic;
+    signal root_start : std_logic;
+    signal root_radicand : unsigned(225 downto 0);
+    signal root_result : unsigned(112 downto 0);
+    signal root_done : std_logic;
 begin
     clk <= not clk after CLK_PERIOD / 2;
 
@@ -147,6 +151,15 @@ begin
             x_result => open, y_result => open,
             z_result => cordic_z_result, busy => open,
             done => cordic_done
+        );
+
+    root_engine : entity work.TG68K_FPU_Square_Root_Engine
+        port map(
+            clk => clk, nReset => nReset,
+            narrow_start => '0', narrow_radicand => (others => '0'),
+            wide_start => root_start, wide_radicand => root_radicand,
+            root_result => root_result, remainder_nonzero => open,
+            busy => open, done => root_done
         );
 
     dut : entity work.TG68K_FPU_Arc_Tangent
@@ -164,6 +177,10 @@ begin
             cordic_z_input => cordic_z_input,
             cordic_z_result => cordic_z_result,
             cordic_done => cordic_done,
+            root_start => root_start,
+            root_radicand => root_radicand,
+            root_result => root_result,
+            root_done => root_done,
             result => result,
             condition_codes => condition_codes,
             exception_status => exception_status,

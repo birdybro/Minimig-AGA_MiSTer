@@ -187,6 +187,11 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal square_root_done : std_logic;
 	signal square_root_round_input : fpu_round_input_t;
 	signal square_root_base_status : std_logic_vector(7 downto 0);
+	signal square_root_digit_start : std_logic;
+	signal square_root_radicand : unsigned(65 downto 0);
+	signal shared_root_result : unsigned(112 downto 0);
+	signal shared_root_remainder_nonzero : std_logic;
+	signal shared_root_done : std_logic;
 	signal integer_round_input : fpu_round_input_t;
 	signal integer_base_status : std_logic_vector(7 downto 0);
 	signal scale_round_input : fpu_round_input_t;
@@ -243,6 +248,8 @@ architecture rtl of TG68K_FPU_Binary_Controller is
 	signal arc_tangent_done : std_logic;
 	signal arc_tangent_round_input : fpu_round_input_t;
 	signal arc_tangent_base_status : std_logic_vector(7 downto 0);
+	signal arc_root_start : std_logic;
+	signal arc_root_radicand : unsigned(225 downto 0);
 	signal sine_cosine_start : std_logic;
 	signal sine_cosine_done : std_logic;
 	signal sine_cosine_round_input : fpu_round_input_t;
@@ -519,6 +526,11 @@ begin
 			source => source_latched,
 			rounding_precision => precision_latched,
 			rounding_mode => mode_latched,
+			root_start => square_root_digit_start,
+			root_radicand => square_root_radicand,
+			root_result => shared_root_result(65 downto 0),
+			root_remainder_nonzero => shared_root_remainder_nonzero,
+			root_done => shared_root_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,
@@ -526,6 +538,20 @@ begin
 			done => square_root_done,
 			round_input => square_root_round_input,
 			base_exception_status => square_root_base_status
+		);
+
+	shared_square_root : entity work.TG68K_FPU_Square_Root_Engine
+		port map(
+			clk => clk,
+			nReset => nReset,
+			narrow_start => square_root_digit_start,
+			narrow_radicand => square_root_radicand,
+			wide_start => arc_root_start,
+			wide_radicand => arc_root_radicand,
+			root_result => shared_root_result,
+			remainder_nonzero => shared_root_remainder_nonzero,
+			busy => open,
+			done => shared_root_done
 		);
 
 	remainder_start <= '1' when state = EXECUTE and
@@ -752,6 +778,10 @@ begin
 			cordic_z_input => arc_cordic_z_input,
 			cordic_z_result => circular_cordic_z_result,
 			cordic_done => circular_cordic_done,
+			root_start => arc_root_start,
+			root_radicand => arc_root_radicand,
+			root_result => shared_root_result,
+			root_done => shared_root_done,
 			result => open,
 			condition_codes => open,
 			exception_status => open,

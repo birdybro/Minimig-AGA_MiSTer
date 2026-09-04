@@ -52,6 +52,7 @@ def emit_testbench() -> None:
     vectors = make_vectors()
     print("""library ieee;
 use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 use std.env.all;
 use work.TG68K_FPU_Pack.all;
 
@@ -92,6 +93,11 @@ architecture test of tb_tg68k_fpu_square_root_differential is
     signal rounded_inexact : std_logic;
     signal rounded_overflow : std_logic;
     signal rounded_underflow : std_logic;
+    signal root_start : std_logic;
+    signal root_radicand : unsigned(65 downto 0);
+    signal root_result : unsigned(112 downto 0);
+    signal root_remainder_nonzero : std_logic;
+    signal root_done : std_logic;
 begin
     clk <= not clk after CLK_PERIOD / 2;
 
@@ -106,6 +112,11 @@ begin
             source => source_value,
             rounding_precision => precision_value,
             rounding_mode => mode_value,
+            root_start => root_start,
+            root_radicand => root_radicand,
+            root_result => root_result(65 downto 0),
+            root_remainder_nonzero => root_remainder_nonzero,
+            root_done => root_done,
             result => open,
             condition_codes => open,
             exception_status => open,
@@ -113,6 +124,20 @@ begin
             done => done,
             round_input => round_input_value,
             base_exception_status => base_exception_status
+        );
+
+    root_engine : entity work.TG68K_FPU_Square_Root_Engine
+        port map(
+            clk => clk,
+            nReset => nReset,
+            narrow_start => root_start,
+            narrow_radicand => root_radicand,
+            wide_start => '0',
+            wide_radicand => (others => '0'),
+            root_result => root_result,
+            remainder_nonzero => root_remainder_nonzero,
+            busy => open,
+            done => root_done
         );
 
     shared_round : entity work.TG68K_FPU_Round
