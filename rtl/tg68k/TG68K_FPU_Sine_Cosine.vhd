@@ -64,7 +64,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, ALIGN_RANGE,
 		ALIGN_RANGE_TAIL, REDUCE_RANGE,
 		START_CORDIC, WAIT_CORDIC,
-		CONVERT_PRIMARY, CONVERT_SECONDARY, NORMALIZE_VALUE,
+		CONVERT_SECONDARY, NORMALIZE_VALUE,
 		LOAD_TANGENT_NUMERATOR, LOAD_TANGENT_DENOMINATOR,
 		START_TANGENT_DIVIDE, DIVIDE_TANGENT, COMPLETE);
 	type normalization_target_t is
@@ -153,11 +153,8 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		(others => '0');
 	signal tangent_numerator_highest : natural range 0 to CORDIC_WIDTH - 1 := 0;
 	signal tangent_quotient_exponent : integer range -65536 to 65535 := 0;
-	signal primary_fixed_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0) :=
-		(others => '0');
 	signal secondary_fixed_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
-	signal primary_fixed_sign : std_logic := '0';
 	signal secondary_fixed_sign : std_logic := '0';
 	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
@@ -429,9 +426,7 @@ begin
 				normalized_tangent_numerator <= (others => '0');
 				tangent_numerator_highest <= 0;
 				tangent_quotient_exponent <= 0;
-				primary_fixed_magnitude <= (others => '0');
 				secondary_fixed_magnitude <= (others => '0');
-				primary_fixed_sign <= '0';
 				secondary_fixed_sign <= '0';
 				normalization_value <= (others => '0');
 				normalization_shift_count <= 0;
@@ -743,8 +738,6 @@ begin
 										source_sign_latched = '1' then
 									final_sign := not final_sign;
 								end if;
-								primary_fixed_magnitude <= magnitude;
-								primary_fixed_sign <= final_sign;
 								if simultaneous_latched = '1' then
 									case quadrant is
 										when "00" =>
@@ -767,27 +760,22 @@ begin
 									secondary_fixed_magnitude <= secondary_magnitude;
 									secondary_fixed_sign <= cosine_fixed_sign;
 								end if;
-								state <= CONVERT_PRIMARY;
+								if magnitude > UNIT_FIXED then
+									magnitude := UNIT_FIXED;
+								end if;
+								if magnitude = 0 then
+									intermediate_class <= FPU_CLASS_ZERO;
+									intermediate_sign <= '0';
+									if simultaneous_latched = '1' then
+										state <= CONVERT_SECONDARY;
+									else
+										state <= COMPLETE;
+									end if;
+								else
+									begin_normalization(magnitude, NORMALIZE_PRIMARY,
+										final_sign);
+								end if;
 							end if;
-						end if;
-
-					when CONVERT_PRIMARY =>
-						final_sign := primary_fixed_sign;
-						magnitude := primary_fixed_magnitude;
-						if magnitude > UNIT_FIXED then
-							magnitude := UNIT_FIXED;
-						end if;
-						if magnitude = 0 then
-							intermediate_class <= FPU_CLASS_ZERO;
-							intermediate_sign <= '0';
-							if simultaneous_latched = '1' then
-								state <= CONVERT_SECONDARY;
-							else
-								state <= COMPLETE;
-							end if;
-						else
-							begin_normalization(magnitude, NORMALIZE_PRIMARY,
-								final_sign);
 						end if;
 
 					when CONVERT_SECONDARY =>

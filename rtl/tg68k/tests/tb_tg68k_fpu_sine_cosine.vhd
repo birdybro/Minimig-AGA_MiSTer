@@ -232,7 +232,7 @@ begin
 			end loop;
 			assert unsigned(result(78 downto 64)) <= to_unsigned(16#3FFF#, 15) and
 				exception_status = x"02" and
-				cycles = 325 + range_alignment_cycles(source_value) +
+				cycles = 324 + range_alignment_cycles(source_value) +
 					fixed_normalization_cycles(result)
 				report "large-argument sine range/status mismatch: result=" &
 					to_hstring(result) & " status=" &
@@ -253,7 +253,7 @@ begin
 
 		execute(x"00000000000000000000", x"00000000000000000000", x"4", x"00");
 		execute(x"80000000000000000000", x"80000000000000000000", x"C", x"00");
-		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02", 325);
+		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02", 324);
 		execute(x"3FFF4000000000000000", x"3FFDF57743A2582F7F44", x"0", x"02");
 		execute(x"BFFE8000000000000000", x"BFFDF57743A2582F7F44", x"8", x"02");
 		execute(x"3FFF8000000000000000", x"3FFED76AA47848677021", x"0", x"02");
@@ -275,7 +275,7 @@ begin
 		execute(x"80000000000000000000", x"3FFF8000000000000000",
 			x"0", x"00", 0, '1');
 		execute(x"3FFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
-			x"0", x"02", 325, '1');
+			x"0", x"02", 324, '1');
 		execute(x"BFFE8000000000000000", x"3FFEE0A94032DBEA7CEE",
 			x"0", x"02", 0, '1');
 		execute(x"3FFF8000000000000000", x"3FFE8A51407DA8345C92",
@@ -309,7 +309,7 @@ begin
 			x"C", x"00", 0, '0', '0', '1',
 			x"3FFF8000000000000000");
 		execute(x"3FFE8000000000000000", x"3FFDF57743A2582F7F44",
-			x"0", x"02", 326, '0', '0', '1',
+			x"0", x"02", 325, '0', '0', '1',
 			x"3FFEE0A94032DBEA7CEE");
 		execute(x"BFFE8000000000000000", x"BFFDF57743A2582F7F44",
 			x"8", x"02", 0, '0', '0', '1',
