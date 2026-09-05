@@ -360,6 +360,14 @@ begin
 			fline_exception = '1'
 			report "FPU system did not report a reserved operation" severity failure;
 
+		start_instruction(x"F200", x"0005", '0');
+		assert instruction_done = '1' and unimplemented_exception = '1'
+			report "reserved arithmetic alias was not rejected" severity failure;
+		wait until rising_edge(clk);
+		wait for 1 ns;
+		assert instruction_done = '0' and unimplemented_exception = '0'
+			report "reserved arithmetic rejection did not retire" severity failure;
+
 		clear_observations;
 		integer_register_data <= x"00000005";
 		start_instruction(x"F202", x"4180", '1');
