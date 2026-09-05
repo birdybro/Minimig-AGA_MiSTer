@@ -168,8 +168,8 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal multiply_left : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
 	signal multiply_right : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
 	signal multiply_sum : unsigned(MULTIPLY_ARITHMETIC_BITS - 1 downto 0);
-	-- Keep the wide product stationary while serially extracting the scaled
-	-- low word and sticky bit; a bidirectional 320-bit shift mux is larger.
+	-- Consume the wide product through its fixed low bit during alignment;
+	-- this avoids a variable selector across the full product register.
 	signal scaled_integer_register : unsigned(63 downto 0) := (others => '0');
 	signal alignment_sticky : std_logic := '0';
 	signal alignment_shift : integer range -SOURCE_PRODUCT_BITS to
@@ -324,8 +324,6 @@ begin
 		variable retained_shift_value : integer range -32768 to 32767;
 		variable next_scaled_integer : unsigned(63 downto 0);
 		variable next_sticky : std_logic;
-		variable source_index : integer range -SOURCE_PRODUCT_BITS to
-			2 * SOURCE_PRODUCT_BITS - 1;
 		variable scaled_integer : unsigned(63 downto 0);
 		variable scale_lsb_exponent : integer range -5017 to 4983;
 		variable scale_is_exact : boolean;
@@ -506,23 +504,35 @@ begin
 
 					when ALIGN_PRODUCT =>
 						next_scaled_integer := scaled_integer_register;
-						if alignment_iteration <= 63 then
-							source_index := integer(alignment_iteration) -
-								alignment_shift;
-							if source_index >= 0 and source_index <
-									SOURCE_PRODUCT_BITS then
-								next_scaled_integer := source_product(source_index) &
-									scaled_integer_register(63 downto 1);
-							else
+						next_sticky := alignment_sticky;
+						if alignment_shift < 0 then
+							if alignment_iteration < natural(-alignment_shift) then
+								next_sticky := alignment_sticky or source_product(0);
+							elsif alignment_iteration <
+									natural(-alignment_shift) + 64 then
+								if alignment_iteration < SOURCE_PRODUCT_BITS then
+									next_scaled_integer := source_product(0) &
+										scaled_integer_register(63 downto 1);
+								else
+									next_scaled_integer := '0' &
+										scaled_integer_register(63 downto 1);
+								end if;
+							end if;
+							if alignment_iteration <
+									natural(-alignment_shift) + 64 then
+								source_product <= '0' & source_product(
+									SOURCE_PRODUCT_BITS downto 1);
+							end if;
+						elsif alignment_iteration <= 63 then
+							if integer(alignment_iteration) < alignment_shift then
 								next_scaled_integer := '0' &
 									scaled_integer_register(63 downto 1);
+							else
+								next_scaled_integer := source_product(0) &
+									scaled_integer_register(63 downto 1);
+								source_product <= '0' & source_product(
+									SOURCE_PRODUCT_BITS downto 1);
 							end if;
-						end if;
-						next_sticky := alignment_sticky;
-						if alignment_shift < 0 and integer(alignment_iteration) <
-								-alignment_shift then
-							next_sticky := next_sticky or
-								source_product(alignment_iteration);
 						end if;
 						scaled_integer_register <= next_scaled_integer;
 						alignment_sticky <= next_sticky;
