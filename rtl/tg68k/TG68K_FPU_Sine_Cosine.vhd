@@ -153,8 +153,12 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 		(others => '0');
 	signal tangent_numerator_highest : natural range 0 to CORDIC_WIDTH - 1 := 0;
 	signal tangent_quotient_exponent : integer range -65536 to 65535 := 0;
-	signal primary_fixed_value : cordic_value_t := (others => '0');
-	signal secondary_fixed_value : cordic_value_t := (others => '0');
+	signal primary_fixed_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal secondary_fixed_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0) :=
+		(others => '0');
+	signal primary_fixed_sign : std_logic := '0';
+	signal secondary_fixed_sign : std_logic := '0';
 	signal normalization_value : unsigned(CORDIC_WIDTH - 1 downto 0) :=
 		(others => '0');
 	signal normalization_shift_count : natural range 0 to FRACTION_BITS := 0;
@@ -224,30 +228,22 @@ begin
 		reciprocal_constant_word;
 
 	shared_operands : process(state, normalized_tangent_numerator,
-		tangent_remainder, tangent_divisor, primary_fixed_value,
-		secondary_fixed_value)
+		tangent_remainder, tangent_divisor, cordic_y_result)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
 		shared_left_a <= (others => '0');
 		shared_right_a <= (others => '0');
 		shared_subtract_a <= '0';
 		case state is
-			when CONVERT_PRIMARY =>
-				if primary_fixed_value < 0 then
-					shared_right_a <= resize(unsigned(primary_fixed_value),
+			when WAIT_CORDIC =>
+				if cordic_y_result < 0 then
+					shared_right_a <= resize(unsigned(resize(cordic_y_result,
+						CORDIC_WIDTH)),
 						SHARED_WIDTH);
 					shared_subtract_a <= '1';
 				else
-					shared_left_a <= resize(unsigned(primary_fixed_value),
-						SHARED_WIDTH);
-				end if;
-			when CONVERT_SECONDARY =>
-				if secondary_fixed_value < 0 then
-					shared_right_a <= resize(unsigned(secondary_fixed_value),
-						SHARED_WIDTH);
-					shared_subtract_a <= '1';
-				else
-					shared_left_a <= resize(unsigned(secondary_fixed_value),
+					shared_left_a <= resize(unsigned(resize(cordic_y_result,
+						CORDIC_WIDTH)),
 						SHARED_WIDTH);
 				end if;
 			when START_TANGENT_DIVIDE =>
@@ -395,10 +391,11 @@ begin
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable reduced_angle : cordic_value_t;
 		variable quadrant_sum : unsigned(2 downto 0);
-		variable selected_value : cordic_value_t;
 		variable magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable cordic_y_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable final_sign : std_logic;
-		variable cosine_value : cordic_value_t;
+		variable secondary_magnitude : unsigned(CORDIC_WIDTH - 1 downto 0);
+		variable cosine_fixed_sign : std_logic;
 		variable tangent_numerator : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable tangent_denominator : unsigned(CORDIC_WIDTH - 1 downto 0);
 		variable quotient_exponent : integer range -65536 to 65535;
@@ -432,8 +429,10 @@ begin
 				normalized_tangent_numerator <= (others => '0');
 				tangent_numerator_highest <= 0;
 				tangent_quotient_exponent <= 0;
-				primary_fixed_value <= (others => '0');
-				secondary_fixed_value <= (others => '0');
+				primary_fixed_magnitude <= (others => '0');
+				secondary_fixed_magnitude <= (others => '0');
+				primary_fixed_sign <= '0';
+				secondary_fixed_sign <= '0';
 				normalization_value <= (others => '0');
 				normalization_shift_count <= 0;
 				normalization_target <= NORMALIZE_PRIMARY;
@@ -692,16 +691,12 @@ begin
 
 					when WAIT_CORDIC =>
 						if cordic_done = '1' then
+							cordic_y_magnitude := shared_result_a(
+								CORDIC_WIDTH - 1 downto 0);
+							magnitude := cordic_y_magnitude;
 							if tangent_latched = '1' then
-								if cordic_y_result < 0 then
-									final_sign := '1';
-									magnitude := unsigned(-resize(
-										cordic_y_result, CORDIC_WIDTH));
-								else
-									final_sign := '0';
-									magnitude := unsigned(resize(
-										cordic_y_result, CORDIC_WIDTH));
-								end if;
+								final_sign := cordic_y_result(
+									cordic_y_result'high);
 								if quadrant(0) = '0' then
 									tangent_numerator := magnitude;
 									tangent_denominator := unsigned(resize(
@@ -729,40 +724,56 @@ begin
 								end if;
 							else
 								case quadrant is
-									when "00" => selected_value := resize(
-										cordic_y_result, CORDIC_WIDTH);
-									when "01" => selected_value := resize(
-										cordic_x_result, CORDIC_WIDTH);
-									when "10" => selected_value := -resize(
-										cordic_y_result, CORDIC_WIDTH);
-									when others => selected_value := -resize(
-										cordic_x_result, CORDIC_WIDTH);
+									when "00" =>
+										final_sign := cordic_y_result(
+											cordic_y_result'high);
+									when "01" =>
+										magnitude := unsigned(resize(
+											cordic_x_result, CORDIC_WIDTH));
+										final_sign := '0';
+									when "10" =>
+										final_sign := not cordic_y_result(
+											cordic_y_result'high);
+									when others =>
+										magnitude := unsigned(resize(
+											cordic_x_result, CORDIC_WIDTH));
+										final_sign := '1';
 								end case;
 								if cosine_latched = '0' and
 										source_sign_latched = '1' then
-									selected_value := -selected_value;
+									final_sign := not final_sign;
 								end if;
-								primary_fixed_value <= selected_value;
+								primary_fixed_magnitude <= magnitude;
+								primary_fixed_sign <= final_sign;
 								if simultaneous_latched = '1' then
 									case quadrant is
-										when "00" => cosine_value := resize(
-											cordic_x_result, CORDIC_WIDTH);
-										when "01" => cosine_value := -resize(
-											cordic_y_result, CORDIC_WIDTH);
-										when "10" => cosine_value := -resize(
-											cordic_x_result, CORDIC_WIDTH);
-										when others => cosine_value := resize(
-											cordic_y_result, CORDIC_WIDTH);
+										when "00" =>
+											secondary_magnitude := unsigned(resize(
+												cordic_x_result, CORDIC_WIDTH));
+											cosine_fixed_sign := '0';
+										when "01" =>
+											secondary_magnitude := cordic_y_magnitude;
+											cosine_fixed_sign := not cordic_y_result(
+												cordic_y_result'high);
+										when "10" =>
+											secondary_magnitude := unsigned(resize(
+												cordic_x_result, CORDIC_WIDTH));
+											cosine_fixed_sign := '1';
+										when others =>
+											secondary_magnitude := cordic_y_magnitude;
+											cosine_fixed_sign := cordic_y_result(
+												cordic_y_result'high);
 									end case;
-									secondary_fixed_value <= cosine_value;
+									secondary_fixed_magnitude <= secondary_magnitude;
+									secondary_fixed_sign <= cosine_fixed_sign;
 								end if;
 								state <= CONVERT_PRIMARY;
 							end if;
 						end if;
 
 					when CONVERT_PRIMARY =>
-						final_sign := primary_fixed_value(primary_fixed_value'high);
-						magnitude := shared_result_a(CORDIC_WIDTH - 1 downto 0);
+						final_sign := primary_fixed_sign;
+						magnitude := primary_fixed_magnitude;
 						if magnitude > UNIT_FIXED then
 							magnitude := UNIT_FIXED;
 						end if;
@@ -780,9 +791,8 @@ begin
 						end if;
 
 					when CONVERT_SECONDARY =>
-						final_sign := secondary_fixed_value(
-							secondary_fixed_value'high);
-						magnitude := shared_result_a(CORDIC_WIDTH - 1 downto 0);
+						final_sign := secondary_fixed_sign;
+						magnitude := secondary_fixed_magnitude;
 						if magnitude > UNIT_FIXED then
 							magnitude := UNIT_FIXED;
 						end if;
