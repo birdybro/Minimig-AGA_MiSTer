@@ -85,6 +85,7 @@ architecture rtl of TG68K_FPU_System is
 	constant BUSY_UNIT_UNARY : std_logic_vector(2 downto 0) := "100";
 	constant BUSY_UNIT_BINARY : std_logic_vector(2 downto 0) := "101";
 	constant BUSY_UNIT_CONDITIONAL : std_logic_vector(2 downto 0) := "110";
+	constant ACTIVE_UNIT_CONSTANT : std_logic_vector(2 downto 0) := "111";
 	constant BUSY_CONTEXT_UNIT_HIGH : natural := fpu_busy_context_t'high;
 	constant BUSY_CONTEXT_UNIT_LOW : natural := 1693;
 	constant BUSY_CONTEXT_OPCODE_HIGH : natural := 1692;
@@ -169,6 +170,7 @@ architecture rtl of TG68K_FPU_System is
 	signal operation_implemented : std_logic;
 	signal operation_busy : std_logic;
 	signal operation_done : std_logic;
+	signal active_unit : std_logic_vector(2 downto 0) := BUSY_UNIT_NONE;
 	signal timing_start : std_logic;
 	signal timing_abort : std_logic;
 	signal timing_busy : std_logic;
@@ -462,11 +464,13 @@ architecture rtl of TG68K_FPU_System is
 	signal exceptional_operand_latched : fpu_extended_t := (others => '0');
 	signal operation_exceptional_operand : fpu_extended_t;
 begin
-	shared_conversion_format <= move_conversion_format when move_busy = '1' else
-		unary_conversion_format when unary_busy = '1' else
+	shared_conversion_format <= move_conversion_format when
+		active_unit = BUSY_UNIT_MOVE else unary_conversion_format when
+		active_unit = BUSY_UNIT_UNARY else
 		binary_conversion_format;
-	shared_conversion_data <= move_conversion_data when move_busy = '1' else
-		unary_conversion_data when unary_busy = '1' else binary_conversion_data;
+	shared_conversion_data <= move_conversion_data when
+		active_unit = BUSY_UNIT_MOVE else unary_conversion_data when
+		active_unit = BUSY_UNIT_UNARY else binary_conversion_data;
 
 	shared_converter : entity work.TG68K_FPU_Convert
 		port map(
@@ -478,17 +482,19 @@ begin
 			external_extended_data => open
 		);
 
-	shared_round_input <= move_round_input when move_busy = '1' else
-		constant_round_input when constant_busy = '1' else
+	shared_round_input <= move_round_input when active_unit = BUSY_UNIT_MOVE else
+		constant_round_input when active_unit = ACTIVE_UNIT_CONSTANT else
 		binary_round_input;
 	shared_rounding_precision <= move_rounding_precision when
-		move_busy = '1' else constant_rounding_precision when
-		constant_busy = '1' else binary_rounding_precision;
-	shared_rounding_mode <= move_rounding_mode when move_busy = '1' else
-		constant_rounding_mode when constant_busy = '1' else
+		active_unit = BUSY_UNIT_MOVE else constant_rounding_precision when
+		active_unit = ACTIVE_UNIT_CONSTANT else binary_rounding_precision;
+	shared_rounding_mode <= move_rounding_mode when
+		active_unit = BUSY_UNIT_MOVE else constant_rounding_mode when
+		active_unit = ACTIVE_UNIT_CONSTANT else
 		binary_rounding_mode;
-	shared_round_extended_exponent_range <= '0' when move_busy = '1' else
-		'1' when constant_busy = '1' else
+	shared_round_extended_exponent_range <= '0' when
+		active_unit = BUSY_UNIT_MOVE else '1' when
+		active_unit = ACTIVE_UNIT_CONSTANT else
 		binary_round_single_extended_range;
 
 	shared_rounder : entity work.TG68K_FPU_Round
@@ -851,52 +857,54 @@ begin
 	fpsr_out <= fpsr;
 
 	memory_request <= state_frame_memory_request when state_frame_busy = '1' else
-		conditional_memory_request when conditional_busy = '1' else
-		binary_memory_request when binary_busy = '1' else
-		unary_memory_request when unary_busy = '1' else
-		movem_memory_request when movem_busy = '1' else
-		control_memory_request when control_busy = '1' else
+		conditional_memory_request when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_request when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_request when active_unit = BUSY_UNIT_UNARY else
+		movem_memory_request when active_unit = BUSY_UNIT_MOVEM else
+		control_memory_request when active_unit = BUSY_UNIT_CONTROL else
 		move_memory_request;
 	memory_write <= state_frame_memory_write when state_frame_busy = '1' else
-		conditional_memory_write when conditional_busy = '1' else
-		binary_memory_write when binary_busy = '1' else
-		unary_memory_write when unary_busy = '1' else
-		movem_memory_write when movem_busy = '1' else
-		control_memory_write when control_busy = '1' else
+		conditional_memory_write when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_write when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_write when active_unit = BUSY_UNIT_UNARY else
+		movem_memory_write when active_unit = BUSY_UNIT_MOVEM else
+		control_memory_write when active_unit = BUSY_UNIT_CONTROL else
 		move_memory_write;
 	memory_address <= state_frame_memory_address when state_frame_busy = '1' else
-		conditional_memory_address when conditional_busy = '1' else
-		binary_memory_address when binary_busy = '1' else
-		unary_memory_address when unary_busy = '1' else
-		movem_memory_address when movem_busy = '1' else
-		control_memory_address when control_busy = '1' else
+		conditional_memory_address when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_address when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_address when active_unit = BUSY_UNIT_UNARY else
+		movem_memory_address when active_unit = BUSY_UNIT_MOVEM else
+		control_memory_address when active_unit = BUSY_UNIT_CONTROL else
 		move_memory_address;
 	memory_write_data <= state_frame_memory_write_data when
 		state_frame_busy = '1' else conditional_memory_write_data when
-		conditional_busy = '1' else
-		binary_memory_write_data when binary_busy = '1' else
-		unary_memory_write_data when unary_busy = '1' else
-		movem_memory_write_data when movem_busy = '1' else
-		control_memory_write_data when control_busy = '1' else
+		active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_write_data when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_write_data when active_unit = BUSY_UNIT_UNARY else
+		movem_memory_write_data when active_unit = BUSY_UNIT_MOVEM else
+		control_memory_write_data when active_unit = BUSY_UNIT_CONTROL else
 		move_memory_write_data;
 	memory_nuds <= state_frame_memory_nuds when state_frame_busy = '1' else
-		conditional_memory_nuds when conditional_busy = '1' else
-		binary_memory_nuds when binary_busy = '1' else
-		unary_memory_nuds when unary_busy = '1' else
-		'0' when movem_busy = '1' or control_busy = '1' else
+		conditional_memory_nuds when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_nuds when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_nuds when active_unit = BUSY_UNIT_UNARY else
+		'0' when active_unit = BUSY_UNIT_MOVEM or
+			active_unit = BUSY_UNIT_CONTROL else
 		move_memory_nuds;
 	memory_nlds <= state_frame_memory_nlds when state_frame_busy = '1' else
-		conditional_memory_nlds when conditional_busy = '1' else
-		binary_memory_nlds when binary_busy = '1' else
-		unary_memory_nlds when unary_busy = '1' else
-		'0' when movem_busy = '1' or control_busy = '1' else
+		conditional_memory_nlds when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_nlds when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_nlds when active_unit = BUSY_UNIT_UNARY else
+		'0' when active_unit = BUSY_UNIT_MOVEM or
+			active_unit = BUSY_UNIT_CONTROL else
 		move_memory_nlds;
 	memory_function_code <= state_frame_memory_fc when state_frame_busy = '1' else
-		conditional_memory_fc when conditional_busy = '1' else
-		binary_memory_fc when binary_busy = '1' else
-		unary_memory_fc when unary_busy = '1' else
-		movem_memory_fc when movem_busy = '1' else
-		control_memory_fc when control_busy = '1' else
+		conditional_memory_fc when active_unit = BUSY_UNIT_CONDITIONAL else
+		binary_memory_fc when active_unit = BUSY_UNIT_BINARY else
+		unary_memory_fc when active_unit = BUSY_UNIT_UNARY else
+		movem_memory_fc when active_unit = BUSY_UNIT_MOVEM else
+		control_memory_fc when active_unit = BUSY_UNIT_CONTROL else
 		move_memory_fc;
 
 	integer_register_write <= control_integer_write or move_integer_write or
@@ -949,6 +957,33 @@ begin
 	operation_exceptional_operand <= binary_exceptional_operand when
 		binary_status_write = '1' else unary_exceptional_operand when
 		unary_status_write = '1' else move_exceptional_operand;
+
+	active_unit_select : process(clk)
+	begin
+		if rising_edge(clk) then
+			if nReset = '0' or null_restore = '1' or
+					state_frame_restore_null = '1' or
+					state_frame_save_complete = '1' then
+				active_unit <= BUSY_UNIT_NONE;
+			elsif move_start = '1' then
+				active_unit <= BUSY_UNIT_MOVE;
+			elsif control_start = '1' then
+				active_unit <= BUSY_UNIT_CONTROL;
+			elsif movem_start = '1' then
+				active_unit <= BUSY_UNIT_MOVEM;
+			elsif constant_start = '1' then
+				active_unit <= ACTIVE_UNIT_CONSTANT;
+			elsif unary_start = '1' then
+				active_unit <= BUSY_UNIT_UNARY;
+			elsif binary_start = '1' then
+				active_unit <= BUSY_UNIT_BINARY;
+			elsif conditional_start = '1' then
+				active_unit <= BUSY_UNIT_CONDITIONAL;
+			elsif operation_done = '1' then
+				active_unit <= BUSY_UNIT_NONE;
+			end if;
+		end if;
+	end process;
 
 	dispatch_state : process(clk)
 	begin
