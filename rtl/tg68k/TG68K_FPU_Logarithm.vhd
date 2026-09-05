@@ -135,8 +135,6 @@ architecture rtl of TG68K_FPU_Logarithm is
 	signal input_alignment_target : input_alignment_target_t :=
 		ALIGN_ATANH_SOURCE;
 	signal input_alignment_remaining : natural range 0 to FRACTION_BITS := 0;
-	signal cordic_source_x : cordic_value_t := (others => '0');
-	signal cordic_source_y : cordic_value_t := (others => '0');
 	signal atanh_numerator : unsigned(CORDIC_WIDTH downto 0) :=
 		(others => '0');
 	signal atanh_denominator : unsigned(CORDIC_WIDTH downto 0) :=
@@ -190,8 +188,14 @@ begin
 	busy <= '1' when state /= IDLE else '0';
 	done <= '1' when state = COMPLETE else '0';
 	cordic_start <= '1' when state = LOAD_CORDIC_ANGLE else '0';
-	cordic_x_input <= cordic_source_x;
-	cordic_y_input <= cordic_source_y;
+	-- The normalized mantissa is in [1,2), so adding or removing one only
+	-- rewrites these integer bits.
+	cordic_x_input <= signed(input_mantissa(
+		CORDIC_WIDTH - 1 downto FRACTION_BITS + 2) & "10" &
+		input_mantissa(FRACTION_BITS - 1 downto 0));
+	cordic_y_input <= signed(input_mantissa(
+		CORDIC_WIDTH - 1 downto FRACTION_BITS + 1) & '0' &
+		input_mantissa(FRACTION_BITS - 1 downto 0));
 	cordic_z_input <= (others => '0');
 	series_arithmetic_start <= '1' when not INCLUDE_SERIES_ARITHMETIC and
 		(state = SQUARE_SMALL_ARGUMENT or state = CUBE_SMALL_ARGUMENT) else '0';
@@ -536,9 +540,6 @@ begin
 		variable series_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_cube_correction : unsigned(SERIES_WIDTH - 1 downto 0);
 		variable series_value : unsigned(SERIES_WIDTH - 1 downto 0);
-		variable cordic_sum_value : unsigned(CORDIC_WIDTH - 1 downto 0);
-		variable cordic_difference_value : unsigned(
-			CORDIC_WIDTH - 1 downto 0);
 		variable atanh_shifted_denominator : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable atanh_next_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -569,8 +570,6 @@ begin
 				input_exponent <= (others => '0');
 				input_alignment_target <= ALIGN_ATANH_SOURCE;
 				input_alignment_remaining <= 0;
-				cordic_source_x <= (others => '0');
-				cordic_source_y <= (others => '0');
 				atanh_numerator <= (others => '0');
 				atanh_denominator <= (others => '0');
 				atanh_quotient <= (others => '0');
@@ -1040,15 +1039,6 @@ begin
 							begin_log_combine(to_signed(0, RESULT_WIDTH),
 								input_exponent, logarithm_base_latched);
 						else
-							-- A normalized mantissa is in [1,2); adding or removing
-							-- the unit value only rewrites its integer bits.
-							cordic_sum_value := input_mantissa;
-							cordic_sum_value(FRACTION_BITS + 1) := '1';
-							cordic_sum_value(FRACTION_BITS) := '0';
-							cordic_difference_value := input_mantissa;
-							cordic_difference_value(FRACTION_BITS) := '0';
-							cordic_source_x <= signed(cordic_sum_value);
-							cordic_source_y <= signed(cordic_difference_value);
 							state <= LOAD_CORDIC_ANGLE;
 						end if;
 
