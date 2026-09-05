@@ -511,10 +511,11 @@ begin
 								alignment_shift;
 							if source_index >= 0 and source_index <
 									SOURCE_PRODUCT_BITS then
-								next_scaled_integer(alignment_iteration) :=
-									source_product(source_index);
+								next_scaled_integer := source_product(source_index) &
+									scaled_integer_register(63 downto 1);
 							else
-								next_scaled_integer(alignment_iteration) := '0';
+								next_scaled_integer := '0' &
+									scaled_integer_register(63 downto 1);
 							end if;
 						end if;
 						next_sticky := alignment_sticky;
