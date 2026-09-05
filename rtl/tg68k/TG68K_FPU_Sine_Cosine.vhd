@@ -58,7 +58,7 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant RECIPROCAL_PRODUCT_CYCLES : natural := 48;
 	constant SHARED_WIDTH : natural := CORDIC_WIDTH + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
-	constant NORMALIZATION_SHIFT_CHUNK : natural := 9;
+	constant NORMALIZATION_SHIFT_CHUNK : natural := 5;
 	constant SINE_TINY_EXPONENT : integer := -40;
 	constant COSINE_TINY_EXPONENT : integer := -33;
 	type sine_cosine_state_t is (IDLE, MULTIPLY_RECIPROCAL, ALIGN_RANGE,
@@ -135,7 +135,8 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal range_product_high : unsigned(
 		PRODUCT_WIDTH - RANGE_RESULT_BITS - 1 downto 0) :=
 		(others => '0');
-	signal reciprocal_iteration : natural range 0 to 63 := 0;
+	signal reciprocal_iteration : natural range 0 to
+		RECIPROCAL_PRODUCT_CYCLES - 1 := 0;
 	signal range_shift_chunks : natural range 0 to
 		(PRODUCT_WIDTH - 1) / RANGE_SHIFT_CHUNK := 0;
 	signal range_shift_tail : natural range 0 to RANGE_SHIFT_CHUNK - 1 := 0;
@@ -223,13 +224,32 @@ begin
 		reciprocal_constant_word;
 
 	shared_operands : process(state, normalized_tangent_numerator,
-		tangent_remainder, tangent_divisor)
+		tangent_remainder, tangent_divisor, primary_fixed_value,
+		secondary_fixed_value)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
 		shared_left_a <= (others => '0');
 		shared_right_a <= (others => '0');
 		shared_subtract_a <= '0';
 		case state is
+			when CONVERT_PRIMARY =>
+				if primary_fixed_value < 0 then
+					shared_right_a <= resize(unsigned(primary_fixed_value),
+						SHARED_WIDTH);
+					shared_subtract_a <= '1';
+				else
+					shared_left_a <= resize(unsigned(primary_fixed_value),
+						SHARED_WIDTH);
+				end if;
+			when CONVERT_SECONDARY =>
+				if secondary_fixed_value < 0 then
+					shared_right_a <= resize(unsigned(secondary_fixed_value),
+						SHARED_WIDTH);
+					shared_subtract_a <= '1';
+				else
+					shared_left_a <= resize(unsigned(secondary_fixed_value),
+						SHARED_WIDTH);
+				end if;
 			when START_TANGENT_DIVIDE =>
 				if normalized_tangent_numerator <
 						tangent_divisor(CORDIC_WIDTH - 1 downto 0) then
@@ -542,48 +562,45 @@ begin
 						end if;
 
 					when MULTIPLY_RECIPROCAL =>
-						if reciprocal_iteration < RECIPROCAL_PRODUCT_CYCLES then
-							next_reciprocal_sum := reciprocal_accumulator + resize(
-								reciprocal_partial_product,
-								reciprocal_accumulator'length);
-							next_reciprocal_accumulator := next_reciprocal_sum;
-							if reciprocal_term = 3 or
-									reciprocal_term = reciprocal_column then
-								reciprocal_output_word := next_reciprocal_sum(
-									RECIPROCAL_WORD_BITS - 1 downto 0);
-								if reciprocal_column = RECIPROCAL_COLUMNS - 1 then
-									completed_reciprocal_product :=
-										next_reciprocal_sum(
-											2 * RECIPROCAL_WORD_BITS - 1 downto
-											RECIPROCAL_WORD_BITS) &
-										reciprocal_output_word &
-										reciprocal_product_words;
-									range_product_low <= completed_reciprocal_product(
-										RANGE_RESULT_BITS - 1 downto 0);
-									range_product_high <= completed_reciprocal_product(
-										PRODUCT_WIDTH - 1 downto RANGE_RESULT_BITS);
-								else
-									reciprocal_product_words <= reciprocal_output_word &
-										reciprocal_product_words(223 downto
-										RECIPROCAL_WORD_BITS);
-									reciprocal_column <= reciprocal_column + 1;
-									if reciprocal_column >= 11 then
-										reciprocal_term <= reciprocal_column - 10;
-									else
-										reciprocal_term <= 0;
-									end if;
-									next_reciprocal_accumulator := resize(
-										next_reciprocal_sum(33 downto
-											RECIPROCAL_WORD_BITS),
-										reciprocal_accumulator'length);
-								end if;
+						next_reciprocal_sum := reciprocal_accumulator + resize(
+							reciprocal_partial_product,
+							reciprocal_accumulator'length);
+						next_reciprocal_accumulator := next_reciprocal_sum;
+						if reciprocal_term = 3 or
+								reciprocal_term = reciprocal_column then
+							reciprocal_output_word := next_reciprocal_sum(
+								RECIPROCAL_WORD_BITS - 1 downto 0);
+							if reciprocal_column = RECIPROCAL_COLUMNS - 1 then
+								completed_reciprocal_product :=
+									next_reciprocal_sum(
+										2 * RECIPROCAL_WORD_BITS - 1 downto
+										RECIPROCAL_WORD_BITS) &
+									reciprocal_output_word &
+									reciprocal_product_words;
+								range_product_low <= completed_reciprocal_product(
+									RANGE_RESULT_BITS - 1 downto 0);
+								range_product_high <= completed_reciprocal_product(
+									PRODUCT_WIDTH - 1 downto RANGE_RESULT_BITS);
 							else
-								reciprocal_term <= reciprocal_term + 1;
+								reciprocal_product_words <= reciprocal_output_word &
+									reciprocal_product_words(223 downto
+									RECIPROCAL_WORD_BITS);
+								reciprocal_column <= reciprocal_column + 1;
+								if reciprocal_column >= 11 then
+									reciprocal_term <= reciprocal_column - 10;
+								else
+									reciprocal_term <= 0;
+								end if;
+								next_reciprocal_accumulator := resize(
+									next_reciprocal_sum(33 downto
+										RECIPROCAL_WORD_BITS),
+									reciprocal_accumulator'length);
 							end if;
-							reciprocal_accumulator <=
-								next_reciprocal_accumulator;
+						else
+							reciprocal_term <= reciprocal_term + 1;
 						end if;
-						if reciprocal_iteration = 63 then
+						reciprocal_accumulator <= next_reciprocal_accumulator;
+						if reciprocal_iteration = RECIPROCAL_PRODUCT_CYCLES - 1 then
 							shift_position := 255 - source_exponent_latched;
 							if shift_position >= FRACTION_BITS then
 								range_shift_amount := shift_position - FRACTION_BITS;
@@ -744,13 +761,8 @@ begin
 						end if;
 
 					when CONVERT_PRIMARY =>
-						if primary_fixed_value < 0 then
-							final_sign := '1';
-							magnitude := unsigned(-primary_fixed_value);
-						else
-							final_sign := '0';
-							magnitude := unsigned(primary_fixed_value);
-						end if;
+						final_sign := primary_fixed_value(primary_fixed_value'high);
+						magnitude := shared_result_a(CORDIC_WIDTH - 1 downto 0);
 						if magnitude > UNIT_FIXED then
 							magnitude := UNIT_FIXED;
 						end if;
@@ -768,13 +780,9 @@ begin
 						end if;
 
 					when CONVERT_SECONDARY =>
-						if secondary_fixed_value < 0 then
-							final_sign := '1';
-							magnitude := unsigned(-secondary_fixed_value);
-						else
-							final_sign := '0';
-							magnitude := unsigned(secondary_fixed_value);
-						end if;
+						final_sign := secondary_fixed_value(
+							secondary_fixed_value'high);
+						magnitude := shared_result_a(CORDIC_WIDTH - 1 downto 0);
 						if magnitude > UNIT_FIXED then
 							magnitude := UNIT_FIXED;
 						end if;
