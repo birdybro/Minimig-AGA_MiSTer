@@ -65,15 +65,6 @@ architecture rtl of TG68K_FPU_Round is
 		return shifted;
 	end function;
 
-	function highest_set_bit(value : unsigned(66 downto 0)) return natural is
-	begin
-		for index in 66 downto 0 loop
-			if value(index) = '1' then
-				return index;
-			end if;
-		end loop;
-		return 0;
-	end function;
 begin
 	round_result : process(input_class, input_sign, input_exponent,
 		input_significand, special_value, rounding_precision, rounding_mode,
@@ -86,12 +77,15 @@ begin
 		variable maximum_exponent : integer range 127 to 16383;
 		variable precision_bits : natural range 24 to 64;
 		variable least_retained_bit : natural range 3 to 43;
+		variable rounding_bit : natural range 3 to 67;
+		variable clearing_bit : natural range 2 to 67;
 		variable denormal_shift : natural range 0 to 65535;
-		variable normalization_shift : natural range 0 to 66;
 		variable discarded : std_logic;
 		variable guard : std_logic;
 		variable lower_discarded : std_logic;
+		variable retained : std_logic;
 		variable increment : boolean;
+		variable tiny_directed_result : boolean;
 		variable overflow_to_infinity : boolean;
 		variable overflow_detected : boolean;
 		variable underflow_detected : boolean;
@@ -105,7 +99,9 @@ begin
 		discarded := '0';
 		guard := '0';
 		lower_discarded := '0';
+		retained := '0';
 		increment := false;
+		tiny_directed_result := false;
 		overflow_to_infinity := false;
 		overflow_detected := false;
 		underflow_detected := false;
@@ -143,6 +139,8 @@ begin
 				maximum_exponent := 16383;
 		end case;
 		least_retained_bit := 67 - precision_bits;
+		rounding_bit := least_retained_bit;
+		clearing_bit := least_retained_bit;
 
 		case input_class is
 			when FPU_CLASS_ZERO =>
@@ -172,29 +170,46 @@ begin
 
 					if exponent_value < minimum_exponent then
 						denormal_shift := minimum_exponent - exponent_value;
-						working_significand := shift_right_sticky(
-							working_significand, denormal_shift);
-						exponent_value := minimum_exponent;
+						if not use_extended_exponent_range and
+								(rounding_precision = FPU_PRECISION_SINGLE or
+								 rounding_precision = FPU_PRECISION_DOUBLE) then
+							if denormal_shift <= precision_bits then
+								rounding_bit := least_retained_bit + denormal_shift;
+							else
+								tiny_directed_result := true;
+							end if;
+						else
+							working_significand := shift_right_sticky(
+								working_significand, denormal_shift);
+							exponent_value := minimum_exponent;
+						end if;
 					end if;
 
-					for index in 0 to 42 loop
-						if index < least_retained_bit then
-							discarded := discarded or working_significand(index);
+					if tiny_directed_result then
+						discarded := or_reduce(working_significand);
+					else
+						for index in 0 to 66 loop
+							if index < rounding_bit then
+								discarded := discarded or working_significand(index);
+							end if;
+						end loop;
+						guard := working_significand(rounding_bit - 1);
+						if rounding_bit <= 66 then
+							retained := working_significand(rounding_bit);
 						end if;
-					end loop;
-					guard := working_significand(least_retained_bit - 1);
-					for index in 0 to 41 loop
-						if index < least_retained_bit - 1 then
-							lower_discarded := lower_discarded or
-								working_significand(index);
-						end if;
-					end loop;
+						for index in 0 to 65 loop
+							if index < rounding_bit - 1 then
+								lower_discarded := lower_discarded or
+									working_significand(index);
+							end if;
+						end loop;
+					end if;
 
 					case rounding_mode is
 						when FPU_ROUND_NEAREST =>
 							increment := guard = '1' and
 								(lower_discarded = '1' or
-								 working_significand(least_retained_bit) = '1');
+								 retained = '1');
 						when FPU_ROUND_ZERO =>
 							increment := false;
 						when FPU_ROUND_MINUS_INFINITY =>
@@ -203,33 +218,38 @@ begin
 							increment := input_sign = '0' and discarded = '1';
 					end case;
 
-					extended_sum := resize(working_significand, 68);
-					if increment then
-						extended_sum := extended_sum +
-							shift_left(to_unsigned(1, 68), least_retained_bit);
-					end if;
-					if extended_sum(67) = '1' then
-						working_significand := extended_sum(67 downto 1);
-						exponent_value := exponent_value + 1;
-					else
-						working_significand := extended_sum(66 downto 0);
-					end if;
-					for index in 0 to 42 loop
-						if index < least_retained_bit then
-							working_significand(index) := '0';
+					if tiny_directed_result then
+						working_significand := (others => '0');
+						if increment then
+							working_significand(66) := '1';
+							exponent_value := minimum_exponent - precision_bits + 1;
 						end if;
-					end loop;
+					else
+						extended_sum := resize(working_significand, 68);
+						if increment then
+							extended_sum := extended_sum +
+								shift_left(to_unsigned(1, 68), rounding_bit);
+						end if;
+						if extended_sum(67) = '1' then
+							working_significand := extended_sum(67 downto 1);
+							exponent_value := exponent_value + 1;
+							clearing_bit := rounding_bit - 1;
+						else
+							working_significand := extended_sum(66 downto 0);
+							clearing_bit := rounding_bit;
+						end if;
+						for index in 0 to 66 loop
+							if index < clearing_bit then
+								working_significand(index) := '0';
+							end if;
+						end loop;
+					end if;
 
 					if not use_extended_exponent_range and
-							rounding_precision /= FPU_PRECISION_EXTENDED and
-							rounding_precision /= FPU_PRECISION_RESERVED and
-							working_significand /= 0 and
-							working_significand(66) = '0' then
-						normalization_shift := 66 -
-							highest_set_bit(working_significand);
-						working_significand := shift_left(
-							working_significand, normalization_shift);
-						exponent_value := exponent_value - normalization_shift;
+							(rounding_precision = FPU_PRECISION_SINGLE or
+							 rounding_precision = FPU_PRECISION_DOUBLE) and
+							working_significand = 0 then
+						exponent_value := 0;
 					end if;
 
 					overflow_detected := exponent_value > maximum_exponent;
