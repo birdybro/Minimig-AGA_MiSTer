@@ -53,7 +53,10 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	constant RECIPROCAL_BITS : natural := 192;
 	constant PRODUCT_WIDTH : natural := 64 + RECIPROCAL_BITS;
 	constant RANGE_RESULT_BITS : natural := FRACTION_BITS + 2;
-	constant SHARED_WIDTH : natural := RECIPROCAL_BITS + 1;
+	constant RECIPROCAL_WORD_BITS : natural := 16;
+	constant RECIPROCAL_COLUMNS : natural := 15;
+	constant RECIPROCAL_PRODUCT_CYCLES : natural := 48;
+	constant SHARED_WIDTH : natural := CORDIC_WIDTH + 1;
 	constant RANGE_SHIFT_CHUNK : natural := 8;
 	constant NORMALIZATION_SHIFT_CHUNK : natural := 9;
 	constant SINE_TINY_EXPONENT : integer := -40;
@@ -114,10 +117,19 @@ architecture rtl of TG68K_FPU_Sine_Cosine is
 	signal simultaneous_latched : std_logic := '0';
 	signal source_sign_latched : std_logic := '0';
 	signal source_exponent_latched : integer range -16446 to 16383 := 0;
-	-- Keep alignment feedback out of the combined accumulator|multiplier mux;
-	-- the completed product transfers once into the direction-partitioned banks.
-	signal reciprocal_product : unsigned(PRODUCT_WIDTH downto 0) :=
+	-- Form the 64-by-192-bit range product column-by-column through one DSP.
+	-- The completed words remain separate from the alignment feedback banks.
+	signal reciprocal_source : unsigned(63 downto 0) := (others => '0');
+	signal reciprocal_product_words : unsigned(223 downto 0) :=
 		(others => '0');
+	-- Four 16-bit products plus the preceding carry fit in 34 bits.
+	signal reciprocal_accumulator : unsigned(33 downto 0) := (others => '0');
+	signal reciprocal_column : natural range 0 to RECIPROCAL_COLUMNS - 1 := 0;
+	signal reciprocal_term : natural range 0 to 3 := 0;
+	signal reciprocal_source_word : unsigned(RECIPROCAL_WORD_BITS - 1 downto 0);
+	signal reciprocal_constant_word : unsigned(RECIPROCAL_WORD_BITS - 1 downto 0);
+	signal reciprocal_partial_product : unsigned(
+		2 * RECIPROCAL_WORD_BITS - 1 downto 0);
 	signal range_product_low : unsigned(RANGE_RESULT_BITS - 1 downto 0) :=
 		(others => '0');
 	signal range_product_high : unsigned(
@@ -187,8 +199,30 @@ begin
 	secondary_round_input.special <= secondary_special;
 	base_exception_status <= base_status;
 
-	shared_operands : process(state, reciprocal_product,
-		normalized_tangent_numerator,
+	reciprocal_source_word <= reciprocal_source(
+		RECIPROCAL_WORD_BITS * reciprocal_term + RECIPROCAL_WORD_BITS - 1 downto
+		RECIPROCAL_WORD_BITS * reciprocal_term);
+	reciprocal_constant_select : process(reciprocal_column, reciprocal_term)
+	begin
+		case reciprocal_column - reciprocal_term is
+			when 0 => reciprocal_constant_word <= x"9042";
+			when 1 => reciprocal_constant_word <= x"3C43";
+			when 2 => reciprocal_constant_word <= x"9599";
+			when 3 => reciprocal_constant_word <= x"DB62";
+			when 4 => reciprocal_constant_word <= x"DDC0";
+			when 5 => reciprocal_constant_word <= x"F534";
+			when 6 => reciprocal_constant_word <= x"57D1";
+			when 7 => reciprocal_constant_word <= x"FC27";
+			when 8 => reciprocal_constant_word <= x"1529";
+			when 9 => reciprocal_constant_word <= x"4E44";
+			when 10 => reciprocal_constant_word <= x"836E";
+			when others => reciprocal_constant_word <= x"A2F9";
+		end case;
+	end process;
+	reciprocal_partial_product <= reciprocal_source_word *
+		reciprocal_constant_word;
+
+	shared_operands : process(state, normalized_tangent_numerator,
 		tangent_remainder, tangent_divisor)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 	begin
@@ -196,13 +230,6 @@ begin
 		shared_right_a <= (others => '0');
 		shared_subtract_a <= '0';
 		case state is
-			when MULTIPLY_RECIPROCAL =>
-				shared_left_a <= resize(reciprocal_product(
-					PRODUCT_WIDTH downto 64), SHARED_WIDTH);
-				if reciprocal_product(0) = '1' then
-					shared_right_a <= resize(TWO_BY_PI,
-						SHARED_WIDTH);
-				end if;
 			when START_TANGENT_DIVIDE =>
 				if normalized_tangent_numerator <
 						tangent_divisor(CORDIC_WIDTH - 1 downto 0) then
@@ -338,7 +365,12 @@ begin
 		variable normalization_shift : natural range 0 to 63;
 		variable selected_nan : fpu_extended_t;
 		variable tiny_significand : fpu_significand_grs_t;
-		variable next_reciprocal_product : unsigned(PRODUCT_WIDTH downto 0);
+		variable next_reciprocal_sum : unsigned(33 downto 0);
+		variable next_reciprocal_accumulator : unsigned(33 downto 0);
+		variable reciprocal_output_word : unsigned(
+			RECIPROCAL_WORD_BITS - 1 downto 0);
+		variable completed_reciprocal_product : unsigned(
+			PRODUCT_WIDTH - 1 downto 0);
 		variable shift_position : integer range -16128 to 294;
 		variable fraction_value : unsigned(FRACTION_BITS - 1 downto 0);
 		variable reduced_angle : cordic_value_t;
@@ -367,8 +399,6 @@ begin
 				simultaneous_latched <= '0';
 				source_sign_latched <= '0';
 				source_exponent_latched <= 0;
-				reciprocal_product <= (others => '0');
-				reciprocal_iteration <= 0;
 				range_shift_chunks <= 0;
 				range_shift_tail <= 0;
 				range_shift_left <= '0';
@@ -501,8 +531,10 @@ begin
 									state <= COMPLETE;
 								else
 									source_exponent_latched <= source_exponent;
-									reciprocal_product <= resize(source_significand,
-										PRODUCT_WIDTH + 1);
+									reciprocal_source <= source_significand;
+									reciprocal_accumulator <= (others => '0');
+									reciprocal_column <= 0;
+									reciprocal_term <= 0;
 									reciprocal_iteration <= 0;
 									state <= MULTIPLY_RECIPROCAL;
 								end if;
@@ -510,15 +542,48 @@ begin
 						end if;
 
 					when MULTIPLY_RECIPROCAL =>
-						next_reciprocal_product := shift_right(
-							shared_result_a(RECIPROCAL_BITS downto 0) &
-							reciprocal_product(63 downto 0), 1);
-						reciprocal_product <= next_reciprocal_product;
+						if reciprocal_iteration < RECIPROCAL_PRODUCT_CYCLES then
+							next_reciprocal_sum := reciprocal_accumulator + resize(
+								reciprocal_partial_product,
+								reciprocal_accumulator'length);
+							next_reciprocal_accumulator := next_reciprocal_sum;
+							if reciprocal_term = 3 or
+									reciprocal_term = reciprocal_column then
+								reciprocal_output_word := next_reciprocal_sum(
+									RECIPROCAL_WORD_BITS - 1 downto 0);
+								if reciprocal_column = RECIPROCAL_COLUMNS - 1 then
+									completed_reciprocal_product :=
+										next_reciprocal_sum(
+											2 * RECIPROCAL_WORD_BITS - 1 downto
+											RECIPROCAL_WORD_BITS) &
+										reciprocal_output_word &
+										reciprocal_product_words;
+									range_product_low <= completed_reciprocal_product(
+										RANGE_RESULT_BITS - 1 downto 0);
+									range_product_high <= completed_reciprocal_product(
+										PRODUCT_WIDTH - 1 downto RANGE_RESULT_BITS);
+								else
+									reciprocal_product_words <= reciprocal_output_word &
+										reciprocal_product_words(223 downto
+										RECIPROCAL_WORD_BITS);
+									reciprocal_column <= reciprocal_column + 1;
+									if reciprocal_column >= 11 then
+										reciprocal_term <= reciprocal_column - 10;
+									else
+										reciprocal_term <= 0;
+									end if;
+									next_reciprocal_accumulator := resize(
+										next_reciprocal_sum(33 downto
+											RECIPROCAL_WORD_BITS),
+										reciprocal_accumulator'length);
+								end if;
+							else
+								reciprocal_term <= reciprocal_term + 1;
+							end if;
+							reciprocal_accumulator <=
+								next_reciprocal_accumulator;
+						end if;
 						if reciprocal_iteration = 63 then
-							range_product_low <= next_reciprocal_product(
-								RANGE_RESULT_BITS - 1 downto 0);
-							range_product_high <= next_reciprocal_product(
-								PRODUCT_WIDTH - 1 downto RANGE_RESULT_BITS);
 							shift_position := 255 - source_exponent_latched;
 							if shift_position >= FRACTION_BITS then
 								range_shift_amount := shift_position - FRACTION_BITS;
