@@ -134,42 +134,6 @@ architecture rtl of TG68K_FPU_Move_Controller is
 		end case;
 	end function;
 
-	function write_transfer_word(
-		value : std_logic_vector(95 downto 0);
-		word_count : natural;
-		word_index : natural;
-		word_data : std_logic_vector(15 downto 0))
-		return std_logic_vector is
-		variable updated : std_logic_vector(95 downto 0) := value;
-	begin
-		case word_count is
-			when 1 => updated(15 downto 0) := word_data;
-			when 2 =>
-				if word_index = 0 then
-					updated(31 downto 16) := word_data;
-				else
-					updated(15 downto 0) := word_data;
-				end if;
-			when 4 =>
-				case word_index is
-					when 0 => updated(63 downto 48) := word_data;
-					when 1 => updated(47 downto 32) := word_data;
-					when 2 => updated(31 downto 16) := word_data;
-					when others => updated(15 downto 0) := word_data;
-				end case;
-			when others =>
-				case word_index is
-					when 0 => updated(95 downto 80) := word_data;
-					when 1 => updated(79 downto 64) := word_data;
-					when 2 => updated(63 downto 48) := word_data;
-					when 3 => updated(47 downto 32) := word_data;
-					when 4 => updated(31 downto 16) := word_data;
-					when others => updated(15 downto 0) := word_data;
-				end case;
-		end case;
-		return updated;
-	end function;
-
 	signal state : controller_state_t := IDLE;
 	signal direction_latched : fpu_move_direction_t :=
 		FPU_MOVE_REGISTER_TO_REGISTER;
@@ -359,7 +323,6 @@ begin
 	end process;
 
 	sequencer : process(clk)
-		variable updated_buffer : std_logic_vector(95 downto 0);
 		variable count : natural range 1 to 6;
 		variable read_word : std_logic_vector(15 downto 0);
 	begin
@@ -441,9 +404,8 @@ begin
 									read_word(7 downto 0) := memory_read_data(7 downto 0);
 								end if;
 							end if;
-							updated_buffer := write_transfer_word(external_buffer,
-								count, transfer_index, read_word);
-							external_buffer <= updated_buffer;
+							external_buffer <= external_buffer(79 downto 0) &
+								read_word;
 							if transfer_index + 1 = count then
 								state <= LOAD_UNPACK;
 							else
