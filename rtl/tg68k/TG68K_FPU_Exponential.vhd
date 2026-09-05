@@ -636,11 +636,11 @@ begin
 				intermediate_class <= FPU_CLASS_NORMAL;
 				base_status(1) <= '1';
 				if hyperbolic_cosine_latched = '1' then
-					intermediate_significand(66) <= '1';
-					intermediate_significand(0) <= '1';
+					intermediate_significand <=
+						(66 => '1', 0 => '1', others => '0');
 				elsif source_sign_latched = '0' then
-					intermediate_significand(66) <= '1';
-					intermediate_significand(0) <= '1';
+					intermediate_significand <=
+						(66 => '1', 0 => '1', others => '0');
 				else
 					intermediate_exponent <= to_signed(-1, 17);
 					intermediate_significand <= (others => '1');
@@ -960,14 +960,16 @@ begin
 									intermediate_sign <= source(79);
 								else
 									intermediate_class <= FPU_CLASS_NORMAL;
-									direct_significand(66) <= '1';
+									direct_significand <=
+										(66 => '1', others => '0');
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
 								if hyperbolic_tangent = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= source(79);
-									direct_significand(66) <= '1';
+									direct_significand <=
+										(66 => '1', others => '0');
 								elsif hyperbolic_cosine = '1' then
 									intermediate_class <= FPU_CLASS_INFINITY;
 								elsif hyperbolic_sine = '1' then
@@ -976,7 +978,8 @@ begin
 								elsif subtract_one = '1' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= '1';
-									direct_significand(66) <= '1';
+									direct_significand <=
+										(66 => '1', others => '0');
 								elsif source(79) = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 								else
@@ -1024,8 +1027,8 @@ begin
 									base_status(1) <= '1';
 									if source_exponent <= COSH_TINY_MAX_EXPONENT then
 										intermediate_class <= FPU_CLASS_NORMAL;
-										direct_significand(66) <= '1';
-										direct_significand(0) <= '1';
+										direct_significand <=
+											(66 => '1', 0 => '1', others => '0');
 										state <= COMPLETE;
 									else
 										series_source_significand <= source_significand;
@@ -1098,12 +1101,14 @@ begin
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand(66) <= '1';
+											direct_significand <=
+												(66 => '1', others => '0');
 										elsif hyperbolic_cosine = '1' then
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand(66) <= '1';
+											direct_significand <=
+												(66 => '1', others => '0');
 										elsif subtract_one = '1' and source(79) = '1' then
 											intermediate_sign <= '1';
 											intermediate_exponent <= to_signed(-1, 17);
@@ -1116,7 +1121,8 @@ begin
 											end if;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand(66) <= '1';
+											direct_significand <=
+												(66 => '1', others => '0');
 										end if;
 										state <= COMPLETE;
 									else
