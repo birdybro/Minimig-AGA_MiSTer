@@ -178,7 +178,7 @@ architecture rtl of TG68K_FPU_Extended_To_Packed is
 	signal alignment_limit : natural range 63 to 447 := 63;
 	signal factor_value : unsigned(63 downto 0) := (others => '0');
 	signal factor_remainder : unsigned(2 downto 0) := (others => '0');
-	signal factor_bit_index : natural range 7 to 63 := 63;
+	signal factor_group : natural range 0 to 7 := 0;
 	signal factor_five_count : natural range 0 to 27 := 0;
 	signal factor_two_count : natural range 0 to 64 := 0;
 	signal factor_active : std_logic := '0';
@@ -248,12 +248,13 @@ begin
 	factor_five_sequence : process(clk)
 		variable next_factor : unsigned(63 downto 0);
 		variable next_remainder : unsigned(3 downto 0);
+		variable quotient_bit : std_logic;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
 				factor_value <= (others => '0');
 				factor_remainder <= (others => '0');
-				factor_bit_index <= 63;
+				factor_group <= 0;
 				factor_five_count <= 0;
 				factor_two_count <= 0;
 				factor_active <= '0';
@@ -267,7 +268,7 @@ begin
 					factor_start_seen <= '1';
 					factor_value <= unsigned(source(63 downto 0));
 					factor_remainder <= (others => '0');
-					factor_bit_index <= 63;
+					factor_group <= 0;
 					factor_five_count <= 0;
 					factor_two_count <= trailing_zero_count(
 						unsigned(source(63 downto 0)));
@@ -283,19 +284,20 @@ begin
 					next_remainder := resize(factor_remainder, 4);
 					for offset in 0 to 7 loop
 						next_remainder := shift_left(next_remainder, 1);
-						next_remainder(0) := factor_value(factor_bit_index - offset);
+						next_remainder(0) := next_factor(63);
 						if next_remainder >= 5 then
 							next_remainder := next_remainder - 5;
-							next_factor(factor_bit_index - offset) := '1';
+							quotient_bit := '1';
 						else
-							next_factor(factor_bit_index - offset) := '0';
+							quotient_bit := '0';
 						end if;
+						next_factor := next_factor(62 downto 0) & quotient_bit;
 					end loop;
-					if factor_bit_index = 7 then
+					if factor_group = 7 then
 						if next_remainder = 0 and factor_five_count < 27 then
 							factor_value <= next_factor;
 							factor_remainder <= (others => '0');
-							factor_bit_index <= 63;
+							factor_group <= 0;
 							factor_five_count <= factor_five_count + 1;
 						else
 							factor_active <= '0';
@@ -304,7 +306,7 @@ begin
 					else
 						factor_value <= next_factor;
 						factor_remainder <= next_remainder(2 downto 0);
-						factor_bit_index <= factor_bit_index - 8;
+						factor_group <= factor_group + 1;
 					end if;
 				end if;
 			end if;
