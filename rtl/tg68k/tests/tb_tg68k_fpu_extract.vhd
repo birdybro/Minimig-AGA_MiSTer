@@ -7,19 +7,32 @@ entity tb_tg68k_fpu_extract is
 end entity;
 
 architecture test of tb_tg68k_fpu_extract is
+	constant CLK_PERIOD : time := 10 ns;
+	signal clk : std_logic := '0';
+	signal nReset : std_logic := '0';
+	signal start : std_logic := '0';
 	signal source : fpu_extended_t := (others => '0');
 	signal get_exponent : std_logic := '0';
 	signal result : fpu_extended_t;
 	signal condition_codes : std_logic_vector(3 downto 0);
 	signal exception_status : std_logic_vector(7 downto 0);
+	signal busy : std_logic;
+	signal done : std_logic;
 begin
-	dut : entity work.TG68K_FPU_Extract
+	clk <= not clk after CLK_PERIOD / 2;
+
+	dut : entity work.TG68K_FPU_Unary_Extract_Test_Wrapper
 		port map(
+			clk => clk,
+			nReset => nReset,
+			start => start,
 			source => source,
 			get_exponent => get_exponent,
 			result => result,
 			condition_codes => condition_codes,
-			exception_status => exception_status
+			exception_status => exception_status,
+			busy => busy,
+			done => done
 		);
 
 	stimulus : process
@@ -30,10 +43,23 @@ begin
 			constant expected_cc : std_logic_vector(3 downto 0);
 			constant expected_status : std_logic_vector(7 downto 0);
 			constant message_text : string) is
+			variable cycle_count : natural := 0;
 		begin
 			source <= source_value;
 			get_exponent <= exponent_select;
+			wait until falling_edge(clk);
+			start <= '1';
+			wait until rising_edge(clk);
 			wait for 1 ns;
+			start <= '0';
+			while done = '0' loop
+				wait until rising_edge(clk);
+				wait for 1 ns;
+				cycle_count := cycle_count + 1;
+				assert cycle_count < 24
+					report message_text & ": controller did not complete"
+					severity failure;
+			end loop;
 			assert result = expected_result and
 				condition_codes = expected_cc and
 				exception_status = expected_status
@@ -41,8 +67,17 @@ begin
 					" cc=" & to_hstring(condition_codes) &
 					" status=" & to_hstring(exception_status)
 				severity failure;
+			wait until rising_edge(clk);
+			wait for 1 ns;
+			assert busy = '0' and done = '0'
+				report message_text & ": controller did not return idle"
+				severity failure;
 		end procedure;
 	begin
+		wait for 3 * CLK_PERIOD;
+		wait until rising_edge(clk);
+		nReset <= '1';
+
 		check(x"3FFF8000000000000000", '1', x"00000000000000000000",
 			"0100", x"00", "FGETEXP exponent-zero mismatch");
 		check(x"40008000000000000000", '1', x"3FFF8000000000000000",

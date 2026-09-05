@@ -71,8 +71,21 @@ end entity;
 
 architecture rtl of TG68K_FPU_Unary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
-		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION, EXECUTE, COMMIT,
-		BUS_ERROR_WAIT, COMPLETE);
+		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION, EXECUTE,
+		NORMALIZE_EXTRACT, ENCODE_EXPONENT, COMMIT, BUS_ERROR_WAIT, COMPLETE);
+
+	function leading_shift_chunk(value : unsigned(63 downto 0)) return natural is
+	begin
+		if value(63) = '1' or value = 0 then
+			return 0;
+		end if;
+		for offset in 1 to 7 loop
+			if value(63 - offset) = '1' then
+				return offset;
+			end if;
+		end loop;
+		return 8;
+	end function;
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
 		return natural is
@@ -115,24 +128,30 @@ architecture rtl of TG68K_FPU_Unary_Controller is
 		(others => '0');
 	signal write_result_latched : std_logic := '0';
 	signal transfer_index : natural range 0 to 5 := 0;
+	signal extraction_exponent : signed(16 downto 0) := (others => '0');
 
 	signal unpacked_operand : fpu_extended_t;
 	signal operand_class : fpu_data_class_t;
-	signal extracted_result : fpu_extended_t;
-	signal extracted_status : std_logic_vector(7 downto 0);
+	signal selected_conversion_format : fpu_operand_format_t;
+	signal selected_conversion_data : std_logic_vector(95 downto 0);
 begin
 	exceptional_operand <= operand_latched;
 	saved_context_out <= external_buffer &
 		std_logic_vector(to_unsigned(transfer_index, 3));
 	operand_class <= fpu_classify(operand_latched);
-	conversion_source_format <= format_latched;
-	conversion_source_data <= external_buffer;
+	selected_conversion_format <= FPU_FORMAT_LONG_INTEGER when
+		state = ENCODE_EXPONENT else format_latched;
+	selected_conversion_data <= x"0000000000000000" &
+		std_logic_vector(resize(extraction_exponent, 32)) when
+		state = ENCODE_EXPONENT else external_buffer;
+	conversion_source_format <= selected_conversion_format;
+	conversion_source_data <= selected_conversion_data;
 
 	with_conversion : if INCLUDE_CONVERSION_STAGE generate
 		unpack : entity work.TG68K_FPU_Convert
 			port map(
-				source_format => format_latched,
-				source_data => external_buffer,
+				source_format => selected_conversion_format,
+				source_data => selected_conversion_data,
 				extended_data => unpacked_operand,
 				conversion_valid => open,
 				extended_source => (others => '0'),
@@ -143,15 +162,6 @@ begin
 	without_conversion : if not INCLUDE_CONVERSION_STAGE generate
 		unpacked_operand <= external_converted_data;
 	end generate;
-
-	extract : entity work.TG68K_FPU_Extract
-		port map(
-			source => operand_latched,
-			get_exponent => get_exponent_latched,
-			result => extracted_result,
-			condition_codes => open,
-			exception_status => extracted_status
-		);
 
 	outputs : process(state, format_latched, address_latched,
 		function_code_latched, transfer_index, external_buffer, result_latched,
@@ -218,6 +228,7 @@ begin
 		variable status : std_logic_vector(7 downto 0);
 		variable count : natural range 1 to 6;
 		variable result : fpu_extended_t;
+		variable shift_amount : natural range 0 to 8;
 	begin
 		if rising_edge(clk) then
 			if nReset = '0' then
@@ -238,6 +249,7 @@ begin
 				conversion_status_latched <= (others => '0');
 				write_result_latched <= '0';
 				transfer_index <= 0;
+				extraction_exponent <= (others => '0');
 			else
 				case state is
 					when IDLE =>
@@ -331,10 +343,38 @@ begin
 
 					when EXECUTE =>
 						if extract_latched = '1' then
-							result_latched <= extracted_result;
-							status_latched <= extracted_status or
-								conversion_status_latched;
 							write_result_latched <= '1';
+							status := conversion_status_latched;
+							result := operand_latched;
+							if operand_class = FPU_CLASS_SIGNALING_NAN then
+								result(62) := '1';
+								status(6) := '1';
+								result_latched <= result;
+								status_latched <= status;
+								state <= COMMIT;
+							elsif operand_class = FPU_CLASS_QUIET_NAN then
+								result_latched <= result;
+								status_latched <= status;
+								state <= COMMIT;
+							elsif operand_class = FPU_CLASS_INFINITY then
+								result_latched <= FPU_RESET_NAN;
+								status(5) := '1';
+								status_latched <= status;
+								state <= COMMIT;
+							elsif operand_class = FPU_CLASS_ZERO or
+									operand_latched(63 downto 0) =
+									x"0000000000000000" then
+								result_latched <= (79 => operand_latched(79),
+									others => '0');
+								status_latched <= status;
+								state <= COMMIT;
+							else
+								result_latched <= operand_latched;
+								extraction_exponent <= to_signed(
+									fpu_unbiased_exponent(operand_latched), 17);
+								status_latched <= status;
+								state <= NORMALIZE_EXTRACT;
+							end if;
 						else
 							status := conversion_status_latched;
 							result := operand_latched;
@@ -364,7 +404,31 @@ begin
 								write_result_latched <= '1';
 							end if;
 							status_latched <= status;
+							state <= COMMIT;
 						end if;
+
+					when NORMALIZE_EXTRACT =>
+						shift_amount := leading_shift_chunk(
+							unsigned(result_latched(63 downto 0)));
+						if shift_amount = 0 then
+							if get_exponent_latched = '1' then
+								state <= ENCODE_EXPONENT;
+							else
+								result_latched(78 downto 64) <=
+									std_logic_vector(to_unsigned(
+										FPU_EXTENDED_EXPONENT_BIAS, 15));
+								state <= COMMIT;
+							end if;
+						else
+							result_latched(63 downto 0) <= std_logic_vector(
+								shift_left(unsigned(result_latched(63 downto 0)),
+									shift_amount));
+							extraction_exponent <= extraction_exponent -
+								to_signed(shift_amount, 17);
+						end if;
+
+					when ENCODE_EXPONENT =>
+						result_latched <= unpacked_operand;
 						state <= COMMIT;
 
 					when COMMIT => state <= COMPLETE;

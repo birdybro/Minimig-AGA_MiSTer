@@ -25,7 +25,6 @@ RTL := ../TG68K_MMU_Pack.vhd ../TG68K_MMU_Fault_Frame.vhd \
 	../TG68K_FPU_Control_Controller.vhd \
 	../TG68K_FPU_Movem_Controller.vhd \
 	../TG68K_FPU_Constant_Controller.vhd \
-	../TG68K_FPU_Extract.vhd \
 	../TG68K_FPU_Unary_Controller.vhd \
 	../TG68K_FPU_Add_Subtract.vhd ../TG68K_FPU_Multiply.vhd \
 	../TG68K_FPU_Divide_Engine.vhd ../TG68K_FPU_Divide.vhd \
@@ -77,6 +76,7 @@ analyze:
 		tb_tg68k_fpu_control_controller.vhd \
 		tb_tg68k_fpu_movem_controller.vhd \
 		tb_tg68k_fpu_constant_controller.vhd \
+		TG68K_FPU_Unary_Extract_Test_Wrapper.vhd \
 		tb_tg68k_fpu_extract.vhd \
 		tb_tg68k_fpu_unary_controller.vhd \
 		tb_tg68k_fpu_integer.vhd \
@@ -571,7 +571,6 @@ synth: analyze
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Control_Controller > $(BUILD_DIR)/TG68K_FPU_Control_Controller_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Movem_Controller > $(BUILD_DIR)/TG68K_FPU_Movem_Controller_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Constant_Controller > $(BUILD_DIR)/TG68K_FPU_Constant_Controller_synth.vhd
-	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Extract > $(BUILD_DIR)/TG68K_FPU_Extract_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Unary_Controller > $(BUILD_DIR)/TG68K_FPU_Unary_Controller_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Add_Subtract > $(BUILD_DIR)/TG68K_FPU_Add_Subtract_synth.vhd
 	$(GHDL) synth $(GHDL_FLAGS) --workdir=$(BUILD_DIR) TG68K_FPU_Multiply > $(BUILD_DIR)/TG68K_FPU_Multiply_synth.vhd
