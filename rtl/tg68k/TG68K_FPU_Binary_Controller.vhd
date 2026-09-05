@@ -953,7 +953,7 @@ begin
 				special_value => selected_round_input.special,
 				rounding_precision => selected_rounding_precision,
 				rounding_mode => selected_rounding_mode,
-				single_extended_range => single_precision_latched,
+				extended_exponent_range => single_precision_latched,
 				result => rounded_result,
 				inexact => rounded_inexact,
 				overflow => rounded_overflow,

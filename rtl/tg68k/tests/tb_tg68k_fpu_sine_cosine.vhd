@@ -129,7 +129,7 @@ begin
 			special_value => secondary_round_input.special,
 			rounding_precision => FPU_PRECISION_EXTENDED,
 			rounding_mode => FPU_ROUND_NEAREST,
-			single_extended_range => '0',
+			extended_exponent_range => '0',
 			result => secondary_result,
 			inexact => open,
 			overflow => open,

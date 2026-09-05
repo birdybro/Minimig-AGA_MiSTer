@@ -106,7 +106,7 @@ begin
 				special_value => intermediate_special,
 				rounding_precision => effective_rounding_precision,
 				rounding_mode => rounding_mode,
-				single_extended_range => single_precision_operation,
+				extended_exponent_range => single_precision_operation,
 				result => rounded_result,
 				inexact => rounded_inexact,
 				overflow => rounded_overflow,

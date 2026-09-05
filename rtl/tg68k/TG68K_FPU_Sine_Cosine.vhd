@@ -246,7 +246,7 @@ begin
 				special_value => intermediate_special,
 				rounding_precision => rounding_precision,
 				rounding_mode => rounding_mode,
-				single_extended_range => '0',
+				extended_exponent_range => '0',
 				result => rounded_result,
 				inexact => rounded_inexact,
 				overflow => rounded_overflow,

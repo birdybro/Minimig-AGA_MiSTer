@@ -32,7 +32,7 @@ begin
 			special_value => special_value,
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
-			single_extended_range => single_extended_range,
+			extended_exponent_range => single_extended_range,
 			result => result,
 			inexact => inexact,
 			overflow => overflow,
@@ -182,6 +182,10 @@ begin
 			x"8000000000000000" & "000", FPU_RESET_NAN,
 			FPU_PRECISION_SINGLE, FPU_ROUND_NEAREST,
 			x"7FFF8000000000000000", '1', '1', '0', '0', '1');
+		check_round(FPU_CLASS_NORMAL, '0', 200,
+			x"8000000000000000" & "000", FPU_RESET_NAN,
+			FPU_PRECISION_DOUBLE, FPU_ROUND_NEAREST,
+			x"40C78000000000000000", '0', '0', '0', '0', '1');
 
 		check_round(FPU_CLASS_NORMAL, '0', 128,
 			x"8000000000000000" & "000", FPU_RESET_NAN,

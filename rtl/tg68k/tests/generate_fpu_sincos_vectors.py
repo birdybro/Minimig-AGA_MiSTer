@@ -116,7 +116,7 @@ begin
             special_value => cosine_round_input.special,
             rounding_precision => rounding_precision,
             rounding_mode => rounding_mode,
-            single_extended_range => '0',
+            extended_exponent_range => '0',
             result => cosine_result,
             inexact => open,
             overflow => open,

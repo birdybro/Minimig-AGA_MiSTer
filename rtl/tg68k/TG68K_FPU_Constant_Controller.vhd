@@ -15,6 +15,9 @@ use ieee.numeric_std.all;
 use work.TG68K_FPU_Pack.all;
 
 entity TG68K_FPU_Constant_Controller is
+	generic(
+		INCLUDE_ROUNDING_STAGE : boolean := true
+	);
 	port(
 		clk : in std_logic;
 		nReset : in std_logic;
@@ -22,6 +25,11 @@ entity TG68K_FPU_Constant_Controller is
 		rom_offset : in std_logic_vector(5 downto 0);
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
+		external_rounded_result : in fpu_extended_t := (others => '0');
+		external_rounded_inexact : in std_logic := '0';
+		round_input : out fpu_round_input_t;
+		rounding_precision_out : out fpu_rounding_precision_t;
+		rounding_mode_out : out fpu_rounding_mode_t;
 
 		fp_register_write : out std_logic;
 		fp_register_write_data : out fpu_extended_t;
@@ -69,21 +77,15 @@ architecture rtl of TG68K_FPU_Constant_Controller is
 		others => (others => '0')
 	);
 
-	function or_reduce(value : unsigned) return std_logic is
-		variable reduced : std_logic := '0';
-	begin
-		for index in value'range loop
-			reduced := reduced or value(index);
-		end loop;
-		return reduced;
-	end function;
-
 	signal state : controller_state_t := IDLE;
 	signal precision_latched : fpu_rounding_precision_t := FPU_PRECISION_EXTENDED;
 	signal mode_latched : fpu_rounding_mode_t := FPU_ROUND_NEAREST;
 	signal rom_word : constant_word_t := (others => '0');
 	signal rom_value : fpu_extended_t;
 	signal rom_tail : constant_tail_t;
+	signal constant_class : fpu_data_class_t;
+	signal constant_exponent : signed(16 downto 0);
+	signal exact_significand : unsigned(66 downto 0);
 	signal rounded_result : fpu_extended_t;
 	signal rounded_inexact : std_logic;
 	attribute ramstyle : string;
@@ -94,6 +96,14 @@ begin
 		TAIL_BELOW_LSB when TAIL_BELOW_LSB_BITS,
 		TAIL_ABOVE_LSB when TAIL_ABOVE_LSB_BITS,
 		TAIL_EXACT when others;
+	constant_class <= fpu_classify(rom_value);
+	round_input.data_class <= constant_class;
+	round_input.sign <= rom_value(79);
+	round_input.exponent <= constant_exponent;
+	round_input.significand <= exact_significand;
+	round_input.special <= rom_value;
+	rounding_precision_out <= precision_latched;
+	rounding_mode_out <= mode_latched;
 	read_constant : process(clk)
 	begin
 		if rising_edge(clk) then
@@ -101,82 +111,53 @@ begin
 		end if;
 	end process;
 
-	round_constant : process(rom_value, rom_tail, precision_latched, mode_latched)
-		variable exact_significand : unsigned(66 downto 0);
-		variable retained_significand : unsigned(63 downto 0);
-		variable rounded_sum : unsigned(64 downto 0);
-		variable result_value : fpu_extended_t;
-		variable discarded : std_logic;
-		variable guard : std_logic;
-		variable lower_discarded : std_logic;
-		variable retained_lsb : std_logic;
-		variable increment : boolean;
+	prepare_constant : process(rom_value, rom_tail, constant_class)
+		variable prepared_significand : unsigned(66 downto 0);
+		variable exponent_value : integer range -16383 to 16383;
 	begin
-		exact_significand := shift_left(resize(unsigned(
+		prepared_significand := shift_left(resize(unsigned(
 			rom_value(63 downto 0)), 67), 3);
 		case rom_tail is
 			when TAIL_BELOW_LSB =>
-				exact_significand := shift_left(resize(unsigned(
+				prepared_significand := shift_left(resize(unsigned(
 					rom_value(63 downto 0)) - 1, 67), 3);
-				exact_significand(2 downto 0) := "101";
-			when TAIL_ABOVE_LSB => exact_significand(0) := '1';
+				prepared_significand(2 downto 0) := "101";
+			when TAIL_ABOVE_LSB => prepared_significand(0) := '1';
 			when others => null;
 		end case;
-
-		retained_significand := exact_significand(66 downto 3);
-		case precision_latched is
-			when FPU_PRECISION_SINGLE =>
-				discarded := or_reduce(exact_significand(42 downto 0));
-				guard := exact_significand(42);
-				lower_discarded := or_reduce(exact_significand(41 downto 0));
-				retained_lsb := exact_significand(43);
-				retained_significand(39 downto 0) := (others => '0');
-			when FPU_PRECISION_DOUBLE =>
-				discarded := or_reduce(exact_significand(13 downto 0));
-				guard := exact_significand(13);
-				lower_discarded := or_reduce(exact_significand(12 downto 0));
-				retained_lsb := exact_significand(14);
-				retained_significand(10 downto 0) := (others => '0');
-			when others =>
-				discarded := or_reduce(exact_significand(2 downto 0));
-				guard := exact_significand(2);
-				lower_discarded := or_reduce(exact_significand(1 downto 0));
-				retained_lsb := exact_significand(3);
-		end case;
-
-		case mode_latched is
-			when FPU_ROUND_NEAREST =>
-				increment := guard = '1' and (lower_discarded = '1' or
-					retained_lsb = '1');
-			when FPU_ROUND_PLUS_INFINITY => increment := discarded = '1';
-			when others => increment := false;
-		end case;
-
-		rounded_sum := resize(retained_significand, 65);
-		if increment then
-			case precision_latched is
-				when FPU_PRECISION_SINGLE =>
-					rounded_sum := rounded_sum + shift_left(to_unsigned(1, 65), 40);
-				when FPU_PRECISION_DOUBLE =>
-					rounded_sum := rounded_sum + shift_left(to_unsigned(1, 65), 11);
-				when others => rounded_sum := rounded_sum + 1;
-			end case;
-		end if;
-
-		result_value := rom_value;
-		if rom_value(78 downto 0) = (78 downto 0 => '0') then
-			result_value := (others => '0');
-			discarded := '0';
-		elsif rounded_sum(64) = '1' then
-			result_value(78 downto 64) := std_logic_vector(
-				unsigned(rom_value(78 downto 64)) + 1);
-			result_value(63 downto 0) := std_logic_vector(rounded_sum(64 downto 1));
+		exact_significand <= prepared_significand;
+		if constant_class = FPU_CLASS_NORMAL then
+			exponent_value := to_integer(unsigned(rom_value(78 downto 64))) -
+				FPU_EXTENDED_EXPONENT_BIAS;
 		else
-			result_value(63 downto 0) := std_logic_vector(rounded_sum(63 downto 0));
+			exponent_value := 0;
 		end if;
-		rounded_result <= result_value;
-		rounded_inexact <= discarded;
+		constant_exponent <= to_signed(exponent_value, 17);
 	end process;
+
+	with_rounding : if INCLUDE_ROUNDING_STAGE generate
+		rounder : entity work.TG68K_FPU_Round
+			port map(
+				input_class => constant_class,
+				input_sign => rom_value(79),
+				input_exponent => constant_exponent,
+				input_significand => exact_significand,
+				special_value => rom_value,
+				rounding_precision => precision_latched,
+				rounding_mode => mode_latched,
+				extended_exponent_range => '1',
+				result => rounded_result,
+				inexact => rounded_inexact,
+				overflow => open,
+				underflow => open,
+				signaling_nan => open
+			);
+	end generate;
+
+	without_rounding : if not INCLUDE_ROUNDING_STAGE generate
+		rounded_result <= external_rounded_result;
+		rounded_inexact <= external_rounded_inexact;
+	end generate;
 
 	outputs : process(state, rounded_result, rounded_inexact)
 		variable status : std_logic_vector(7 downto 0);

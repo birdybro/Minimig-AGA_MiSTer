@@ -335,7 +335,7 @@ architecture rtl of TG68K_FPU_System is
 	signal shared_round_input : fpu_round_input_t;
 	signal shared_rounding_precision : fpu_rounding_precision_t;
 	signal shared_rounding_mode : fpu_rounding_mode_t;
-	signal shared_round_single_extended_range : std_logic;
+	signal shared_round_extended_exponent_range : std_logic;
 	signal shared_rounded_result : fpu_extended_t;
 	signal shared_rounded_inexact : std_logic;
 	signal shared_rounded_overflow : std_logic;
@@ -381,6 +381,9 @@ architecture rtl of TG68K_FPU_System is
 	signal constant_exception_status : std_logic_vector(7 downto 0);
 	signal constant_busy : std_logic;
 	signal constant_done : std_logic;
+	signal constant_round_input : fpu_round_input_t;
+	signal constant_rounding_precision : fpu_rounding_precision_t;
+	signal constant_rounding_mode : fpu_rounding_mode_t;
 
 	signal state_frame_start : std_logic;
 	signal state_frame_busy : std_logic;
@@ -476,12 +479,16 @@ begin
 		);
 
 	shared_round_input <= move_round_input when move_busy = '1' else
+		constant_round_input when constant_busy = '1' else
 		binary_round_input;
 	shared_rounding_precision <= move_rounding_precision when
-		move_busy = '1' else binary_rounding_precision;
+		move_busy = '1' else constant_rounding_precision when
+		constant_busy = '1' else binary_rounding_precision;
 	shared_rounding_mode <= move_rounding_mode when move_busy = '1' else
+		constant_rounding_mode when constant_busy = '1' else
 		binary_rounding_mode;
-	shared_round_single_extended_range <= '0' when move_busy = '1' else
+	shared_round_extended_exponent_range <= '0' when move_busy = '1' else
+		'1' when constant_busy = '1' else
 		binary_round_single_extended_range;
 
 	shared_rounder : entity work.TG68K_FPU_Round
@@ -493,7 +500,7 @@ begin
 			special_value => shared_round_input.special,
 			rounding_precision => shared_rounding_precision,
 			rounding_mode => shared_rounding_mode,
-			single_extended_range => shared_round_single_extended_range,
+			extended_exponent_range => shared_round_extended_exponent_range,
 			result => shared_rounded_result,
 			inexact => shared_rounded_inexact,
 			overflow => shared_rounded_overflow,
@@ -1203,6 +1210,9 @@ begin
 		);
 
 	constant_controller : entity work.TG68K_FPU_Constant_Controller
+		generic map(
+			INCLUDE_ROUNDING_STAGE => false
+		)
 		port map(
 			clk => clk,
 			nReset => execution_reset,
@@ -1210,6 +1220,11 @@ begin
 			rom_offset => command_word(5 downto 0),
 			rounding_precision => rounding_precision,
 			rounding_mode => rounding_mode,
+			external_rounded_result => shared_rounded_result,
+			external_rounded_inexact => shared_rounded_inexact,
+			round_input => constant_round_input,
+			rounding_precision_out => constant_rounding_precision,
+			rounding_mode_out => constant_rounding_mode,
 			fp_register_write => constant_fp_write,
 			fp_register_write_data => constant_fp_write_data,
 			operation_status_write => constant_status_write,

@@ -23,7 +23,7 @@ entity TG68K_FPU_Round is
 		special_value : in fpu_extended_t;
 		rounding_precision : in fpu_rounding_precision_t;
 		rounding_mode : in fpu_rounding_mode_t;
-		single_extended_range : in std_logic := '0';
+		extended_exponent_range : in std_logic := '0';
 
 		result : out fpu_extended_t;
 		inexact : out std_logic;
@@ -77,7 +77,7 @@ architecture rtl of TG68K_FPU_Round is
 begin
 	round_result : process(input_class, input_sign, input_exponent,
 		input_significand, special_value, rounding_precision, rounding_mode,
-		single_extended_range)
+		extended_exponent_range)
 		variable rounded_result : fpu_extended_t;
 		variable working_significand : unsigned(66 downto 0);
 		variable extended_sum : unsigned(67 downto 0);
@@ -95,7 +95,7 @@ begin
 		variable overflow_to_infinity : boolean;
 		variable overflow_detected : boolean;
 		variable underflow_detected : boolean;
-		variable use_single_extended_range : boolean;
+		variable use_extended_exponent_range : boolean;
 		variable biased_exponent : natural range 0 to 32767;
 	begin
 		rounded_result := (others => '0');
@@ -109,14 +109,13 @@ begin
 		overflow_to_infinity := false;
 		overflow_detected := false;
 		underflow_detected := false;
-		use_single_extended_range := rounding_precision = FPU_PRECISION_SINGLE and
-			single_extended_range = '1';
+		use_extended_exponent_range := extended_exponent_range = '1';
 		biased_exponent := 0;
 
 		case rounding_precision is
 			when FPU_PRECISION_SINGLE =>
 				precision_bits := 24;
-				if use_single_extended_range then
+				if use_extended_exponent_range then
 					minimum_exponent := -16383;
 					maximum_exponent := 16383;
 					if exponent_value < minimum_exponent then
@@ -128,8 +127,16 @@ begin
 				end if;
 			when FPU_PRECISION_DOUBLE =>
 				precision_bits := 53;
-				minimum_exponent := -1022;
-				maximum_exponent := 1023;
+				if use_extended_exponent_range then
+					minimum_exponent := -16383;
+					maximum_exponent := 16383;
+					if exponent_value < minimum_exponent then
+						precision_bits := 64;
+					end if;
+				else
+					minimum_exponent := -1022;
+					maximum_exponent := 1023;
+				end if;
 			when others =>
 				precision_bits := 64;
 				minimum_exponent := -16383;
@@ -157,7 +164,7 @@ begin
 				else
 					if rounding_precision = FPU_PRECISION_EXTENDED or
 							rounding_precision = FPU_PRECISION_RESERVED or
-							use_single_extended_range then
+							use_extended_exponent_range then
 						underflow_detected := exponent_value < minimum_exponent;
 					else
 						underflow_detected := exponent_value <= minimum_exponent;
@@ -213,7 +220,7 @@ begin
 						end if;
 					end loop;
 
-					if not use_single_extended_range and
+					if not use_extended_exponent_range and
 							rounding_precision /= FPU_PRECISION_EXTENDED and
 							rounding_precision /= FPU_PRECISION_RESERVED and
 							working_significand /= 0 and
@@ -246,7 +253,7 @@ begin
 								FPU_EXTENDED_EXPONENT_BIAS;
 							rounded_result(78 downto 64) := std_logic_vector(
 								to_unsigned(biased_exponent, 15));
-							if use_single_extended_range then
+							if use_extended_exponent_range then
 								rounded_result(63 downto 0) := (others => '1');
 							else
 								for index in 0 to 63 loop
