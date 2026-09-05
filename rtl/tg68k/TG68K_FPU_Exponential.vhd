@@ -83,6 +83,8 @@ architecture rtl of TG68K_FPU_Exponential is
 			MULTIPLY_LOG2, START_CORDIC, WAIT_CORDIC,
 			FORM_CORDIC_SUM, FORM_CORDIC_DIFFERENCE,
 			COMPLETE_EXPONENTIAL, COMPLETE_HYPERBOLIC,
+			FORM_HYPERBOLIC_RESULT, FORM_TANGENT_NUMERATOR,
+			FORM_TANGENT_DENOMINATOR,
 			ALIGN_HYPERBOLIC, NORMALIZE_HYPERBOLIC_TANGENT,
 			DIVIDE_HYPERBOLIC_TANGENT, ALIGN_SUBTRACTION,
 			NORMALIZE_SUBTRACTION, FORMAT_NORMALIZED_RESULT,
@@ -276,7 +278,7 @@ begin
 	end process;
 
 	value_arithmetic : process(state, value_register, secondary_value_register,
-		cordic_x_result, cordic_y_result)
+		cordic_x_result, cordic_y_result, hyperbolic_cosine_latched)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable left_value : unsigned(CORDIC_WIDTH downto 0);
 		variable right_value : unsigned(CORDIC_WIDTH downto 0);
@@ -290,6 +292,14 @@ begin
 				left_value := resize(unsigned(cordic_x_result), left_value'length);
 				right_value := resize(unsigned(cordic_y_result), right_value'length);
 				if state = FORM_CORDIC_DIFFERENCE then
+					subtract_value := '1';
+				end if;
+			when FORM_HYPERBOLIC_RESULT | FORM_TANGENT_NUMERATOR |
+					FORM_TANGENT_DENOMINATOR =>
+				left_value := value_register;
+				right_value := secondary_value_register;
+				if state /= FORM_TANGENT_DENOMINATOR and
+						hyperbolic_cosine_latched = '0' then
 					subtract_value := '1';
 				end if;
 			when NORMALIZE_HYPERBOLIC_TANGENT =>
@@ -381,28 +391,24 @@ begin
 				constant reciprocal_exponential : in unsigned(CORDIC_WIDTH downto 0);
 				constant binary_exponent : in signed(16 downto 0);
 				constant prior_sticky : in std_logic) is
-			variable difference : unsigned(CORDIC_WIDTH downto 0);
-			variable result_exponent_value : signed(16 downto 0);
 			variable exponent_integer : integer range 0 to 65535;
 		begin
 			exponent_integer := to_integer(binary_exponent);
 			if exponent_integer > CORDIC_WIDTH / 2 then
-				difference := positive_exponential - 1;
-				complete_subtraction(difference, binary_exponent - 1,
-					source_sign_latched, '1');
+				value_register <= positive_exponential;
+				secondary_value_register <= to_unsigned(1,
+					secondary_value_register'length);
+				subtraction_exponent <= binary_exponent - 1;
+				subtraction_sticky <= '1';
+				intermediate_sign <= source_sign_latched;
+				state <= FORM_HYPERBOLIC_RESULT;
 			elsif exponent_integer = 0 then
-				difference := positive_exponential - reciprocal_exponential;
-				result_exponent_value := binary_exponent - 1;
-				if difference(FRACTION_BITS) = '1' then
-					complete_subtraction(difference, result_exponent_value,
-						source_sign_latched, prior_sticky);
-				else
-					value_register <= difference;
-					subtraction_exponent <= result_exponent_value;
-					subtraction_sticky <= prior_sticky;
-					intermediate_sign <= source_sign_latched;
-					state <= NORMALIZE_SUBTRACTION;
-				end if;
+				value_register <= positive_exponential;
+				secondary_value_register <= reciprocal_exponential;
+				subtraction_exponent <= binary_exponent - 1;
+				subtraction_sticky <= prior_sticky;
+				intermediate_sign <= source_sign_latched;
+				state <= FORM_HYPERBOLIC_RESULT;
 			else
 				value_register <= positive_exponential;
 				secondary_value_register <= reciprocal_exponential;
@@ -439,7 +445,6 @@ begin
 				constant reciprocal_exponential : in unsigned(CORDIC_WIDTH downto 0);
 				constant binary_exponent : in signed(16 downto 0);
 				constant prior_sticky : in std_logic) is
-			variable sum : unsigned(CORDIC_WIDTH downto 0);
 			variable exponent_integer : integer range 0 to 65535;
 		begin
 			exponent_integer := to_integer(binary_exponent);
@@ -447,9 +452,11 @@ begin
 				complete_hyperbolic_sum(positive_exponential,
 					binary_exponent - 1, '1');
 			elsif exponent_integer = 0 then
-				sum := positive_exponential + reciprocal_exponential;
-				complete_hyperbolic_sum(sum, binary_exponent - 1,
-					prior_sticky);
+				value_register <= positive_exponential;
+				secondary_value_register <= reciprocal_exponential;
+				subtraction_exponent <= binary_exponent - 1;
+				subtraction_sticky <= prior_sticky;
+				state <= FORM_HYPERBOLIC_RESULT;
 			else
 				value_register <= positive_exponential;
 				secondary_value_register <= reciprocal_exponential;
@@ -478,8 +485,6 @@ begin
 				constant reciprocal_exponential : in unsigned(CORDIC_WIDTH downto 0);
 				constant binary_exponent : in signed(16 downto 0);
 				constant prior_sticky : in std_logic) is
-			variable numerator : unsigned(CORDIC_WIDTH downto 0);
-			variable denominator : unsigned(CORDIC_WIDTH downto 0);
 			variable exponent_integer : integer range 0 to 65535;
 		begin
 			exponent_integer := to_integer(binary_exponent);
@@ -490,10 +495,11 @@ begin
 				intermediate_significand <= (others => '1');
 				state <= COMPLETE;
 			elsif exponent_integer = 0 then
-				numerator := positive_exponential - reciprocal_exponential;
-				denominator := positive_exponential + reciprocal_exponential;
-				begin_hyperbolic_tangent_division(numerator, denominator,
-					prior_sticky);
+				value_register <= positive_exponential;
+				secondary_value_register <= reciprocal_exponential;
+				subtraction_sticky <= prior_sticky;
+				intermediate_sign <= source_sign_latched;
+				state <= FORM_TANGENT_NUMERATOR;
 			else
 				value_register <= positive_exponential;
 				secondary_value_register <= reciprocal_exponential;
@@ -1423,6 +1429,33 @@ begin
 								subtraction_sticky);
 						end if;
 
+					when FORM_HYPERBOLIC_RESULT =>
+						subtraction_difference := value_arithmetic_result(
+							CORDIC_WIDTH downto 0);
+						if hyperbolic_cosine_latched = '1' then
+							complete_hyperbolic_sum(subtraction_difference,
+								subtraction_exponent, subtraction_sticky);
+						elsif subtraction_difference(FRACTION_BITS) = '1' then
+							complete_subtraction(subtraction_difference,
+								subtraction_exponent, intermediate_sign,
+								subtraction_sticky);
+						else
+							value_register <= subtraction_difference;
+							state <= NORMALIZE_SUBTRACTION;
+						end if;
+
+					when FORM_TANGENT_NUMERATOR =>
+						-- A nonnegative difference cannot set the adder carry bit.
+						cordic_source_z <= signed(value_arithmetic_result(
+							CORDIC_WIDTH - 1 downto 0));
+						state <= FORM_TANGENT_DENOMINATOR;
+
+					when FORM_TANGENT_DENOMINATOR =>
+						begin_hyperbolic_tangent_division(resize(unsigned(
+							cordic_source_z), CORDIC_WIDTH + 1),
+							value_arithmetic_result(CORDIC_WIDTH downto 0),
+							subtraction_sticky);
+
 					when ALIGN_HYPERBOLIC =>
 						next_subtraction_one := shift_right(
 							secondary_value_register, 1);
@@ -1434,31 +1467,12 @@ begin
 									next_subtraction_sticky = '1' then
 								next_subtraction_one := next_subtraction_one + 1;
 							end if;
-							if hyperbolic_cosine_latched = '1' then
-								subtraction_difference := value_register +
-									next_subtraction_one;
-								complete_hyperbolic_sum(subtraction_difference,
-									subtraction_exponent, next_subtraction_sticky);
-							elsif hyperbolic_tangent_latched = '1' then
-								subtraction_difference := value_register -
-									next_subtraction_one;
-								next_subtraction := value_register +
-									next_subtraction_one;
-								begin_hyperbolic_tangent_division(
-									subtraction_difference, next_subtraction,
-									next_subtraction_sticky);
+							secondary_value_register <= next_subtraction_one;
+							subtraction_sticky <= next_subtraction_sticky;
+							if hyperbolic_tangent_latched = '1' then
+								state <= FORM_TANGENT_NUMERATOR;
 							else
-								subtraction_difference := value_register -
-									next_subtraction_one;
-								if subtraction_difference(FRACTION_BITS) = '1' then
-									complete_subtraction(subtraction_difference,
-										subtraction_exponent, intermediate_sign,
-										next_subtraction_sticky);
-								else
-									value_register <= subtraction_difference;
-									subtraction_sticky <= next_subtraction_sticky;
-									state <= NORMALIZE_SUBTRACTION;
-								end if;
+								state <= FORM_HYPERBOLIC_RESULT;
 							end if;
 						else
 							secondary_value_register <= next_subtraction_one;
