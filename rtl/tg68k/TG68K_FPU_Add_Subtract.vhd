@@ -123,6 +123,7 @@ architecture rtl of TG68K_FPU_Add_Subtract is
 	signal alignment_amount : natural range 0 to 8;
 	signal alignment_value : arithmetic_significand_t;
 	signal aligned_value : arithmetic_significand_t;
+	signal significand_arithmetic_result : unsigned(67 downto 0);
 
 	signal intermediate_class : fpu_data_class_t := FPU_CLASS_ZERO;
 	signal intermediate_sign : std_logic := '0';
@@ -158,6 +159,34 @@ begin
 		align_source_operand = '1' else destination_significand_register;
 	aligned_value <= shift_right_sticky_chunk(alignment_value,
 		alignment_amount);
+
+	significand_arithmetic : process(source_significand_register,
+			destination_significand_register, source_arithmetic_sign,
+			destination_sign)
+		variable left_value : unsigned(67 downto 0);
+		variable right_value : unsigned(67 downto 0);
+		variable subtract_value : std_logic;
+	begin
+		left_value := resize(source_significand_register, left_value'length);
+		right_value := resize(destination_significand_register,
+			right_value'length);
+		subtract_value := '0';
+		if source_arithmetic_sign /= destination_sign then
+			subtract_value := '1';
+			if destination_significand_register >
+					source_significand_register then
+				left_value := resize(destination_significand_register,
+					left_value'length);
+				right_value := resize(source_significand_register,
+					right_value'length);
+			end if;
+		end if;
+		if subtract_value = '1' then
+			significand_arithmetic_result <= left_value - right_value;
+		else
+			significand_arithmetic_result <= left_value + right_value;
+		end if;
+	end process;
 
 	base_status : process(compare_latched, signaling_nan_detected,
 			operand_error_detected)
@@ -540,8 +569,7 @@ begin
 						magnitude := (others => '0');
 						result_exponent := common_exponent_register;
 						if source_arithmetic_sign = destination_sign then
-							sum := resize(source_significand_register, 68) +
-								resize(destination_significand_register, 68);
+							sum := significand_arithmetic_result;
 							if sum(67) = '1' then
 								magnitude := sum(67 downto 1);
 								magnitude(0) := magnitude(0) or sum(0);
@@ -552,13 +580,11 @@ begin
 							result_sign := destination_sign;
 						elsif destination_significand_register >
 								source_significand_register then
-							magnitude := destination_significand_register -
-								source_significand_register;
+							magnitude := significand_arithmetic_result(66 downto 0);
 							result_sign := destination_sign;
 						elsif source_significand_register >
 								destination_significand_register then
-							magnitude := source_significand_register -
-								destination_significand_register;
+							magnitude := significand_arithmetic_result(66 downto 0);
 							result_sign := source_arithmetic_sign;
 						else
 							if mode_latched = FPU_ROUND_MINUS_INFINITY then
