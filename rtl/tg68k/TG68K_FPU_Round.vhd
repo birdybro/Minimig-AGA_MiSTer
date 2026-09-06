@@ -79,7 +79,7 @@ begin
 		variable least_retained_bit : natural range 3 to 43;
 		variable rounding_bit : natural range 3 to 67;
 		variable clearing_bit : natural range 2 to 67;
-		variable denormal_shift : natural range 0 to 65535;
+		variable denormal_shift : natural range 0 to 67;
 		variable discarded : std_logic;
 		variable guard : std_logic;
 		variable lower_discarded : std_logic;
@@ -169,7 +169,11 @@ begin
 					end if;
 
 					if exponent_value < minimum_exponent then
-						denormal_shift := minimum_exponent - exponent_value;
+						if exponent_value <= minimum_exponent - 67 then
+							denormal_shift := 67;
+						else
+							denormal_shift := minimum_exponent - exponent_value;
+						end if;
 						if not use_extended_exponent_range and
 								(rounding_precision = FPU_PRECISION_SINGLE or
 								 rounding_precision = FPU_PRECISION_DOUBLE) then
