@@ -277,6 +277,20 @@ begin
 		scale_arithmetic_result <= left_value + right_value;
 	end process;
 
+	scale_accumulator_update : process(clk)
+	begin
+		if rising_edge(clk) then
+			if nReset = '0' or
+					(state /= SCALE_E_TO_BASE_TWO and
+					state /= SCALE_TEN_TO_BASE_TWO) then
+				scale_accumulator <= (others => '0');
+			else
+				scale_accumulator <= shift_right(scale_arithmetic_result(
+					FIXED_WIDTH + 2 downto 0), 1);
+			end if;
+		end if;
+	end process;
+
 	value_arithmetic : process(state, value_register, secondary_value_register,
 		cordic_x_result, cordic_y_result, hyperbolic_cosine_latched)
 		variable shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
@@ -656,11 +670,9 @@ begin
 					hyperbolic_cosine_latched = '1' or
 					hyperbolic_tangent_latched = '1' or
 					exponential_base_latched = FPU_EXP_BASE_E then
-				scale_accumulator <= (others => '0');
 				scale_index <= 0;
 				state <= SCALE_E_TO_BASE_TWO;
 			elsif exponential_base_latched = FPU_EXP_BASE_TEN then
-				scale_accumulator <= (others => '0');
 				scale_index <= 0;
 				state <= SCALE_TEN_TO_BASE_TWO;
 			else
@@ -882,7 +894,6 @@ begin
 				input_alignment_remaining <= 0;
 				input_alignment_left <= '0';
 				exponential_base_latched <= FPU_EXP_BASE_TWO;
-				scale_accumulator <= (others => '0');
 				scale_index <= 0;
 				source_sign_latched <= '0';
 				subtract_one_latched <= '0';
@@ -1334,7 +1345,6 @@ begin
 					when SCALE_E_TO_BASE_TWO | SCALE_TEN_TO_BASE_TWO =>
 						next_scale := shift_right(scale_arithmetic_result(
 							FIXED_WIDTH + 2 downto 0), 1);
-						scale_accumulator <= next_scale;
 						if scale_index = FIXED_WIDTH - 1 then
 							if hyperbolic_sine_latched = '1' or
 									hyperbolic_cosine_latched = '1' or
