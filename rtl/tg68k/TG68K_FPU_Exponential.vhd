@@ -102,6 +102,14 @@ architecture rtl of TG68K_FPU_Exponential is
 		unsigned'("11" & x"5269E12F346E2BF924AFDBFD36BF");
 	constant CORDIC_INVERSE_GAIN : cordic_value_t :=
 		signed'(x"1351E87200EEC232964A4EC8F");
+	constant DIRECT_ZERO : std_logic_vector(2 downto 0) := "000";
+	constant DIRECT_ONE : std_logic_vector(2 downto 0) := "001";
+	constant DIRECT_ONES : std_logic_vector(2 downto 0) := "010";
+	constant DIRECT_ONE_STICKY : std_logic_vector(2 downto 0) := "011";
+	constant DIRECT_SOURCE_PLUS_ONE : std_logic_vector(2 downto 0) := "100";
+	constant DIRECT_SOURCE_MINUS_ONE : std_logic_vector(2 downto 0) := "101";
+	constant DIRECT_SOURCE_MINUS_ONE_SHIFT : std_logic_vector(2 downto 0) :=
+		"110";
 
 	function highest_set_bit(value : unsigned) return natural is
 	begin
@@ -181,7 +189,8 @@ architecture rtl of TG68K_FPU_Exponential is
 	signal intermediate_sign : std_logic := '0';
 	signal intermediate_exponent : signed(16 downto 0) := (others => '0');
 	signal intermediate_significand : fpu_significand_grs_t := (others => '0');
-	signal direct_significand : fpu_significand_grs_t := (others => '0');
+	signal direct_significand_kind : std_logic_vector(2 downto 0) := DIRECT_ZERO;
+	signal direct_significand_value : fpu_significand_grs_t;
 	signal use_iterative_significand : std_logic := '0';
 	signal selected_significand : fpu_significand_grs_t;
 	signal intermediate_special : fpu_extended_t := (others => '0');
@@ -214,10 +223,35 @@ begin
 	round_input.sign <= intermediate_sign;
 	round_input.exponent <= intermediate_exponent;
 	selected_significand <= intermediate_significand when
-		use_iterative_significand = '1' else direct_significand;
+		use_iterative_significand = '1' else direct_significand_value;
 	round_input.significand <= selected_significand;
 	round_input.special <= intermediate_special;
 	base_exception_status <= base_status;
+
+	direct_result : process(direct_significand_kind,
+			series_source_significand)
+		variable source_value : fpu_significand_grs_t;
+	begin
+		source_value := shift_left(resize(series_source_significand,
+			source_value'length), 3);
+		case direct_significand_kind is
+			when DIRECT_ONE =>
+				direct_significand_value <= (66 => '1', others => '0');
+			when DIRECT_ONES =>
+				direct_significand_value <= (others => '1');
+			when DIRECT_ONE_STICKY =>
+				direct_significand_value <=
+					(66 => '1', 0 => '1', others => '0');
+			when DIRECT_SOURCE_PLUS_ONE =>
+				direct_significand_value <= source_value + 1;
+			when DIRECT_SOURCE_MINUS_ONE =>
+				direct_significand_value <= source_value - 1;
+			when DIRECT_SOURCE_MINUS_ONE_SHIFT =>
+				direct_significand_value <= shift_left(source_value - 1, 1);
+			when others =>
+				direct_significand_value <= (others => '0');
+		end case;
+	end process;
 
 	series_arithmetic : process(state, series_product, series_multiplier,
 		square_multiplicand, cube_multiplicand, cube_accumulator)
@@ -874,7 +908,6 @@ begin
 		variable tangent_shifted_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable tangent_next_remainder : unsigned(CORDIC_WIDTH downto 0);
 		variable tangent_next_quotient : unsigned(65 downto 0);
-		variable tiny_significand : fpu_significand_grs_t;
 		variable serial_term_pair : unsigned(1 downto 0);
 		variable serial_accumulator : unsigned(SERIES_WIDTH downto 0);
 		variable serial_product : unsigned(128 downto 0);
@@ -930,7 +963,7 @@ begin
 				intermediate_sign <= '0';
 				intermediate_exponent <= (others => '0');
 				intermediate_significand <= (others => '0');
-				direct_significand <= (others => '0');
+				direct_significand_kind <= DIRECT_ZERO;
 				use_iterative_significand <= '0';
 				intermediate_special <= (others => '0');
 				base_status <= (others => '0');
@@ -955,7 +988,7 @@ begin
 							intermediate_sign <= '0';
 							intermediate_exponent <= (others => '0');
 							intermediate_significand <= (others => '0');
-							direct_significand <= (others => '0');
+							direct_significand_kind <= DIRECT_ZERO;
 							use_iterative_significand <= '0';
 							intermediate_special <= (others => '0');
 							base_status <= (others => '0');
@@ -977,16 +1010,14 @@ begin
 									intermediate_sign <= source(79);
 								else
 									intermediate_class <= FPU_CLASS_NORMAL;
-									direct_significand <=
-										(66 => '1', others => '0');
+									direct_significand_kind <= DIRECT_ONE;
 								end if;
 								state <= COMPLETE;
 							elsif source_class = FPU_CLASS_INFINITY then
 								if hyperbolic_tangent = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= source(79);
-									direct_significand <=
-										(66 => '1', others => '0');
+									direct_significand_kind <= DIRECT_ONE;
 								elsif hyperbolic_cosine = '1' then
 									intermediate_class <= FPU_CLASS_INFINITY;
 								elsif hyperbolic_sine = '1' then
@@ -995,8 +1026,7 @@ begin
 								elsif subtract_one = '1' and source(79) = '1' then
 									intermediate_class <= FPU_CLASS_NORMAL;
 									intermediate_sign <= '1';
-									direct_significand <=
-										(66 => '1', others => '0');
+									direct_significand_kind <= DIRECT_ONE;
 								elsif source(79) = '1' then
 									intermediate_class <= FPU_CLASS_ZERO;
 								else
@@ -1011,27 +1041,27 @@ begin
 									normalization_shift);
 								source_exponent := source_exponent -
 									normalization_shift;
+								series_source_significand <= source_significand;
 								if hyperbolic_tangent = '1' and
 										source_exponent <= SERIES_CUBIC_MAX_EXPONENT then
 									base_status(1) <= '1';
 									if source_exponent <= TANH_TINY_MAX_EXPONENT then
-										tiny_significand := shift_left(resize(
-											source_significand, 67), 3) - 1;
 										intermediate_class <= FPU_CLASS_NORMAL;
 										intermediate_sign <= source(79);
-										if tiny_significand(66) = '0' then
+										if source_significand =
+												x"8000000000000000" then
 											intermediate_exponent <= to_signed(
 												source_exponent - 1, 17);
-											direct_significand <= shift_left(
-												tiny_significand, 1);
+											direct_significand_kind <=
+												DIRECT_SOURCE_MINUS_ONE_SHIFT;
 										else
 											intermediate_exponent <= to_signed(
 												source_exponent, 17);
-											direct_significand <= tiny_significand;
+											direct_significand_kind <=
+												DIRECT_SOURCE_MINUS_ONE;
 										end if;
 										state <= COMPLETE;
 									else
-										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
 										square_multiplicand <= source_significand;
@@ -1044,11 +1074,9 @@ begin
 									base_status(1) <= '1';
 									if source_exponent <= COSH_TINY_MAX_EXPONENT then
 										intermediate_class <= FPU_CLASS_NORMAL;
-										direct_significand <=
-											(66 => '1', 0 => '1', others => '0');
+										direct_significand_kind <= DIRECT_ONE_STICKY;
 										state <= COMPLETE;
 									else
-										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
 										square_multiplicand <= source_significand;
@@ -1061,37 +1089,35 @@ begin
 									base_status(1) <= '1';
 									if hyperbolic_sine = '1' and
 											source_exponent <= SINH_TINY_MAX_EXPONENT then
-										tiny_significand := shift_left(resize(
-											source_significand, 67), 3) + 1;
 										intermediate_class <= FPU_CLASS_NORMAL;
 										intermediate_sign <= source(79);
 										intermediate_exponent <= to_signed(
 											source_exponent, 17);
-										direct_significand <= tiny_significand;
+										direct_significand_kind <=
+											DIRECT_SOURCE_PLUS_ONE;
 										state <= COMPLETE;
 									elsif hyperbolic_sine = '0' and source_exponent < -67 then
-										tiny_significand := shift_left(resize(
-											source_significand, 67), 3);
-										if source(79) = '0' then
-											tiny_significand := tiny_significand + 1;
-										else
-											tiny_significand := tiny_significand - 1;
-										end if;
 										intermediate_class <= FPU_CLASS_NORMAL;
 										intermediate_sign <= source(79);
-										if tiny_significand(66) = '0' then
+										if source(79) = '0' then
+											intermediate_exponent <= to_signed(
+												source_exponent, 17);
+											direct_significand_kind <=
+												DIRECT_SOURCE_PLUS_ONE;
+										elsif source_significand =
+												x"8000000000000000" then
 											intermediate_exponent <= to_signed(
 												source_exponent - 1, 17);
-											direct_significand <= shift_left(
-												tiny_significand, 1);
+											direct_significand_kind <=
+												DIRECT_SOURCE_MINUS_ONE_SHIFT;
 										else
 											intermediate_exponent <= to_signed(
 												source_exponent, 17);
-											direct_significand <= tiny_significand;
+											direct_significand_kind <=
+												DIRECT_SOURCE_MINUS_ONE;
 										end if;
 										state <= COMPLETE;
 									else
-										series_source_significand <= source_significand;
 										series_exponent <= to_signed(source_exponent, 17);
 										series_multiplier <= (others => '0');
 										square_multiplicand <= source_significand;
@@ -1112,24 +1138,22 @@ begin
 										if hyperbolic_tangent = '1' then
 											intermediate_sign <= source(79);
 											intermediate_exponent <= to_signed(-1, 17);
-											direct_significand <= (others => '1');
+											direct_significand_kind <= DIRECT_ONES;
 										elsif hyperbolic_sine = '1' then
 											intermediate_sign <= source(79);
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand <=
-												(66 => '1', others => '0');
+											direct_significand_kind <= DIRECT_ONE;
 										elsif hyperbolic_cosine = '1' then
 											exponent_value := 65535;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand <=
-												(66 => '1', others => '0');
+											direct_significand_kind <= DIRECT_ONE;
 										elsif subtract_one = '1' and source(79) = '1' then
 											intermediate_sign <= '1';
 											intermediate_exponent <= to_signed(-1, 17);
-											direct_significand <= (others => '1');
+											direct_significand_kind <= DIRECT_ONES;
 										else
 											if source(79) = '1' then
 												exponent_value := -65536;
@@ -1138,8 +1162,7 @@ begin
 											end if;
 											intermediate_exponent <= to_signed(
 												exponent_value, 17);
-											direct_significand <=
-												(66 => '1', others => '0');
+											direct_significand_kind <= DIRECT_ONE;
 										end if;
 										state <= COMPLETE;
 									else
