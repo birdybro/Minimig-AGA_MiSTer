@@ -100,6 +100,8 @@ architecture rtl of TG68K_FPU_System is
 	constant BUSY_CONTEXT_ADDRESS_HIGH : natural := 1547;
 	constant BUSY_CONTEXT_ADDRESS_LOW : natural :=
 		fpu_busy_context_t'high - FPU_BUSY_CONTEXT_METADATA_BITS + 1;
+	constant BUSY_CONTEXT_METADATA_LOW : natural :=
+		fpu_busy_context_t'length - FPU_BUSY_CONTEXT_METADATA_STORAGE_BITS;
 
 	function move_byte_count(
 		format_value : fpu_operand_format_t;
@@ -409,7 +411,8 @@ architecture rtl of TG68K_FPU_System is
 	signal state_frame_restore_command : std_logic_vector(31 downto 0);
 	signal state_frame_restore_operand : fpu_extended_t;
 	signal state_frame_restore_busy_context : fpu_busy_context_t;
-	signal state_frame_busy_context : fpu_busy_context_t;
+	signal state_frame_busy_metadata : fpu_busy_context_metadata_t;
+	signal state_frame_busy_resume : fpu_busy_context_resume_t;
 	signal state_frame_restored_pending : std_logic;
 	signal suspended_operation : std_logic;
 	signal suspended_save : std_logic;
@@ -548,39 +551,46 @@ begin
 		command_condition_latched, exceptional_operand_latched,
 		move_saved_context, control_saved_context, movem_saved_context,
 		unary_saved_context, binary_saved_context)
-		variable frame_context : fpu_busy_context_t;
+		variable frame_metadata : fpu_busy_context_metadata_t;
+		variable frame_resume : fpu_busy_context_resume_t;
 	begin
-		frame_context := (others => '0');
-		frame_context(BUSY_CONTEXT_UNIT_HIGH downto BUSY_CONTEXT_UNIT_LOW) :=
+		frame_metadata := (others => '0');
+		frame_resume := (others => '0');
+		frame_metadata(BUSY_CONTEXT_UNIT_HIGH - BUSY_CONTEXT_METADATA_LOW downto
+			BUSY_CONTEXT_UNIT_LOW - BUSY_CONTEXT_METADATA_LOW) :=
 			suspended_unit;
-		frame_context(BUSY_CONTEXT_OPCODE_HIGH downto
-			BUSY_CONTEXT_OPCODE_LOW) :=
+		frame_metadata(BUSY_CONTEXT_OPCODE_HIGH - BUSY_CONTEXT_METADATA_LOW
+			downto BUSY_CONTEXT_OPCODE_LOW - BUSY_CONTEXT_METADATA_LOW) :=
 			issued_opcode_latched;
-		frame_context(BUSY_CONTEXT_COMMAND_HIGH downto
-			BUSY_CONTEXT_COMMAND_LOW) :=
+		frame_metadata(BUSY_CONTEXT_COMMAND_HIGH - BUSY_CONTEXT_METADATA_LOW
+			downto BUSY_CONTEXT_COMMAND_LOW - BUSY_CONTEXT_METADATA_LOW) :=
 			issued_command_latched;
-		frame_context(BUSY_CONTEXT_PENDING_BIT) := state_exception_pending;
-		frame_context(BUSY_CONTEXT_CONDITION_HIGH downto
-			BUSY_CONTEXT_CONDITION_LOW) := command_condition_latched;
-		frame_context(BUSY_CONTEXT_OPERAND_HIGH downto
-			BUSY_CONTEXT_OPERAND_LOW) :=
+		frame_metadata(BUSY_CONTEXT_PENDING_BIT - BUSY_CONTEXT_METADATA_LOW) :=
+			state_exception_pending;
+		frame_metadata(BUSY_CONTEXT_CONDITION_HIGH - BUSY_CONTEXT_METADATA_LOW
+			downto BUSY_CONTEXT_CONDITION_LOW - BUSY_CONTEXT_METADATA_LOW) :=
+			command_condition_latched;
+		frame_metadata(BUSY_CONTEXT_OPERAND_HIGH - BUSY_CONTEXT_METADATA_LOW
+			downto BUSY_CONTEXT_OPERAND_LOW - BUSY_CONTEXT_METADATA_LOW) :=
 			exceptional_operand_latched;
-		frame_context(BUSY_CONTEXT_ADDRESS_HIGH downto
-			BUSY_CONTEXT_ADDRESS_LOW) := issued_instruction_address_latched;
+		frame_metadata(BUSY_CONTEXT_ADDRESS_HIGH - BUSY_CONTEXT_METADATA_LOW
+			downto BUSY_CONTEXT_ADDRESS_LOW - BUSY_CONTEXT_METADATA_LOW) :=
+			issued_instruction_address_latched;
 		case suspended_unit is
 			when BUSY_UNIT_MOVE =>
-				frame_context(move_saved_context'range) := move_saved_context;
+				frame_resume(move_saved_context'range) := move_saved_context;
 			when BUSY_UNIT_CONTROL =>
-				frame_context(control_saved_context'range) := control_saved_context;
+				frame_resume(control_saved_context'range) := control_saved_context;
 			when BUSY_UNIT_MOVEM =>
-				frame_context(movem_saved_context'range) := movem_saved_context;
+				frame_resume(movem_saved_context'range) := movem_saved_context;
 			when BUSY_UNIT_UNARY =>
-				frame_context(unary_saved_context'range) := unary_saved_context;
+				frame_resume(unary_saved_context'range) := unary_saved_context;
 			when BUSY_UNIT_BINARY =>
-				frame_context(binary_saved_context'range) := binary_saved_context;
+				frame_resume(binary_saved_context'range) := binary_saved_context;
 			when others => null;
 		end case;
-		state_frame_busy_context <= frame_context;
+		state_frame_busy_metadata <= frame_metadata;
+		state_frame_busy_resume <= frame_resume;
 	end process;
 
 	packed_conversion_start <= move_packed_start or unary_packed_start or
@@ -1434,7 +1444,8 @@ begin
 			exception_pending => state_exception_pending,
 			command_condition => command_condition_latched,
 			exceptional_operand => exceptional_operand_latched,
-			busy_context => state_frame_busy_context,
+			busy_context_metadata => state_frame_busy_metadata,
+			busy_context_resume => state_frame_busy_resume,
 			effective_address => operation_effective_address,
 			function_code => function_code,
 			memory_ready => memory_ready,

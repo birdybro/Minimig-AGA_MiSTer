@@ -24,6 +24,8 @@ architecture test of tb_tg68k_fpu_state_frame_controller is
 	signal exceptional_operand : fpu_extended_t :=
 		x"C00289ABCDEF01234567";
 	signal busy_context : fpu_busy_context_t := (others => '0');
+	signal busy_context_metadata : fpu_busy_context_metadata_t;
+	signal busy_context_resume : fpu_busy_context_resume_t;
 	signal effective_address : std_logic_vector(31 downto 0) := BASE_ADDRESS;
 	signal function_code : std_logic_vector(2 downto 0) := "101";
 	signal memory_image : word_array_t := (others => (others => '0'));
@@ -60,6 +62,9 @@ architecture test of tb_tg68k_fpu_state_frame_controller is
 	signal bus_writes : std_logic_vector(0 to 107) := (others => '0');
 begin
 	clk <= not clk after CLK_PERIOD / 2;
+	busy_context_metadata <= busy_context(busy_context'high downto
+		busy_context'high - busy_context_metadata'length + 1);
+	busy_context_resume <= busy_context(busy_context_resume'range);
 	memory_ready <= memory_request and memory_ready_enable and
 		not memory_error;
 
@@ -87,7 +92,8 @@ begin
 			exception_pending => exception_pending,
 			command_condition => command_condition,
 			exceptional_operand => exceptional_operand,
-			busy_context => busy_context,
+			busy_context_metadata => busy_context_metadata,
+			busy_context_resume => busy_context_resume,
 			effective_address => effective_address,
 			function_code => function_code,
 			memory_ready => memory_ready,

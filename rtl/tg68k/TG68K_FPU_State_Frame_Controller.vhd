@@ -25,7 +25,8 @@ entity TG68K_FPU_State_Frame_Controller is
 		exception_pending : in std_logic;
 		command_condition : in std_logic_vector(31 downto 0);
 		exceptional_operand : in fpu_extended_t;
-		busy_context : in fpu_busy_context_t;
+		busy_context_metadata : in fpu_busy_context_metadata_t;
+		busy_context_resume : in fpu_busy_context_resume_t;
 		effective_address : in std_logic_vector(31 downto 0);
 		function_code : in std_logic_vector(2 downto 0);
 
@@ -64,13 +65,14 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		FPU_STATE_FRAME_IDLE_BYTES_68882 / 2;
 	constant BUSY_WORD_COUNT : natural :=
 		FPU_STATE_FRAME_BUSY_BYTES_68882 / 2;
-	constant BUSY_CONTEXT_WORD_COUNT : natural := BUSY_WORD_COUNT - 2;
 	constant RESTORE_HEADER_WORD_COUNT : natural :=
 		(FPU_BUSY_CONTEXT_METADATA_BITS + 15) / 16;
 	constant RESTORE_PAYLOAD_WORD_COUNT : natural :=
 		(FPU_BUSY_CONTEXT_RESUME_BITS + 15) / 16;
-	type busy_context_word_array_t is array (
-		0 to BUSY_CONTEXT_WORD_COUNT - 1) of std_logic_vector(15 downto 0);
+	type metadata_word_array_t is array (
+		0 to RESTORE_HEADER_WORD_COUNT - 1) of std_logic_vector(15 downto 0);
+	type resume_word_array_t is array (
+		0 to RESTORE_PAYLOAD_WORD_COUNT - 1) of std_logic_vector(15 downto 0);
 	type controller_state_t is (IDLE, SAVE_TRANSFER, RESTORE_TRANSFER,
 		BUS_ERROR_WAIT, COMPLETE);
 	signal state : controller_state_t := IDLE;
@@ -79,7 +81,8 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 	signal address_latched : std_logic_vector(31 downto 0) := (others => '0');
 	signal function_code_latched : std_logic_vector(2 downto 0) :=
 		(others => '0');
-	signal busy_context_words : busy_context_word_array_t;
+	signal metadata_words : metadata_word_array_t;
+	signal resume_words : resume_word_array_t;
 	signal transfer_index : natural range 0 to BUSY_WORD_COUNT - 1 := 0;
 	signal word_count_latched : natural range NULL_WORD_COUNT to
 		BUSY_WORD_COUNT := NULL_WORD_COUNT;
@@ -109,11 +112,21 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 		pending_value : std_logic;
 		command_value : std_logic_vector(31 downto 0);
 		exceptional_value : fpu_extended_t;
-		busy_context_value : busy_context_word_array_t)
+		metadata_value : metadata_word_array_t;
+		resume_value : resume_word_array_t)
 		return std_logic_vector is
 	begin
-		if word_count = BUSY_WORD_COUNT and frame_word_index >= 2 then
-			return busy_context_value(frame_word_index - 2);
+		if word_count = BUSY_WORD_COUNT then
+			if frame_word_index >= 2 and
+					frame_word_index < 2 + RESTORE_HEADER_WORD_COUNT then
+				return metadata_value(frame_word_index - 2);
+			elsif frame_word_index >=
+					BUSY_WORD_COUNT - RESTORE_PAYLOAD_WORD_COUNT then
+				return resume_value(frame_word_index -
+					(BUSY_WORD_COUNT - RESTORE_PAYLOAD_WORD_COUNT));
+			elsif frame_word_index >= 2 then
+				return x"0000";
+			end if;
 		end if;
 		case frame_word_index is
 			when 0 =>
@@ -161,10 +174,16 @@ architecture rtl of TG68K_FPU_State_Frame_Controller is
 begin
 	-- The subsystem blocks dispatch and holds save-state inputs until FSAVE
 	-- completes, avoiding duplicate payload storage in this controller.
-	busy_context_view : for index in 0 to BUSY_CONTEXT_WORD_COUNT - 1 generate
-		busy_context_words(index) <= busy_context(
-			busy_context'high - index * 16 downto
-			busy_context'high - index * 16 - 15);
+	metadata_view : for index in metadata_words'range generate
+		metadata_words(index) <= busy_context_metadata(
+			busy_context_metadata'high - index * 16 downto
+			busy_context_metadata'high - index * 16 - 15);
+	end generate;
+
+	resume_view : for index in resume_words'range generate
+		resume_words(index) <= busy_context_resume(
+			busy_context_resume'high - index * 16 downto
+			busy_context_resume'high - index * 16 - 15);
 	end generate;
 
 	restore_context_output : process(restore_header, restore_payload)
@@ -179,7 +198,7 @@ begin
 
 	outputs : process(state, family_latched, address_latched,
 		function_code_latched, exception_pending, command_condition,
-		exceptional_operand, busy_context_words, transfer_index,
+		exceptional_operand, metadata_words, resume_words, transfer_index,
 		word_count_latched,
 		frame_bytes_latched, restore_command_latched,
 		restore_exceptional_latched, restore_pending_latched,
@@ -199,7 +218,7 @@ begin
 			to_unsigned(frame_word_index * 2, 32));
 		memory_write_data <= save_frame_word(frame_word_index,
 			word_count_latched, exception_pending, command_condition,
-			exceptional_operand, busy_context_words);
+			exceptional_operand, metadata_words, resume_words);
 		memory_nuds <= '0';
 		memory_nlds <= '0';
 		memory_function_code <= function_code_latched;
