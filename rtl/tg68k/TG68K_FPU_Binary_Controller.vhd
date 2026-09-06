@@ -86,10 +86,8 @@ end entity;
 architecture rtl of TG68K_FPU_Binary_Controller is
 	type controller_state_t is (IDLE, LOAD_MEMORY, UNPACK_OPERAND,
 		START_PACKED_CONVERSION, WAIT_PACKED_CONVERSION,
-		CAPTURE_DESTINATION, EXECUTE, WAIT_ADD_SUBTRACT, WAIT_DIVIDE,
-		WAIT_SQUARE_ROOT,
-		WAIT_REMAINDER, WAIT_EXPONENTIAL, WAIT_LOGARITHM, WAIT_ARC_TANGENT,
-		WAIT_SINE_COSINE, WAIT_SINE_COSINE_SECONDARY, COMMIT_COSINE,
+		CAPTURE_DESTINATION, EXECUTE, WAIT_OPERATION,
+		WAIT_SINE_COSINE_SECONDARY, COMMIT_COSINE,
 		COMMIT, BUS_ERROR_WAIT, COMPLETE);
 
 	function transfer_word_count(format_value : fpu_operand_format_t)
@@ -1352,22 +1350,11 @@ begin
 						state <= EXECUTE;
 
 					when EXECUTE =>
-						if add_subtract_latched = '1' then
-							state <= WAIT_ADD_SUBTRACT;
-						elsif divide_latched = '1' then
-							state <= WAIT_DIVIDE;
-						elsif square_root_latched = '1' then
-							state <= WAIT_SQUARE_ROOT;
-						elsif remainder_latched = '1' then
-							state <= WAIT_REMAINDER;
-						elsif exponential_latched = '1' then
-							state <= WAIT_EXPONENTIAL;
-						elsif logarithm_latched = '1' then
-							state <= WAIT_LOGARITHM;
-						elsif arc_tangent_latched = '1' then
-							state <= WAIT_ARC_TANGENT;
-						elsif sine_cosine_latched = '1' then
-							state <= WAIT_SINE_COSINE;
+						if add_subtract_latched = '1' or divide_latched = '1' or
+								square_root_latched = '1' or remainder_latched = '1' or
+								exponential_latched = '1' or logarithm_latched = '1' or
+								arc_tangent_latched = '1' or sine_cosine_latched = '1' then
+							state <= WAIT_OPERATION;
 						else
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
@@ -1375,68 +1362,17 @@ begin
 							state <= COMMIT;
 						end if;
 
-					when WAIT_ADD_SUBTRACT =>
-						if add_subtract_done = '1' then
+					when WAIT_OPERATION =>
+						if add_subtract_done = '1' or divide_done = '1' or
+								square_root_done = '1' or remainder_done = '1' or
+								exponential_done = '1' or logarithm_done = '1' or
+								arc_tangent_done = '1' or sine_cosine_done = '1' then
 							result_latched <= rounded_result;
 							condition_codes_latched <= rounded_condition_codes;
 							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_DIVIDE =>
-						if divide_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_SQUARE_ROOT =>
-						if square_root_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_REMAINDER =>
-						if remainder_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							quotient_latched <= remainder_quotient;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_EXPONENTIAL =>
-						if exponential_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_LOGARITHM =>
-						if logarithm_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_ARC_TANGENT =>
-						if arc_tangent_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
-							state <= COMMIT;
-						end if;
-
-					when WAIT_SINE_COSINE =>
-						if sine_cosine_done = '1' then
-							result_latched <= rounded_result;
-							condition_codes_latched <= rounded_condition_codes;
-							status_latched <= rounded_status;
+							if remainder_latched = '1' then
+								quotient_latched <= remainder_quotient;
+							end if;
 							if sine_cosine_simultaneous_latched = '1' then
 								state <= WAIT_SINE_COSINE_SECONDARY;
 							else
