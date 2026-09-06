@@ -73,7 +73,7 @@ begin
 		variable scale_factor : integer range -16383 to 16383;
 		variable source_significand : unsigned(63 downto 0);
 		variable destination_significand : unsigned(63 downto 0);
-		variable source_integer : unsigned(63 downto 0);
+		variable source_integer : unsigned(13 downto 0);
 		variable source_shift : natural range 0 to 63;
 		variable destination_shift : natural range 0 to 63;
 		variable catastrophic_scale : boolean;
@@ -148,9 +148,9 @@ begin
 				if source_exponent >= 14 then
 					catastrophic_scale := true;
 				elsif source_exponent >= 0 then
-					source_integer := shift_right(source_significand,
-						63 - source_exponent);
-					scale_factor := to_integer(source_integer(13 downto 0));
+					source_integer := shift_right(source_significand(63 downto 50),
+						13 - source_exponent);
+					scale_factor := to_integer(source_integer);
 					if source(79) = '1' then
 						scale_factor := -scale_factor;
 					end if;
